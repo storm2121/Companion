@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320">
+  <circle cx="160" cy="160" r="148" fill="none" stroke="#c3a46c" stroke-width="6" opacity="0.5"/>
+  <path d="M160 60 L220 100 L200 220 L160 250 L120 220 L100 100 Z" fill="none" stroke="#c3a46c" stroke-width="4" opacity="0.4"/>
+  <text x="160" y="170" text-anchor="middle" font-size="28" fill="#c3a46c" opacity="0.5" font-family="serif">AUI</text>
+</svg>
