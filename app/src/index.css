@@ -1259,6 +1259,10 @@ a {
   min-height: 52px;
 }
 
+.note-topbar.no-title {
+  grid-template-columns: auto 1fr;
+}
+
 .note-title-wrap {
   text-align: center;
 }
@@ -1272,7 +1276,163 @@ a {
 .note-toolbar {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  justify-content: center;
+  justify-self: stretch;
+  width: 100%;
+  position: relative;
+  min-width: 0;
+}
+
+.text-command-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: min(82vw, 1240px);
+  max-width: min(82vw, 1240px);
+  overflow-x: auto;
+  padding: 0.22rem 0.34rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.text-command-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.text-command-bar.disabled {
+  opacity: 0.6;
+}
+
+.text-command-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding-right: 0.3rem;
+  margin-right: 0.25rem;
+  border-right: 1px solid var(--border);
+}
+
+.text-command-group:last-child {
+  padding-right: 0;
+  margin-right: 0;
+  border-right: none;
+}
+
+.table-picker-wrap {
+  position: relative;
+}
+
+.table-picker-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 120;
+  padding: 0.45rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.24);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.table-picker-popover.floating {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 3000100;
+}
+
+.table-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 14px);
+  gap: 3px;
+}
+
+.table-picker-cell {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 50%, transparent);
+  background: color-mix(in srgb, var(--surface-3) 64%, transparent);
+  padding: 0;
+  cursor: pointer;
+}
+
+.table-picker-cell.active {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  background: color-mix(in srgb, var(--accent) 46%, var(--surface-1));
+}
+
+.table-picker-popover p {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.text-command-group button,
+.text-command-group select,
+.text-command-group input {
+  min-height: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.text-command-group button {
+  min-width: 28px;
+  width: 28px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.text-command-group button.active {
+  background: color-mix(in srgb, var(--accent) 26%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.text-command-group button:disabled,
+.text-command-group select:disabled,
+.text-command-group input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.text-command-group select {
+  min-width: 72px;
+  padding: 0 0.4rem;
+}
+
+.text-command-group input[type='number'] {
+  width: 54px;
+  min-width: 54px;
+  padding: 0 0.3rem;
+}
+
+.text-command-group input[type='color'] {
+  width: 30px;
+  min-width: 30px;
+  padding: 0.1rem;
+}
+
+.note-toolbar .status-text {
+  white-space: nowrap;
+}
+
+.note-offline-pill {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .note-back {
@@ -1499,12 +1659,13 @@ a {
 }
 
 .note-editor {
-  padding: 0 0.75rem 1rem;
+  padding: 0 3.3rem 1rem 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .note-editor input,
@@ -1694,6 +1855,67 @@ a {
   cursor: text;
 }
 
+.note-textarea .note-table-shell {
+  position: relative;
+  display: inline-block;
+  min-width: 140px;
+  min-height: 96px;
+  max-width: 100%;
+  margin: 0.35rem 0;
+}
+
+.note-textarea table[data-note-table='true'] {
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.note-textarea table[data-note-table='true'] td,
+.note-textarea table[data-note-table='true'] th {
+  border: 1px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
+  padding: 6px;
+  min-width: 56px;
+  vertical-align: top;
+}
+
+.note-table-resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 62%, var(--border));
+  background: color-mix(in srgb, var(--surface-1) 65%, var(--accent));
+  opacity: 0.9;
+  z-index: 3;
+  user-select: none;
+  touch-action: none;
+}
+
+.note-table-resize-nw {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+
+.note-table-resize-ne {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+
+.note-table-resize-sw {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
+}
+
+.note-table-resize-se {
+  bottom: -5px;
+  right: -5px;
+  cursor: nwse-resize;
+}
+
 .note-block.collapsed .note-block-shell {
   grid-template-rows: 1fr;
 }
@@ -1729,13 +1951,6 @@ a {
   display: none;
 }
 
-.note-toolbar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
 .add-block-btn {
   width: 46px;
   height: 46px;
@@ -1760,14 +1975,23 @@ a {
 
 .canvas-nudge {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.34rem;
   opacity: 0.92;
-  padding: 0.2rem 0.35rem;
-  border-radius: 999px;
+  padding: 0.25rem;
+  border-radius: 14px;
   border: 1px solid var(--border);
   background: rgba(18, 22, 28, 0.42);
   backdrop-filter: blur(2px);
+}
+
+.canvas-nudge-side {
+  position: absolute;
+  right: 0.78rem;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 90;
 }
 
 .canvas-nudge-btn {
@@ -1988,6 +2212,54 @@ a {
   animation: slideIn 0.18s ease-out;
 }
 
+.note-context-menu {
+  position: fixed;
+  z-index: 3000000;
+  min-width: 220px;
+  max-width: 260px;
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.45rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(6px);
+}
+
+.note-context-menu button {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  border-radius: 8px;
+  padding: 0.38rem 0.52rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.note-context-menu button:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.note-context-menu button.danger {
+  color: #ff9d9d;
+}
+
+.note-context-menu button.danger:hover {
+  border-color: rgba(255, 98, 98, 0.45);
+  background: rgba(255, 72, 72, 0.14);
+  color: #ffd7d7;
+}
+
+.note-context-menu hr {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.22rem 0;
+}
+
 .block-menu-row {
   display: grid;
   gap: 0.35rem;
@@ -2173,10 +2445,50 @@ a {
     gap: 0.5rem;
   }
 
+  .note-topbar.no-title {
+    grid-template-columns: auto 1fr;
+  }
+
   .main-body,
   .note-grid,
   .note-editor {
     padding: 0.75rem;
+  }
+
+  .text-command-bar {
+    min-width: min(72vw, 840px);
+    max-width: min(72vw, 840px);
+    padding: 0.14rem 0.22rem;
+    gap: 0.2rem;
+  }
+
+  .text-command-group {
+    padding-right: 0.2rem;
+    margin-right: 0.15rem;
+    gap: 0.15rem;
+  }
+
+  .text-command-group button,
+  .text-command-group select,
+  .text-command-group input {
+    min-height: 24px;
+    height: 24px;
+    border-radius: 7px;
+    font-size: 0.66rem;
+  }
+
+  .text-command-group button {
+    min-width: 24px;
+    width: 24px;
+  }
+
+  .text-command-group select {
+    min-width: 62px;
+  }
+
+  .text-command-group input[type='number'] {
+    width: 46px;
+    min-width: 46px;
   }
 
   .note-canvas-scroll::-webkit-scrollbar {
@@ -2187,6 +2499,10 @@ a {
   .canvas-nudge {
     gap: 0.22rem;
     padding: 0.16rem 0.26rem;
+  }
+
+  .canvas-nudge-side {
+    right: 0.28rem;
   }
 
   .canvas-nudge-btn {
