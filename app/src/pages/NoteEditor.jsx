@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaArrowLeft,
+  FaArrowRight,
+  FaArrowUp,
+  FaArrowDown,
   FaBold,
   FaChevronDown,
   FaChevronUp,
@@ -36,6 +39,9 @@ const FORCE_SAVE_INTERVAL_MS = 60000;
 const DRAFT_STORAGE_PREFIX = 'companion-note-draft';
 const HISTORY_LIMIT = 20;
 const TEXT_HISTORY_IDLE_MS = 1200;
+const NUDGE_HOLD_DELAY_MS = 180;
+const NUDGE_CLICK_DISTANCE = 180;
+const NUDGE_HOLD_DISTANCE = 14;
 
 const BLOCK_DEFAULTS = {
   text: { w: 260, h: 180, fontSize: 12 },
@@ -116,6 +122,7 @@ const NoteEditor = () => {
   const [historyVersion, setHistoryVersion] = useState(0);
   const addMenuRef = useRef(null);
   const fileInputRef = useRef(null);
+  const canvasScrollRef = useRef(null);
   const canvasRef = useRef(null);
   const textRefs = useRef({});
   const selectionRangeRef = useRef(null);
@@ -136,6 +143,11 @@ const NoteEditor = () => {
   const changeVersionRef = useRef(0);
   const lastSavedVersionRef = useRef(0);
   const saveStatusRef = useRef(saveStatus);
+  const nudgeAnimationRef = useRef(null);
+  const nudgePressTimeoutRef = useRef(null);
+  const nudgeHoldActiveRef = useRef(false);
+  const nudgePressedRef = useRef(false);
+  const nudgeVectorRef = useRef({ x: 0, y: 0 });
   const navigate = useNavigate();
   const isOnline = useNetworkStatus();
 
@@ -431,6 +443,15 @@ const NoteEditor = () => {
   const activeTextColor = activeTextBlock?.textColor || '#ffffff';
   const fontSizeValue = toolbarFontSize || activeFontSize;
   const colorValue = toolbarColor || activeTextColor;
+  const canvasWidth = useMemo(() => {
+    const maxRightEdge = blocks.reduce((max, block) => {
+      const defaultWidth = BLOCK_DEFAULTS[block.type]?.w || BLOCK_DEFAULTS.text.w;
+      const width = Number.isFinite(block.w) ? block.w : defaultWidth;
+      const x = Number.isFinite(block.x) ? block.x : 0;
+      return Math.max(max, x + width);
+    }, 720);
+    return Math.max(720, Math.ceil(maxRightEdge + 40));
+  }, [blocks]);
 
   useEffect(() => {
     if (!activeTextBlock) return;
@@ -796,12 +817,104 @@ const NoteEditor = () => {
     applyFontSize((fontSizeValue || BLOCK_DEFAULTS.text.fontSize) + delta);
   };
 
+  const stopNudge = useCallback(() => {
+    if (nudgeAnimationRef.current) {
+      cancelAnimationFrame(nudgeAnimationRef.current);
+      nudgeAnimationRef.current = null;
+    }
+    nudgeHoldActiveRef.current = false;
+  }, []);
+
+  const clearNudgePressTimer = useCallback(() => {
+    if (nudgePressTimeoutRef.current) {
+      clearTimeout(nudgePressTimeoutRef.current);
+      nudgePressTimeoutRef.current = null;
+    }
+  }, []);
+
+  const runNudgeFrame = useCallback(() => {
+    if (!nudgeHoldActiveRef.current) return;
+    const scroller = canvasScrollRef.current;
+    if (!scroller) return;
+    const { x, y } = nudgeVectorRef.current;
+    scroller.scrollBy({
+      left: x * NUDGE_HOLD_DISTANCE,
+      top: y * NUDGE_HOLD_DISTANCE,
+      behavior: 'auto',
+    });
+    nudgeAnimationRef.current = requestAnimationFrame(runNudgeFrame);
+  }, []);
+
+  const startNudgeHold = useCallback(
+    (x, y) => {
+      nudgeVectorRef.current = { x, y };
+      if (nudgeHoldActiveRef.current) return;
+      nudgeHoldActiveRef.current = true;
+      nudgeAnimationRef.current = requestAnimationFrame(runNudgeFrame);
+    },
+    [runNudgeFrame],
+  );
+
+  const nudgeOnce = useCallback((x, y) => {
+    const scroller = canvasScrollRef.current;
+    if (!scroller) return;
+    scroller.scrollBy({
+      left: x * NUDGE_CLICK_DISTANCE,
+      top: y * NUDGE_CLICK_DISTANCE,
+      behavior: 'smooth',
+    });
+  }, []);
+
+  const handleNudgePressStart = useCallback(
+    (x, y) => (event) => {
+      event.preventDefault();
+      nudgePressedRef.current = true;
+      clearNudgePressTimer();
+      stopNudge();
+      nudgePressTimeoutRef.current = setTimeout(() => {
+        startNudgeHold(x, y);
+      }, NUDGE_HOLD_DELAY_MS);
+    },
+    [clearNudgePressTimer, startNudgeHold, stopNudge],
+  );
+
+  const handleNudgePressEnd = useCallback(
+    (x, y) => (event) => {
+      event.preventDefault();
+      if (!nudgePressedRef.current) return;
+      nudgePressedRef.current = false;
+      const wasHolding = nudgeHoldActiveRef.current;
+      clearNudgePressTimer();
+      stopNudge();
+      if (!wasHolding) {
+        nudgeOnce(x, y);
+      }
+    },
+    [clearNudgePressTimer, nudgeOnce, stopNudge],
+  );
+
   const increaseCanvas = () => {
     pushHistory('canvas');
     setCanvasHeight((prev) => prev + PAGE_HEIGHT);
     markDirty();
     setAddMenuOpen(false);
   };
+
+  useEffect(() => {
+    const handleGlobalRelease = () => {
+      nudgePressedRef.current = false;
+      clearNudgePressTimer();
+      stopNudge();
+    };
+    window.addEventListener('mouseup', handleGlobalRelease);
+    window.addEventListener('touchend', handleGlobalRelease);
+    window.addEventListener('touchcancel', handleGlobalRelease);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalRelease);
+      window.removeEventListener('touchend', handleGlobalRelease);
+      window.removeEventListener('touchcancel', handleGlobalRelease);
+    };
+  }, [clearNudgePressTimer, stopNudge]);
 
   if (!note) {
     return <ScreenLoader note="Preparing note..." />;
@@ -821,7 +934,7 @@ const NoteEditor = () => {
   }
 
   return (
-    <div className="page-shell">
+    <div className="page-shell note-page-shell">
       <header className="note-topbar compact">
         <button className="ghost-btn note-back" onClick={() => navigate('/dashboard')} title="Back">
           <FaArrowLeft />
@@ -831,209 +944,257 @@ const NoteEditor = () => {
         </div>
         <div className="note-toolbar">
           {!isOnline && <span className="net-status offline">Offline</span>}
+          <div className="canvas-nudge" aria-label="Scroll canvas controls">
+            <button
+              type="button"
+              className="canvas-nudge-btn"
+              title="Scroll down"
+              onMouseDown={handleNudgePressStart(0, 1)}
+              onMouseUp={handleNudgePressEnd(0, 1)}
+              onTouchStart={handleNudgePressStart(0, 1)}
+              onTouchEnd={handleNudgePressEnd(0, 1)}
+            >
+              <FaArrowDown />
+            </button>
+            <button
+              type="button"
+              className="canvas-nudge-btn"
+              title="Scroll up"
+              onMouseDown={handleNudgePressStart(0, -1)}
+              onMouseUp={handleNudgePressEnd(0, -1)}
+              onTouchStart={handleNudgePressStart(0, -1)}
+              onTouchEnd={handleNudgePressEnd(0, -1)}
+            >
+              <FaArrowUp />
+            </button>
+            <button
+              type="button"
+              className="canvas-nudge-btn"
+              title="Scroll left"
+              onMouseDown={handleNudgePressStart(-1, 0)}
+              onMouseUp={handleNudgePressEnd(-1, 0)}
+              onTouchStart={handleNudgePressStart(-1, 0)}
+              onTouchEnd={handleNudgePressEnd(-1, 0)}
+            >
+              <FaArrowLeft />
+            </button>
+            <button
+              type="button"
+              className="canvas-nudge-btn"
+              title="Scroll right"
+              onMouseDown={handleNudgePressStart(1, 0)}
+              onMouseUp={handleNudgePressEnd(1, 0)}
+              onTouchStart={handleNudgePressStart(1, 0)}
+              onTouchEnd={handleNudgePressEnd(1, 0)}
+            >
+              <FaArrowRight />
+            </button>
+          </div>
           <span className="status-text">{statusLabel}</span>
         </div>
       </header>
       <section className="note-editor">
-        <div
-          className="note-canvas"
-          ref={canvasRef}
-          style={{ height: `${canvasHeight}px` }}
-          onMouseDown={(event) => {
-            const target = event.target;
-            if (!(target instanceof Element)) {
+        <div className="note-canvas-scroll" ref={canvasScrollRef}>
+          <div
+            className="note-canvas"
+            ref={canvasRef}
+            style={{ height: `${canvasHeight}px`, width: `max(100%, ${canvasWidth}px)` }}
+            onMouseDown={(event) => {
+              const target = event.target;
+              if (!(target instanceof Element)) {
+                setBlockMenuOpenId('');
+                return;
+              }
+              if (
+                target.closest('.block-menu-panel') ||
+                target.closest('.block-menu-trigger') ||
+                target.closest('.add-block-menu')
+              ) {
+                return;
+              }
               setBlockMenuOpenId('');
-              return;
-            }
-            if (
-              target.closest('.block-menu-panel') ||
-              target.closest('.block-menu-trigger') ||
-              target.closest('.add-block-menu')
-            ) {
-              return;
-            }
-            setBlockMenuOpenId('');
-          }}
-        >
-          {blocks.map((block) => {
-            const isActive = block.id === activeBlockId;
-            const layer = block.priority ? PRIORITY_Z_OFFSET + block.zIndex : block.zIndex;
-            const blockBackground = block.bgColor || '';
-            return (
-              <Rnd
-                key={block.id}
-                bounds="parent"
-                size={{ width: block.w, height: block.h }}
-                position={{ x: block.x, y: block.y }}
-                  onDragStop={(event, data) => {
-                    if (data.x === block.x && data.y === block.y) return;
-                    pushHistory('move');
-                    updateBlock(block.id, { x: data.x, y: data.y });
-                  }}
-                  onResizeStop={(event, dir, ref, delta, position) => {
-                    const nextWidth = ref.offsetWidth;
-                    const nextHeight = ref.offsetHeight;
-                    if (
-                      position.x === block.x &&
-                      position.y === block.y &&
-                      nextWidth === block.w &&
-                      nextHeight === block.h
-                    ) {
+            }}
+          >
+            {blocks.map((block) => {
+              const isActive = block.id === activeBlockId;
+              const layer = block.priority ? PRIORITY_Z_OFFSET + block.zIndex : block.zIndex;
+              const blockBackground = block.bgColor || '';
+              return (
+                <Rnd
+                  key={block.id}
+                  bounds="parent"
+                  size={{ width: block.w, height: block.h }}
+                  position={{ x: block.x, y: block.y }}
+                    onDragStop={(event, data) => {
+                      if (data.x === block.x && data.y === block.y) return;
+                      pushHistory('move');
+                      updateBlock(block.id, { x: data.x, y: data.y });
+                    }}
+                    onResizeStop={(event, dir, ref, delta, position) => {
+                      const nextWidth = ref.offsetWidth;
+                      const nextHeight = ref.offsetHeight;
+                      if (
+                        position.x === block.x &&
+                        position.y === block.y &&
+                        nextWidth === block.w &&
+                        nextHeight === block.h
+                      ) {
+                        return;
+                      }
+                      pushHistory('resize');
+                      updateBlock(block.id, {
+                        x: position.x,
+                        y: position.y,
+                        w: nextWidth,
+                        h: nextHeight,
+                      });
+                    }}
+                  dragHandleClassName="note-block-header"
+                  lockAspectRatio={block.type === 'image'}
+                  minWidth={block.type === 'image' ? 180 : 160}
+                  minHeight={block.collapsed ? COLLAPSED_HEIGHT : block.type === 'image' ? 140 : 140}
+                  disableDragging={block.locked}
+                  enableResizing={!block.locked && !block.collapsed}
+                  style={{ zIndex: layer, overflow: 'visible' }}
+                  onMouseDown={(event) => {
+                    const target = event.target;
+                    if (target instanceof Element && target.closest('.note-textarea')) {
                       return;
                     }
-                    pushHistory('resize');
-                    updateBlock(block.id, {
-                      x: position.x,
-                      y: position.y,
-                      w: nextWidth,
-                      h: nextHeight,
-                    });
+                    selectBlock(block.id);
                   }}
-                dragHandleClassName="note-block-header"
-                lockAspectRatio={block.type === 'image'}
-                minWidth={block.type === 'image' ? 180 : 160}
-                minHeight={block.collapsed ? COLLAPSED_HEIGHT : block.type === 'image' ? 140 : 140}
-                disableDragging={block.locked}
-                enableResizing={!block.locked && !block.collapsed}
-                style={{ zIndex: layer, overflow: 'visible' }}
-                onMouseDown={(event) => {
-                  const target = event.target;
-                  if (target instanceof Element && target.closest('.note-textarea')) {
-                    return;
-                  }
-                  selectBlock(block.id);
-                }}
-              >
-                <div
-                  className={`note-block ${isActive ? 'active' : ''} ${block.locked ? 'locked' : ''} ${
-                    block.collapsed ? 'collapsed' : ''
-                  }`}
                 >
-                  <div className="note-block-shell" style={blockBackground ? { background: blockBackground } : undefined}>
-                    <div
-                      className="note-block-header"
-                      style={blockBackground ? { background: blockBackground } : undefined}
-                      title={block.locked ? 'Pinned' : 'Drag to move'}
-                      onDoubleClick={(event) => {
-                        event.stopPropagation();
-                        toggleCollapseBlock(block.id);
-                      }}
-                    >
-                      <span className={`note-block-title ${block.title ? '' : 'muted'}`}>
-                        {block.title || (block.type === 'text' ? 'Text block' : 'Image block')}
-                      </span>
-                      <div className="note-block-actions">
-                        <button
-                          type="button"
-                          className="block-collapse-trigger"
-                          onMouseDown={(event) => event.stopPropagation()}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleCollapseBlock(block.id);
-                          }}
-                          title={block.collapsed ? 'Expand' : 'Collapse'}
-                        >
-                          {block.collapsed ? <FaChevronDown /> : <FaChevronUp />}
-                        </button>
-                        <button
-                          type="button"
-                          className="block-menu-trigger"
-                          onMouseDown={(event) => event.stopPropagation()}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleBlockMenu(block.id);
-                          }}
-                        >
-                          <FaEllipsisH />
-                        </button>
+                  <div
+                    className={`note-block ${isActive ? 'active' : ''} ${block.locked ? 'locked' : ''} ${
+                      block.collapsed ? 'collapsed' : ''
+                    }`}
+                  >
+                    <div className="note-block-shell" style={blockBackground ? { background: blockBackground } : undefined}>
+                      <div
+                        className="note-block-header"
+                        style={blockBackground ? { background: blockBackground } : undefined}
+                        title={block.locked ? 'Pinned' : 'Drag to move'}
+                        onDoubleClick={(event) => {
+                          event.stopPropagation();
+                          toggleCollapseBlock(block.id);
+                        }}
+                      >
+                        <span className={`note-block-title ${block.title ? '' : 'muted'}`}>
+                          {block.title || (block.type === 'text' ? 'Text block' : 'Image block')}
+                        </span>
+                        <div className="note-block-actions">
+                          <button
+                            type="button"
+                            className="block-collapse-trigger"
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleCollapseBlock(block.id);
+                            }}
+                            title={block.collapsed ? 'Expand' : 'Collapse'}
+                          >
+                            {block.collapsed ? <FaChevronDown /> : <FaChevronUp />}
+                          </button>
+                          <button
+                            type="button"
+                            className="block-menu-trigger"
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleBlockMenu(block.id);
+                            }}
+                          >
+                            <FaEllipsisH />
+                          </button>
+                        </div>
                       </div>
+                      {!block.collapsed && (
+                        <div className="note-block-body">
+                          {block.type === 'text' ? (
+                            <div
+                              ref={(el) => {
+                                if (!el) return;
+                                textRefs.current[block.id] = el;
+                                const desired = textDraftsRef.current[block.id] ?? block.value ?? '';
+                                if (document.activeElement === el) return;
+                                if (el.innerHTML !== desired) {
+                                  el.innerHTML = desired;
+                                }
+                              }}
+                              className="note-textarea"
+                              contentEditable
+                              suppressContentEditableWarning
+                              onInput={(event) => handleTextInput(block.id, event.currentTarget.innerHTML)}
+                              onFocus={() => selectBlock(block.id)}
+                              onMouseUp={syncToolbarFromSelection}
+                              onKeyUp={syncToolbarFromSelection}
+                              style={{
+                                fontSize: `${block.fontSize || BLOCK_DEFAULTS.text.fontSize}px`,
+                                color: block.textColor || 'var(--text)',
+                                fontWeight: block.bold ? 700 : 400,
+                                textDecoration: block.underline ? 'underline' : 'none',
+                              }}
+                            />
+                          ) : (
+                            <img className="note-image" src={block.value} alt="Note asset" />
+                          )}
+                        </div>
+                      )}
                     </div>
-                    {!block.collapsed && (
-                      <div className="note-block-body">
-                        {block.type === 'text' ? (
-                          <div
-                            ref={(el) => {
-                              if (!el) return;
-                              textRefs.current[block.id] = el;
-                              const desired = textDraftsRef.current[block.id] ?? block.value ?? '';
-                              if (document.activeElement === el) return;
-                              if (el.innerHTML !== desired) {
-                                el.innerHTML = desired;
-                              }
-                            }}
-                            className="note-textarea"
-                            contentEditable
-                            suppressContentEditableWarning
-                            onInput={(event) => handleTextInput(block.id, event.currentTarget.innerHTML)}
-                            onFocus={() => selectBlock(block.id)}
-                            onMouseUp={syncToolbarFromSelection}
-                            onKeyUp={syncToolbarFromSelection}
-                            style={{
-                              fontSize: `${block.fontSize || BLOCK_DEFAULTS.text.fontSize}px`,
-                              color: block.textColor || 'var(--text)',
-                              fontWeight: block.bold ? 700 : 400,
-                              textDecoration: block.underline ? 'underline' : 'none',
-                            }}
+                    {blockMenuOpenId === block.id && (
+                      <div className="block-menu-panel">
+                        <div className="block-menu-row">
+                          <label htmlFor={`title-${block.id}`}>Title</label>
+                          <input
+                            id={`title-${block.id}`}
+                            value={block.title}
+                            placeholder="Add a title"
+                            onChange={(event) => updateBlock(block.id, { title: event.target.value })}
                           />
-                        ) : (
-                          <img className="note-image" src={block.value} alt="Note asset" />
+                        </div>
+                        {block.type === 'text' && (
+                          <div className="block-menu-row">
+                            <label htmlFor={`bg-${block.id}`}>Block color</label>
+                            <div className="block-color-row">
+                              <input
+                                id={`bg-${block.id}`}
+                                type="color"
+                                value={block.bgColor || '#161b21'}
+                                onChange={(event) =>
+                                  updateBlock(block.id, { bgColor: event.target.value }, { recordHistory: true, reason: 'bg-color' })
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="block-color-reset"
+                                onClick={() => updateBlock(block.id, { bgColor: '' }, { recordHistory: true, reason: 'bg-color' })}
+                              >
+                                Reset
+                              </button>
+                            </div>
+                          </div>
                         )}
+                        <div className="block-menu-actions">
+                          <button type="button" onClick={() => updateBlock(block.id, { locked: !block.locked })}>
+                            {block.locked ? <FaLockOpen /> : <FaLock />}
+                            {block.locked ? 'Unpin' : 'Pin'}
+                          </button>
+                          <button type="button" onClick={() => togglePriority(block.id)}>
+                            <FaStar />
+                            {block.priority ? 'Priority on' : 'Priority off'}
+                          </button>
+                          <button type="button" className="danger" onClick={() => deleteBlock(block.id)}>
+                            <FaTrash />
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
-                  {blockMenuOpenId === block.id && (
-                    <div className="block-menu-panel">
-                      <div className="block-menu-row">
-                        <label htmlFor={`title-${block.id}`}>Title</label>
-                        <input
-                          id={`title-${block.id}`}
-                          value={block.title}
-                          placeholder="Add a title"
-                          onChange={(event) => updateBlock(block.id, { title: event.target.value })}
-                        />
-                      </div>
-                      {block.type === 'text' && (
-                        <div className="block-menu-row">
-                          <label htmlFor={`bg-${block.id}`}>Block color</label>
-                          <div className="block-color-row">
-                            <input
-                              id={`bg-${block.id}`}
-                              type="color"
-                              value={block.bgColor || '#161b21'}
-                              onChange={(event) =>
-                                updateBlock(block.id, { bgColor: event.target.value }, { recordHistory: true, reason: 'bg-color' })
-                              }
-                            />
-                            <button
-                              type="button"
-                              className="block-color-reset"
-                              onClick={() => updateBlock(block.id, { bgColor: '' }, { recordHistory: true, reason: 'bg-color' })}
-                            >
-                              Reset
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      <div className="block-menu-actions">
-                        <button type="button" onClick={() => updateBlock(block.id, { locked: !block.locked })}>
-                          {block.locked ? <FaLockOpen /> : <FaLock />}
-                          {block.locked ? 'Unpin' : 'Pin'}
-                        </button>
-                        <button type="button" onClick={() => togglePriority(block.id)}>
-                          <FaStar />
-                          {block.priority ? 'Priority on' : 'Priority off'}
-                        </button>
-                        <button type="button" className="danger" onClick={() => deleteBlock(block.id)}>
-                          <FaTrash />
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Rnd>
-            );
-          })}
+                </Rnd>
+              );
+            })}
+          </div>
         </div>
       </section>
       <div className="note-fab" ref={addMenuRef}>

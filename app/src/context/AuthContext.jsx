@@ -39,6 +39,16 @@ const applyThemeMode = (mode) => {
   root.style.setProperty('--accent', theme.accent);
   root.style.setProperty('--accent-hover', theme.accentHover);
   root.style.setProperty('--accent-pressed', theme.accentPressed);
+  root.style.setProperty('--scroll-track', theme.scrollTrack);
+  root.style.setProperty('--scroll-track-alt', theme.scrollTrackAlt || theme.scrollTrack);
+  root.style.setProperty('--scroll-thumb', theme.scrollThumb);
+  root.style.setProperty('--scroll-thumb-alt', theme.scrollThumbAlt || theme.scrollThumb);
+  root.style.setProperty('--scroll-thumb-hover', theme.scrollThumbHover);
+  root.style.setProperty(
+    '--scroll-thumb-hover-alt',
+    theme.scrollThumbHoverAlt || theme.scrollThumbHover,
+  );
+  root.style.setProperty('--scroll-thumb-border', theme.scrollThumbBorder);
 };
 
 const buildActionCodeSettings = () => ({

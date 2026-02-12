@@ -29,7 +29,7 @@ import { useAuth } from '../context/AuthContext';
 import AddClassSheet from '../components/classes/AddClassSheet';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
-import { THEME_OPTIONS } from '../themePresets';
+import { THEME_DEFAULT_MODE, THEME_OPTIONS, THEME_PRESETS } from '../themePresets';
 import { buildTemplateBlocks, DEFAULT_TEMPLATE_ID, getTemplateById, NOTE_TEMPLATES } from '../data/noteTemplates';
 import useNetworkStatus from '../hooks/useNetworkStatus';
 
@@ -59,6 +59,8 @@ const getNoteTimestamp = (note) => {
   if (Number.isFinite(created)) return created;
   return 0;
 };
+
+const normalizeThemeMode = (mode) => (THEME_PRESETS[mode] ? mode : THEME_DEFAULT_MODE);
 
 const Dashboard = () => {
   const { firebaseUser, profile, logout, updateThemeMode, applyThemeMode, updateNoteTemplateDefault } = useAuth();
@@ -96,7 +98,7 @@ const Dashboard = () => {
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [templateDefault, setTemplateDefault] = useState(false);
   const [quickAddBusy, setQuickAddBusy] = useState(false);
-  const [themeMode, setThemeMode] = useState('charcoal');
+  const [themeMode, setThemeMode] = useState(THEME_DEFAULT_MODE);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const titleRef = useRef(null);
   const summaryRef = useRef(null);
@@ -179,19 +181,15 @@ const Dashboard = () => {
   }, [selectedNoteIds.length, moveOptions, moveTargetId]);
 
   useEffect(() => {
-    if (profile?.themeMode) {
-      setThemeMode(profile.themeMode);
-    } else {
-      setThemeMode('charcoal');
-    }
+    setThemeMode(normalizeThemeMode(profile?.themeMode));
   }, [profile?.themeMode]);
 
   useEffect(() => {
     if (!firebaseUser) return;
-    const currentValue = profile?.themeMode || 'charcoal';
+    const currentValue = normalizeThemeMode(profile?.themeMode);
     if (themeMode === currentValue) return;
     const timeout = setTimeout(() => {
-      updateThemeMode(themeMode).catch((err) => {
+      updateThemeMode(normalizeThemeMode(themeMode)).catch((err) => {
         console.error('Failed to update theme mode', err);
       });
     }, 300);
@@ -999,7 +997,7 @@ const Dashboard = () => {
                   />
                 </label>
                 <label>
-                  Brief summary
+                  Brief summary (optional)
                   <textarea
                     ref={summaryRef}
                     value={noteSummary}
@@ -1009,7 +1007,7 @@ const Dashboard = () => {
                   />
                 </label>
                 <label>
-                  Cover image
+                  Cover image (optional)
                   <input
                     ref={imageRef}
                     type="file"
