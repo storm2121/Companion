@@ -1298,6 +1298,68 @@ a {
   white-space: nowrap;
 }
 
+.text-command-bar.compact,
+.text-command-bar.segmented {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 100%;
+  max-width: 100%;
+  overflow: visible;
+  white-space: normal;
+  border-radius: 14px;
+}
+
+.toolbar-groups {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.toolbar-groups.compact,
+.toolbar-groups.segmented {
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+  scrollbar-width: none;
+}
+
+.toolbar-groups.compact::-webkit-scrollbar,
+.toolbar-groups.segmented::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbar-section-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2rem;
+}
+
+.toolbar-section-tabs button {
+  min-height: 26px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+}
+
+.toolbar-section-tabs button.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+
+.toolbar-section-tabs button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .text-command-bar::-webkit-scrollbar {
   display: none;
 }
@@ -1319,6 +1381,46 @@ a {
   padding-right: 0;
   margin-right: 0;
   border-right: none;
+}
+
+.toolbar-more-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-more-wrap > button {
+  min-height: 28px;
+  min-width: 28px;
+  height: 28px;
+  width: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text);
+  display: grid;
+  place-items: center;
+}
+
+.toolbar-more-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+  min-width: 220px;
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.26);
+  padding: 0.45rem;
+}
+
+.toolbar-more-panel .text-command-group {
+  border-right: none;
+  margin-right: 0;
+  padding-right: 0;
 }
 
 .table-picker-wrap {
@@ -1416,6 +1518,44 @@ a {
   width: 54px;
   min-width: 54px;
   padding: 0 0.3rem;
+}
+
+.font-size-input-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.font-size-input-wrap.editing input {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+::highlight(companion-held-selection) {
+  background: color-mix(in srgb, var(--accent) 36%, transparent);
+  color: inherit;
+}
+
+.held-selection-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 150;
+}
+
+.held-selection-rect {
+  position: fixed;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.text-command-group input[type='number']::-webkit-outer-spin-button,
+.text-command-group input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.text-command-group input[type='number'] {
+  -moz-appearance: textfield;
 }
 
 .text-command-group input[type='color'] {
@@ -2462,6 +2602,12 @@ a {
     gap: 0.2rem;
   }
 
+  .text-command-bar.compact,
+  .text-command-bar.segmented {
+    min-width: 100%;
+    max-width: 100%;
+  }
+
   .text-command-group {
     padding-right: 0.2rem;
     margin-right: 0.15rem;
@@ -2489,6 +2635,18 @@ a {
   .text-command-group input[type='number'] {
     width: 46px;
     min-width: 46px;
+  }
+
+  .toolbar-section-tabs button {
+    min-height: 24px;
+    font-size: 0.62rem;
+    padding: 0.18rem 0.38rem;
+  }
+
+  .toolbar-more-panel {
+    min-width: 200px;
+    right: auto;
+    left: 0;
   }
 
   .note-canvas-scroll::-webkit-scrollbar {

@@ -47,7 +47,7 @@ const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 72;
 const PRIORITY_Z_OFFSET = 100000;
 const COLLAPSED_HEIGHT = 34;
-const AUTO_SAVE_IDLE_MS = 3000;
+const AUTO_SAVE_IDLE_MS = 8000;
 const LOCAL_DRAFT_IDLE_MS = 1000;
 const FORCE_SAVE_INTERVAL_MS = 60000;
 const DRAFT_STORAGE_PREFIX = 'companion-note-draft';
@@ -63,10 +63,11 @@ const TABLE_COLUMN_RESIZE_STEP = 24;
 const MIN_TABLE_WIDTH = 140;
 const MIN_TABLE_HEIGHT = 96;
 const TABLE_HANDLE_DIRECTIONS = ['nw', 'ne', 'sw', 'se'];
+const HELD_SELECTION_HIGHLIGHT_KEY = 'companion-held-selection';
 const FONT_FAMILY_OPTIONS = [
   { value: 'Manrope', label: 'Manrope' },
   { value: 'Georgia', label: 'Georgia' },
-  { value: '"Times New Roman"', label: 'Times' },
+  { value: '"Times New Roman"', label: 'Times New Roman' },
   { value: 'Arial', label: 'Arial' },
   { value: '"Courier New"', label: 'Courier' },
 ];
@@ -84,18 +85,208 @@ const BLOCK_DEFAULTS = {
   image: { w: 280, h: 200 },
 };
 
+const LEGACY_FONT_SIZE_MAP = {
+  '1': 10,
+  '2': 13,
+  '3': 16,
+  '4': 18,
+  '5': 24,
+  '6': 32,
+  '7': 48,
+};
+
 const stripZeroWidth = (html) => (typeof html === 'string' ? html.replace(/\u200b/g, '') : '');
+
+const clampColorChannel = (value) => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(255, Math.round(value)));
+};
+
+const normalizeHexColor = (value, fallback = '') => {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
+    const [r, g, b] = trimmed.slice(1).split('');
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  if (/^#[0-9a-fA-F]{8,}$/.test(trimmed)) return `#${trimmed.slice(1, 7)}`.toLowerCase();
+  return fallback;
+};
+
+const rgbPartsToHex = (parts) => {
+  const channels = parts.slice(0, 3).map((entry) => {
+    if (typeof entry === 'string' && entry.endsWith('%')) {
+      const percent = Number.parseFloat(entry);
+      return clampColorChannel((percent / 100) * 255);
+    }
+    return clampColorChannel(Number.parseFloat(entry));
+  });
+  if (channels.some((num) => Number.isNaN(num))) return '';
+  return `#${channels.map((num) => num.toString(16).padStart(2, '0')).join('')}`;
+};
 
 const toHexColor = (value) => {
   if (!value) return '';
-  if (value.startsWith('#')) return value;
+  const normalizedHex = normalizeHexColor(value, '');
+  if (normalizedHex) return normalizedHex;
   if (value === 'transparent') return '';
-  const matches = value.match(/\d+/g);
-  if (!matches || matches.length < 3) return '';
-  if (value.startsWith('rgba') && matches[3] !== undefined && Number(matches[3]) === 0) return '';
-  const [r, g, b] = matches.map((entry) => Number(entry));
-  if ([r, g, b].some((num) => Number.isNaN(num))) return '';
-  return `#${[r, g, b].map((num) => num.toString(16).padStart(2, '0')).join('')}`;
+  const rgbaMatch = value.match(/rgba?\(([^)]+)\)/i);
+  if (rgbaMatch) {
+    const parts = rgbaMatch[1]
+      .replace(/\//g, ',')
+      .split(/[,\s]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (parts.length >= 4) {
+      const alphaRaw = parts[3];
+      const alpha = alphaRaw.endsWith('%')
+        ? Number.parseFloat(alphaRaw) / 100
+        : Number.parseFloat(alphaRaw);
+      if (Number.isFinite(alpha) && alpha <= 0) return '';
+    }
+    if (parts.length >= 3) {
+      return rgbPartsToHex(parts);
+    }
+  }
+  const looseParts = (value.match(/[\d.]+%?/g) || []).slice(0, 3);
+  if (looseParts.length < 3) return '';
+  return rgbPartsToHex(looseParts);
+};
+
+const normalizeLegacyFontNodes = (root, fallbackPx = BLOCK_DEFAULTS.text.fontSize) => {
+  if (!root) return;
+  root.querySelectorAll('font').forEach((fontNode) => {
+    const declaredSize = fontNode.getAttribute('size');
+    const inlineSize = (fontNode.style?.fontSize || '').trim();
+    const pxMatch = inlineSize.match(/^([\d.]+)px$/i);
+    const resolvedPx = pxMatch
+      ? Number.parseFloat(pxMatch[1])
+      : LEGACY_FONT_SIZE_MAP[declaredSize || ''] || fallbackPx;
+    const span = document.createElement('span');
+    span.style.fontSize = `${Math.max(MIN_FONT_SIZE, Math.min(Number.isFinite(resolvedPx) ? resolvedPx : fallbackPx, MAX_FONT_SIZE))}px`;
+    while (fontNode.firstChild) span.appendChild(fontNode.firstChild);
+    fontNode.replaceWith(span);
+  });
+};
+
+const clearInlineFontSizeInFragment = (fragment) => {
+  if (!fragment) return;
+  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_ELEMENT);
+  const elements = [];
+  while (walker.nextNode()) {
+    elements.push(walker.currentNode);
+  }
+  elements.forEach((node) => {
+    if (!(node instanceof HTMLElement)) return;
+    node.style.removeProperty('font-size');
+    node.style.removeProperty('line-height');
+    node.style.removeProperty('margin-top');
+    node.style.removeProperty('margin-bottom');
+    node.style.removeProperty('padding-top');
+    node.style.removeProperty('padding-bottom');
+    if (node.tagName === 'FONT') {
+      node.removeAttribute('size');
+    }
+  });
+};
+
+const unwrapElementKeepChildren = (element) => {
+  if (!(element instanceof HTMLElement) || !element.parentNode) return;
+  const fragment = document.createDocumentFragment();
+  while (element.firstChild) {
+    fragment.appendChild(element.firstChild);
+  }
+  element.replaceWith(fragment);
+};
+
+const isWhitespaceLike = (value) => stripZeroWidth(value || '').replace(/\u00a0/g, ' ').trim() === '';
+
+const elementHasOnlyBreakLikeContent = (element) => {
+  if (!(element instanceof HTMLElement)) return false;
+  if (element.matches('[data-note-table-shell], [data-note-table], table')) return false;
+  const children = Array.from(element.childNodes);
+  if (!children.length) return true;
+  return children.every((child) => {
+    if (child.nodeType === Node.TEXT_NODE) {
+      return isWhitespaceLike(child.textContent || '');
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) return true;
+    const childElement = child;
+    if (childElement.tagName === 'BR') return true;
+    return elementHasOnlyBreakLikeContent(childElement);
+  });
+};
+
+const stripZeroWidthTextNodes = (root) => {
+  if (!(root instanceof HTMLElement)) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode);
+  }
+  textNodes.forEach((node) => {
+    if (!(node instanceof Text)) return;
+    if (!node.nodeValue?.includes('\u200b')) return;
+    node.nodeValue = node.nodeValue.replace(/\u200b/g, '');
+    if ((node.nodeValue || '').length > 0) return;
+    if (node.parentNode) {
+      node.parentNode.removeChild(node);
+    }
+  });
+};
+
+const cleanupFontSizeArtifacts = (root, options = {}) => {
+  if (!(root instanceof HTMLElement)) return;
+  const { keepNode = null, fallbackPx = BLOCK_DEFAULTS.text.fontSize } = options;
+  normalizeLegacyFontNodes(root, fallbackPx);
+  stripZeroWidthTextNodes(root);
+  const formattingNodes = Array.from(root.querySelectorAll('*'));
+  formattingNodes.forEach((node) => {
+    if (!(node instanceof HTMLElement)) return;
+    if (node === root) return;
+    if (node.matches('[data-note-table-shell], [data-note-table], table, tr, td, th')) return;
+    if (keepNode && (node === keepNode || node.contains(keepNode))) return;
+    const breakOnly = elementHasOnlyBreakLikeContent(node);
+    const hadFontSizing =
+      Boolean(node.style.fontSize) ||
+      Boolean(node.style.lineHeight) ||
+      Boolean(node.style.marginTop) ||
+      Boolean(node.style.marginBottom) ||
+      Boolean(node.style.paddingTop) ||
+      Boolean(node.style.paddingBottom) ||
+      node.tagName === 'FONT' ||
+      node.hasAttribute('size');
+    if (breakOnly) {
+      node.style.removeProperty('font-size');
+      node.style.removeProperty('line-height');
+      node.style.removeProperty('margin-top');
+      node.style.removeProperty('margin-bottom');
+      node.style.removeProperty('padding-top');
+      node.style.removeProperty('padding-bottom');
+      if (node.tagName === 'FONT') {
+        node.removeAttribute('size');
+      }
+      if (hadFontSizing) {
+        node.remove();
+        return;
+      }
+    }
+    if ((node.tagName === 'SPAN' || node.tagName === 'FONT') && node.style.length === 0 && breakOnly) {
+      unwrapElementKeepChildren(node);
+    }
+  });
+
+  const emptySpans = Array.from(root.querySelectorAll('span'));
+  emptySpans.forEach((span) => {
+    if (!(span instanceof HTMLElement)) return;
+    if (keepNode && (span === keepNode || span.contains(keepNode))) return;
+    const hasTable = span.querySelector('[data-note-table-shell="true"]');
+    const hasBreak = span.querySelector('br');
+    if (!hasTable && !hasBreak && isWhitespaceLike(span.textContent || '')) {
+      span.remove();
+    }
+  });
 };
 
 const cloneBlocks = (items = []) => items.map((block) => ({ ...block }));
@@ -166,13 +357,20 @@ const NoteEditor = () => {
   const [toolbarChecklist, setToolbarChecklist] = useState(false);
   const [toolbarAlign, setToolbarAlign] = useState('left');
   const [toolbarLineSpacing, setToolbarLineSpacing] = useState(1.4);
+  const [fontSizeDraft, setFontSizeDraft] = useState(String(BLOCK_DEFAULTS.text.fontSize));
+  const [fontSizeEditing, setFontSizeEditing] = useState(false);
   const [copiedTextStyle, setCopiedTextStyle] = useState(null);
+  const [toolbarMode, setToolbarMode] = useState('full');
+  const [toolbarSection, setToolbarSection] = useState('text');
+  const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
+  const [heldSelectionRects, setHeldSelectionRects] = useState([]);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
   const [tablePickerHover, setTablePickerHover] = useState({ rows: 2, cols: 2 });
   const [tablePickerPos, setTablePickerPos] = useState({ left: 12, top: 72 });
   const [historyVersion, setHistoryVersion] = useState(0);
   const addMenuRef = useRef(null);
+  const toolbarMoreRef = useRef(null);
   const tablePickerTriggerRef = useRef(null);
   const tablePickerPopoverRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -180,6 +378,8 @@ const NoteEditor = () => {
   const canvasRef = useRef(null);
   const textRefs = useRef({});
   const selectionRangeRef = useRef(null);
+  const heldSelectionRangeRef = useRef(null);
+  const skipNextFontSizeBlurCommitRef = useRef(false);
   const blocksRef = useRef(blocks);
   const canvasHeightRef = useRef(canvasHeight);
   const textDraftsRef = useRef({});
@@ -359,6 +559,7 @@ const NoteEditor = () => {
       setBlockMenuOpenId('');
       setAddMenuOpen(false);
       selectionRangeRef.current = null;
+      heldSelectionRangeRef.current = null;
       suppressHistoryRef.current = false;
       markDirty();
     },
@@ -482,6 +683,40 @@ const NoteEditor = () => {
   }, [addMenuOpen]);
 
   useEffect(() => {
+    const syncToolbarMode = () => {
+      const width = window.innerWidth;
+      if (width < 1024) {
+        setToolbarMode('segmented');
+      } else if (width < 1280) {
+        setToolbarMode('compact');
+      } else {
+        setToolbarMode('full');
+      }
+    };
+    syncToolbarMode();
+    window.addEventListener('resize', syncToolbarMode);
+    return () => window.removeEventListener('resize', syncToolbarMode);
+  }, []);
+
+  useEffect(() => {
+    setToolbarMoreOpen(false);
+    if (toolbarMode !== 'segmented') {
+      setToolbarSection('text');
+    }
+  }, [toolbarMode]);
+
+  useEffect(() => {
+    if (!toolbarMoreOpen) return;
+    const handleClick = (event) => {
+      const target = event.target;
+      if (target instanceof Element && toolbarMoreRef.current?.contains(target)) return;
+      setToolbarMoreOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [toolbarMoreOpen]);
+
+  useEffect(() => {
     if (!tablePickerOpen) return;
     const handleClick = (event) => {
       const target = event.target;
@@ -493,6 +728,15 @@ const NoteEditor = () => {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [tablePickerOpen]);
+
+  useEffect(() => {
+    const active = blocks.find((item) => item.id === activeBlockId);
+    const hasActiveText = Boolean(active && active.type === 'text');
+    if (!hasActiveText) {
+      setTablePickerOpen(false);
+      setToolbarMoreOpen(false);
+    }
+  }, [activeBlockId, blocks]);
 
   useEffect(() => {
     if (!tablePickerOpen) return;
@@ -559,7 +803,8 @@ const NoteEditor = () => {
   const activeLineSpacing = activeTextBlock?.lineHeight || 1.4;
   const activeTextColor = activeTextBlock?.textColor || '#ffffff';
   const fontSizeValue = toolbarFontSize || activeFontSize;
-  const colorValue = toolbarColor || activeTextColor;
+  const colorValue = normalizeHexColor(toolbarColor || activeTextColor, '#ffffff');
+  const highlightColorValue = normalizeHexColor(toolbarHighlightColor, '#fff2a8');
   const lineSpacingValue = toolbarLineSpacing || activeLineSpacing;
   const contextMenuBlock = useMemo(() => {
     if (!contextMenu?.blockId) return null;
@@ -574,6 +819,11 @@ const NoteEditor = () => {
     }, 720);
     return Math.max(720, Math.ceil(maxRightEdge + 40));
   }, [blocks]);
+
+  useEffect(() => {
+    if (fontSizeEditing) return;
+    setFontSizeDraft(String(fontSizeValue || BLOCK_DEFAULTS.text.fontSize));
+  }, [fontSizeValue, fontSizeEditing]);
 
   useEffect(() => {
     if (!activeTextBlock) return;
@@ -591,6 +841,7 @@ const NoteEditor = () => {
     setToolbarChecklist(false);
     setToolbarAlign('left');
     selectionRangeRef.current = null;
+    heldSelectionRangeRef.current = null;
   }, [activeTextBlock?.id]);
 
   const getNextPosition = (size) => {
@@ -839,6 +1090,7 @@ const NoteEditor = () => {
     }
     if (root instanceof HTMLElement) {
       normalizeTableShells(root);
+      cleanupFontSizeArtifacts(root, { fallbackPx: activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize });
       html = root.innerHTML;
     }
     textDraftsRef.current[id] = stripZeroWidth(html);
@@ -853,8 +1105,9 @@ const NoteEditor = () => {
       const root = textRefs.current[blockId];
       const selection = document.getSelection();
       if (!root || !selection || selection.rangeCount === 0) return;
-      if (!root.contains(selection.anchorNode)) return;
-      selectionRangeRef.current = selection.getRangeAt(0).cloneRange();
+      const range = selection.getRangeAt(0);
+      if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
+      selectionRangeRef.current = range.cloneRange();
     },
     [activeTextId],
   );
@@ -881,6 +1134,45 @@ const NoteEditor = () => {
     selectionRangeRef.current = range.cloneRange();
     return true;
   };
+
+  const clearHeldSelectionHighlight = useCallback(() => {
+    if (typeof CSS !== 'undefined' && CSS.highlights) {
+      CSS.highlights.delete(HELD_SELECTION_HIGHLIGHT_KEY);
+    }
+    setHeldSelectionRects([]);
+  }, []);
+
+  const showHeldSelectionHighlight = useCallback(() => {
+    const range = selectionRangeRef.current;
+    const root = activeTextId ? textRefs.current[activeTextId] : null;
+    if (!range || !root || range.collapsed) {
+      setHeldSelectionRects([]);
+      return;
+    }
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+      setHeldSelectionRects([]);
+      return;
+    }
+    const nextRects = Array.from(range.getClientRects())
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .map((rect) => ({
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      }));
+    setHeldSelectionRects(nextRects);
+
+    const supportsCustomHighlights =
+      typeof CSS !== 'undefined' && Boolean(CSS.highlights) && typeof Highlight !== 'undefined';
+    if (!supportsCustomHighlights) return;
+    try {
+      const highlight = new Highlight(range.cloneRange());
+      CSS.highlights.set(HELD_SELECTION_HIGHLIGHT_KEY, highlight);
+    } catch {
+      // Ignore browser-specific range/highlight errors and keep overlay fallback.
+    }
+  }, [activeTextId]);
 
   const syncToolbarFromSelection = useCallback(() => {
     if (!activeTextId) return;
@@ -946,6 +1238,25 @@ const NoteEditor = () => {
     return () => document.removeEventListener('selectionchange', handleSelectionChange);
   }, [activeTextId, syncToolbarFromSelection]);
 
+  useEffect(() => {
+    if (!fontSizeEditing) {
+      clearHeldSelectionHighlight();
+    }
+  }, [fontSizeEditing, clearHeldSelectionHighlight]);
+
+  useEffect(() => () => clearHeldSelectionHighlight(), [clearHeldSelectionHighlight]);
+
+  useEffect(() => {
+    if (!fontSizeEditing) return;
+    const syncHeldHighlight = () => showHeldSelectionHighlight();
+    window.addEventListener('resize', syncHeldHighlight);
+    window.addEventListener('scroll', syncHeldHighlight, true);
+    return () => {
+      window.removeEventListener('resize', syncHeldHighlight);
+      window.removeEventListener('scroll', syncHeldHighlight, true);
+    };
+  }, [fontSizeEditing, showHeldSelectionHighlight]);
+
   const restoreSelection = (root) => {
     const selection = document.getSelection();
     if (!root || !selectionRangeRef.current || !selection) return false;
@@ -961,41 +1272,85 @@ const NoteEditor = () => {
     if (!selection || selection.rangeCount === 0) return false;
     const range = selection.getRangeAt(0);
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
-    const nextSize = `${value}px`;
+    const nextSize = `${Math.max(MIN_FONT_SIZE, Math.min(Number(value) || BLOCK_DEFAULTS.text.fontSize, MAX_FONT_SIZE))}px`;
+    cleanupFontSizeArtifacts(root, { fallbackPx: activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize });
     if (range.collapsed) {
       const span = document.createElement('span');
       span.style.fontSize = nextSize;
       span.appendChild(document.createTextNode('\u200b'));
       range.insertNode(span);
+      cleanupFontSizeArtifacts(root, { keepNode: span, fallbackPx: activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize });
       const nextRange = document.createRange();
-      nextRange.setStart(span.firstChild, 1);
-      nextRange.setEnd(span.firstChild, 1);
+      const targetNode = span.firstChild || span;
+      const targetOffset =
+        targetNode.nodeType === Node.TEXT_NODE
+          ? Math.min(1, targetNode.nodeValue?.length || 0)
+          : Math.min(1, targetNode.childNodes?.length || 0);
+      nextRange.setStart(targetNode, targetOffset);
+      nextRange.setEnd(targetNode, targetOffset);
       selection.removeAllRanges();
       selection.addRange(nextRange);
+      selectionRangeRef.current = nextRange.cloneRange();
       return true;
     }
+    const extracted = range.extractContents();
+    clearInlineFontSizeInFragment(extracted);
     const span = document.createElement('span');
     span.style.fontSize = nextSize;
-    span.appendChild(range.extractContents());
+    span.appendChild(extracted);
     range.insertNode(span);
+    cleanupFontSizeArtifacts(root, { keepNode: span, fallbackPx: activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize });
+    stripZeroWidthTextNodes(root);
     const nextRange = document.createRange();
     nextRange.selectNodeContents(span);
     selection.removeAllRanges();
     selection.addRange(nextRange);
+    selectionRangeRef.current = nextRange.cloneRange();
+    root.normalize();
     return true;
   };
 
   const applySelectionCommand = (id, command, value) => {
     const element = textRefs.current[id];
     if (!element) return false;
-    element.focus();
-    const selection = document.getSelection();
-    if (!selection || selection.rangeCount === 0 || !element.contains(selection.anchorNode)) {
-      restoreSelection(element);
+    const ensureEditorSelection = () => {
+      const selection = document.getSelection();
+      const hasSelectionInside =
+        selection && selection.rangeCount > 0 && element.contains(selection.anchorNode);
+      if (!hasSelectionInside && !restoreSelection(element)) {
+        return false;
+      }
+      if (document.activeElement !== element) {
+        element.focus({ preventScroll: true });
+        if (!restoreSelection(element)) {
+          const active = document.getSelection();
+          const activeInside = active && active.rangeCount > 0 && element.contains(active.anchorNode);
+          if (!activeInside) return false;
+        }
+      }
+      return true;
+    };
+    if (!ensureEditorSelection()) {
+      return false;
     }
     const activeSelection = document.getSelection();
     if (!activeSelection || activeSelection.rangeCount === 0 || !element.contains(activeSelection.anchorNode)) {
       return false;
+    }
+    if (command === 'fontSize') {
+      const currentRange = activeSelection.getRangeAt(0);
+      if (currentRange.collapsed) {
+        const heldRange = heldSelectionRangeRef.current;
+        if (
+          heldRange &&
+          !heldRange.collapsed &&
+          element.contains(heldRange.startContainer) &&
+          element.contains(heldRange.endContainer)
+        ) {
+          activeSelection.removeAllRanges();
+          activeSelection.addRange(heldRange.cloneRange());
+        }
+      }
     }
 
     if (command === 'fontSize') {
@@ -1235,6 +1590,38 @@ const NoteEditor = () => {
     updateTextStyle(activeTextId, { fontSize: nextSize });
   };
 
+  const restoreHeldSelectionForFontSize = () => {
+    if (!activeTextId) return;
+    const root = textRefs.current[activeTextId];
+    const heldRange = heldSelectionRangeRef.current || selectionRangeRef.current;
+    if (!root || !heldRange) return;
+    try {
+      if (!root.contains(heldRange.startContainer) || !root.contains(heldRange.endContainer)) return;
+      const nextRange = heldRange.cloneRange();
+      selectionRangeRef.current = nextRange.cloneRange();
+      root.focus({ preventScroll: true });
+      const selection = document.getSelection();
+      if (!selection) return;
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+    } catch {
+      // Ignore detached-range errors and let regular selection flow continue.
+    }
+  };
+
+  const commitFontSizeInput = (rawValue) => {
+    const candidate = typeof rawValue === 'string' ? rawValue : fontSizeDraft;
+    const parsed = Number.parseInt(candidate, 10);
+    const fallback = fontSizeValue || BLOCK_DEFAULTS.text.fontSize;
+    if (Number.isFinite(parsed)) {
+      restoreHeldSelectionForFontSize();
+      applyFontSize(parsed);
+      setFontSizeDraft(String(Math.max(MIN_FONT_SIZE, Math.min(parsed, MAX_FONT_SIZE))));
+      return;
+    }
+    setFontSizeDraft(String(fallback));
+  };
+
   const stepFontSize = (delta) => {
     applyFontSize((fontSizeValue || BLOCK_DEFAULTS.text.fontSize) + delta);
   };
@@ -1245,11 +1632,8 @@ const NoteEditor = () => {
   };
 
   const handleFontSizeInputChange = (event) => {
-    const nextValue = Number.parseInt(event.target.value, 10);
-    if (!Number.isFinite(nextValue)) {
-      return;
-    }
-    applyFontSize(nextValue);
+    const nextValue = event.target.value.replace(/[^\d]/g, '');
+    setFontSizeDraft(nextValue);
   };
 
   const copyCurrentStyle = () => {
@@ -1328,6 +1712,22 @@ const NoteEditor = () => {
 
   const handleToolbarFieldMouseDown = () => {
     rememberSelection();
+  };
+
+  const toggleTablePicker = () => {
+    if (textControlsDisabled) return;
+    if (!tablePickerOpen) {
+      setTablePickerHover({ rows: 2, cols: 2 });
+      const rect = tablePickerTriggerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const popoverWidth = 220;
+        const popoverHeight = 220;
+        const nextLeft = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
+        const nextTop = Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - popoverHeight - 8));
+        setTablePickerPos({ left: nextLeft, top: nextTop });
+      }
+    }
+    setTablePickerOpen((prev) => !prev);
   };
 
   const executeContextAction = (action) => {
@@ -1638,6 +2038,397 @@ const NoteEditor = () => {
     };
   }, [clearNudgePressTimer, stopNudge]);
 
+  const toolbarFontGroup = (
+    <div className="text-command-group">
+      <select
+        value={toolbarFontFamily}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarFieldMouseDown}
+        onChange={(event) => {
+          const nextFamily = event.target.value;
+          setToolbarFontFamily(nextFamily);
+          applyToolbarAction({ fontFamily: nextFamily });
+        }}
+        title="Font family"
+      >
+        {FONT_FAMILY_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => stepFontSize(-1)}
+        title="Decrease font size"
+      >
+        -
+      </button>
+      <span className={`font-size-input-wrap ${fontSizeEditing ? 'editing' : ''}`}>
+        <input
+          type="number"
+          min={MIN_FONT_SIZE}
+          max={MAX_FONT_SIZE}
+          value={fontSizeEditing ? fontSizeDraft : String(fontSizeValue)}
+          disabled={textControlsDisabled}
+          onMouseDown={handleToolbarFieldMouseDown}
+          onFocus={(event) => {
+            rememberSelection();
+            if (selectionRangeRef.current) {
+              try {
+                heldSelectionRangeRef.current = selectionRangeRef.current.cloneRange();
+              } catch {
+                heldSelectionRangeRef.current = null;
+              }
+            } else {
+              heldSelectionRangeRef.current = null;
+            }
+            showHeldSelectionHighlight();
+            setFontSizeEditing(true);
+            setFontSizeDraft(String(fontSizeValue || BLOCK_DEFAULTS.text.fontSize));
+            event.currentTarget.select();
+          }}
+          onBlur={(event) => {
+            const skipCommit = skipNextFontSizeBlurCommitRef.current;
+            skipNextFontSizeBlurCommitRef.current = false;
+            setFontSizeEditing(false);
+            if (!skipCommit) {
+              commitFontSizeInput(event.currentTarget.value);
+            }
+            clearHeldSelectionHighlight();
+            heldSelectionRangeRef.current = null;
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              skipNextFontSizeBlurCommitRef.current = true;
+              commitFontSizeInput(event.currentTarget.value);
+              setFontSizeEditing(false);
+              clearHeldSelectionHighlight();
+              heldSelectionRangeRef.current = null;
+              event.currentTarget.blur();
+              requestAnimationFrame(() => {
+                const root = activeTextId ? textRefs.current[activeTextId] : null;
+                root?.focus();
+              });
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              skipNextFontSizeBlurCommitRef.current = true;
+              setFontSizeEditing(false);
+              setFontSizeDraft(String(fontSizeValue || BLOCK_DEFAULTS.text.fontSize));
+              clearHeldSelectionHighlight();
+              heldSelectionRangeRef.current = null;
+              event.currentTarget.blur();
+            }
+          }}
+          onChange={handleFontSizeInputChange}
+          title="Font size"
+        />
+      </span>
+      <button
+        type="button"
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => stepFontSize(1)}
+        title="Increase font size"
+      >
+        +
+      </button>
+    </div>
+  );
+
+  const toolbarColorGroup = (
+    <div className="text-command-group">
+      <input
+        type="color"
+        value={colorValue}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarFieldMouseDown}
+        onChange={(event) => {
+          const nextColor = normalizeHexColor(event.target.value, colorValue);
+          setToolbarColor(nextColor);
+          applyToolbarAction({ textColor: nextColor });
+        }}
+        title="Text color"
+      />
+      <input
+        type="color"
+        value={highlightColorValue}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarFieldMouseDown}
+        onChange={(event) => {
+          const nextColor = normalizeHexColor(event.target.value, highlightColorValue);
+          setToolbarHighlightColor(nextColor);
+          applyToolbarAction({ highlightColor: nextColor });
+        }}
+        title="Highlight color"
+      />
+    </div>
+  );
+
+  const toolbarStyleGroup = (
+    <div className="text-command-group">
+      <button
+        type="button"
+        className={toolbarBold ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ bold: !toolbarBold })}
+        title="Bold"
+      >
+        <FaBold />
+      </button>
+      <button
+        type="button"
+        className={toolbarItalic ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ italic: !toolbarItalic })}
+        title="Italic"
+      >
+        <FaItalic />
+      </button>
+      <button
+        type="button"
+        className={toolbarUnderline ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ underline: !toolbarUnderline })}
+        title="Underline"
+      >
+        <FaUnderline />
+      </button>
+      <button
+        type="button"
+        className={toolbarStrike ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ strike: !toolbarStrike })}
+        title="Strikethrough"
+      >
+        <FaStrikethrough />
+      </button>
+    </div>
+  );
+
+  const toolbarAlignGroup = (
+    <div className="text-command-group">
+      <button
+        type="button"
+        className={toolbarAlign === 'left' ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ align: 'left' })}
+        title="Align left"
+      >
+        <FaAlignLeft />
+      </button>
+      <button
+        type="button"
+        className={toolbarAlign === 'center' ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ align: 'center' })}
+        title="Align center"
+      >
+        <FaAlignCenter />
+      </button>
+      <button
+        type="button"
+        className={toolbarAlign === 'right' ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ align: 'right' })}
+        title="Align right"
+      >
+        <FaAlignRight />
+      </button>
+      <button
+        type="button"
+        className={toolbarAlign === 'justify' ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ align: 'justify' })}
+        title="Justify"
+      >
+        <FaAlignJustify />
+      </button>
+    </div>
+  );
+
+  const toolbarParagraphGroup = (
+    <div className="text-command-group">
+      <select
+        value={lineSpacingValue}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarFieldMouseDown}
+        onChange={(event) => {
+          const nextValue = Number.parseFloat(event.target.value);
+          if (!Number.isFinite(nextValue)) return;
+          setToolbarLineSpacing(nextValue);
+          applyToolbarAction({ lineSpacing: nextValue });
+        }}
+        title="Line spacing"
+      >
+        {LINE_SPACING_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ outdent: true })}
+        title="Outdent"
+      >
+        <FaOutdent />
+      </button>
+      <button
+        type="button"
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ indent: true })}
+        title="Indent"
+      >
+        <FaIndent />
+      </button>
+    </div>
+  );
+
+  const toolbarListGroup = (
+    <div className="text-command-group">
+      <button
+        type="button"
+        className={toolbarBullets ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ bullets: true })}
+        title="Bulleted list"
+      >
+        <FaListUl />
+      </button>
+      <button
+        type="button"
+        className={toolbarNumbered ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ numbered: true })}
+        title="Numbered list"
+      >
+        <FaListOl />
+      </button>
+      <button
+        type="button"
+        className={toolbarChecklist ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ checklist: true })}
+        title="Checklist"
+      >
+        <FaCheckSquare />
+      </button>
+      <button
+        type="button"
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ quote: true })}
+        title="Quote block"
+      >
+        <FaQuoteRight />
+      </button>
+    </div>
+  );
+
+  const toolbarStyleClipboardGroup = (
+    <div className="text-command-group">
+      <button
+        type="button"
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={copyCurrentStyle}
+        title="Copy style"
+      >
+        <FaCopy />
+      </button>
+      <button
+        type="button"
+        disabled={textControlsDisabled || !copiedTextStyle}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={pasteCopiedStyle}
+        title="Paste style"
+      >
+        <FaPaste />
+      </button>
+    </div>
+  );
+
+  const toolbarTableGroup = (
+    <div className="text-command-group">
+      <div className="table-picker-wrap" ref={tablePickerTriggerRef}>
+        <button
+          type="button"
+          disabled={textControlsDisabled}
+          onMouseDown={handleToolbarButtonMouseDown}
+          onClick={toggleTablePicker}
+          title="Insert table"
+        >
+          <FaTable />
+        </button>
+      </div>
+    </div>
+  );
+
+  const toolbarCompactMore = (
+    <div className="toolbar-more-wrap" ref={toolbarMoreRef}>
+      <button
+        type="button"
+        className={toolbarMoreOpen ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => setToolbarMoreOpen((prev) => !prev)}
+        title="More tools"
+      >
+        <FaEllipsisH />
+      </button>
+      {toolbarMoreOpen && !textControlsDisabled && (
+        <div
+          className="toolbar-more-panel"
+          onMouseDown={(event) => {
+            rememberSelection();
+            event.preventDefault();
+          }}
+        >
+          {toolbarAlignGroup}
+          {toolbarParagraphGroup}
+          {toolbarStyleClipboardGroup}
+        </div>
+      )}
+    </div>
+  );
+
+  const segmentedGroups = {
+    text: (
+      <>
+        {toolbarFontGroup}
+        {toolbarColorGroup}
+        {toolbarStyleGroup}
+      </>
+    ),
+    paragraph: (
+      <>
+        {toolbarAlignGroup}
+        {toolbarParagraphGroup}
+        {toolbarListGroup}
+      </>
+    ),
+    insert: <>{toolbarTableGroup}</>,
+    more: <>{toolbarStyleClipboardGroup}</>,
+  };
+
   if (!note) {
     return <ScreenLoader note="Preparing note..." />;
   }
@@ -1662,289 +2453,52 @@ const NoteEditor = () => {
           <FaArrowLeft />
         </button>
         <div className="note-toolbar">
-          <div className={`text-command-bar ${textControlsDisabled ? 'disabled' : ''}`}>
-            <div className="text-command-group">
-              <select
-                value={toolbarFontFamily}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarFieldMouseDown}
-                onChange={(event) => {
-                  const nextFamily = event.target.value;
-                  setToolbarFontFamily(nextFamily);
-                  applyToolbarAction({ fontFamily: nextFamily });
-                }}
-                title="Font family"
-              >
-                {FONT_FAMILY_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
+          <div className={`text-command-bar ${toolbarMode} ${textControlsDisabled ? 'disabled' : ''}`}>
+            {toolbarMode === 'segmented' && (
+              <div className="toolbar-section-tabs">
+                {[
+                  { id: 'text', label: 'Text' },
+                  { id: 'paragraph', label: 'Paragraph' },
+                  { id: 'insert', label: 'Insert' },
+                  { id: 'more', label: 'More' },
+                ].map((section) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    className={toolbarSection === section.id ? 'active' : ''}
+                    disabled={textControlsDisabled}
+                    onMouseDown={handleToolbarButtonMouseDown}
+                    onClick={() => setToolbarSection(section.id)}
+                  >
+                    {section.label}
+                  </button>
                 ))}
-              </select>
-              <button
-                type="button"
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => stepFontSize(-1)}
-                title="Decrease font size"
-              >
-                -
-              </button>
-              <input
-                type="number"
-                min={MIN_FONT_SIZE}
-                max={MAX_FONT_SIZE}
-                value={fontSizeValue}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarFieldMouseDown}
-                onChange={handleFontSizeInputChange}
-                title="Font size"
-              />
-              <button
-                type="button"
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => stepFontSize(1)}
-                title="Increase font size"
-              >
-                +
-              </button>
-            </div>
-            <div className="text-command-group">
-              <input
-                type="color"
-                value={colorValue}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarFieldMouseDown}
-                onChange={(event) => {
-                  const nextColor = event.target.value;
-                  setToolbarColor(nextColor);
-                  applyToolbarAction({ textColor: nextColor });
-                }}
-                title="Text color"
-              />
-              <input
-                type="color"
-                value={toolbarHighlightColor}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarFieldMouseDown}
-                onChange={(event) => {
-                  const nextColor = event.target.value;
-                  setToolbarHighlightColor(nextColor);
-                  applyToolbarAction({ highlightColor: nextColor });
-                }}
-                title="Highlight color"
-              />
-            </div>
-            <div className="text-command-group">
-              <button
-                type="button"
-                className={toolbarBold ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ bold: !toolbarBold })}
-                title="Bold"
-              >
-                <FaBold />
-              </button>
-              <button
-                type="button"
-                className={toolbarItalic ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ italic: !toolbarItalic })}
-                title="Italic"
-              >
-                <FaItalic />
-              </button>
-              <button
-                type="button"
-                className={toolbarUnderline ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ underline: !toolbarUnderline })}
-                title="Underline"
-              >
-                <FaUnderline />
-              </button>
-              <button
-                type="button"
-                className={toolbarStrike ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ strike: !toolbarStrike })}
-                title="Strikethrough"
-              >
-                <FaStrikethrough />
-              </button>
-            </div>
-            <div className="text-command-group">
-              <button
-                type="button"
-                className={toolbarAlign === 'left' ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ align: 'left' })}
-                title="Align left"
-              >
-                <FaAlignLeft />
-              </button>
-              <button
-                type="button"
-                className={toolbarAlign === 'center' ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ align: 'center' })}
-                title="Align center"
-              >
-                <FaAlignCenter />
-              </button>
-              <button
-                type="button"
-                className={toolbarAlign === 'right' ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ align: 'right' })}
-                title="Align right"
-              >
-                <FaAlignRight />
-              </button>
-              <button
-                type="button"
-                className={toolbarAlign === 'justify' ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ align: 'justify' })}
-                title="Justify"
-              >
-                <FaAlignJustify />
-              </button>
-            </div>
-            <div className="text-command-group">
-              <select
-                value={lineSpacingValue}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarFieldMouseDown}
-                onChange={(event) => {
-                  const nextValue = Number.parseFloat(event.target.value);
-                  if (!Number.isFinite(nextValue)) return;
-                  setToolbarLineSpacing(nextValue);
-                  applyToolbarAction({ lineSpacing: nextValue });
-                }}
-                title="Line spacing"
-              >
-                {LINE_SPACING_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ outdent: true })}
-                title="Outdent"
-              >
-                <FaOutdent />
-              </button>
-              <button
-                type="button"
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ indent: true })}
-                title="Indent"
-              >
-                <FaIndent />
-              </button>
-            </div>
-            <div className="text-command-group">
-              <button
-                type="button"
-                className={toolbarBullets ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ bullets: true })}
-                title="Bulleted list"
-              >
-                <FaListUl />
-              </button>
-              <button
-                type="button"
-                className={toolbarNumbered ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ numbered: true })}
-                title="Numbered list"
-              >
-                <FaListOl />
-              </button>
-              <button
-                type="button"
-                className={toolbarChecklist ? 'active' : ''}
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ checklist: true })}
-                title="Checklist"
-              >
-                <FaCheckSquare />
-              </button>
-              <button
-                type="button"
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={() => applyToolbarAction({ quote: true })}
-                title="Quote block"
-              >
-                <FaQuoteRight />
-              </button>
-            </div>
-            <div className="text-command-group">
-              <button
-                type="button"
-                disabled={textControlsDisabled}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={copyCurrentStyle}
-                title="Copy style"
-              >
-                <FaCopy />
-              </button>
-              <button
-                type="button"
-                disabled={textControlsDisabled || !copiedTextStyle}
-                onMouseDown={handleToolbarButtonMouseDown}
-                onClick={pasteCopiedStyle}
-                title="Paste style"
-              >
-                <FaPaste />
-              </button>
-            </div>
-            <div className="text-command-group">
-              <div className="table-picker-wrap" ref={tablePickerTriggerRef}>
-                <button
-                  type="button"
-                  disabled={textControlsDisabled}
-                  onMouseDown={handleToolbarButtonMouseDown}
-                  onClick={() => {
-                    if (textControlsDisabled) return;
-                    if (!tablePickerOpen) {
-                      setTablePickerHover({ rows: 2, cols: 2 });
-                      const rect = tablePickerTriggerRef.current?.getBoundingClientRect();
-                      if (rect) {
-                        const popoverWidth = 220;
-                        const popoverHeight = 220;
-                        const nextLeft = Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8));
-                        const nextTop = Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - popoverHeight - 8));
-                        setTablePickerPos({ left: nextLeft, top: nextTop });
-                      }
-                    }
-                    setTablePickerOpen((prev) => !prev);
-                  }}
-                  title="Insert table"
-                >
-                  <FaTable />
-                </button>
               </div>
+            )}
+            <div className={`toolbar-groups ${toolbarMode}`}>
+              {toolbarMode === 'full' && (
+                <>
+                  {toolbarFontGroup}
+                  {toolbarColorGroup}
+                  {toolbarStyleGroup}
+                  {toolbarAlignGroup}
+                  {toolbarParagraphGroup}
+                  {toolbarListGroup}
+                  {toolbarStyleClipboardGroup}
+                  {toolbarTableGroup}
+                </>
+              )}
+              {toolbarMode === 'compact' && (
+                <>
+                  {toolbarFontGroup}
+                  {toolbarColorGroup}
+                  {toolbarStyleGroup}
+                  {toolbarListGroup}
+                  {toolbarTableGroup}
+                  {toolbarCompactMore}
+                </>
+              )}
+              {toolbarMode === 'segmented' && segmentedGroups[toolbarSection]}
             </div>
           </div>
           {!isOnline && <span className="net-status offline note-offline-pill">Offline</span>}
@@ -2100,6 +2654,7 @@ const NoteEditor = () => {
                                 if (el.innerHTML !== desired) {
                                   el.innerHTML = desired;
                                 }
+                                cleanupFontSizeArtifacts(el, { fallbackPx: block.fontSize || BLOCK_DEFAULTS.text.fontSize });
                               }}
                               className="note-textarea"
                               data-block-id={block.id}
@@ -2320,6 +2875,22 @@ const NoteEditor = () => {
             )}
           </div>
           <p>{`${tablePickerHover.rows} x ${tablePickerHover.cols}`}</p>
+        </div>
+      )}
+      {heldSelectionRects.length > 0 && (
+        <div className="held-selection-overlay" aria-hidden>
+          {heldSelectionRects.map((rect, index) => (
+            <span
+              key={`${rect.left}-${rect.top}-${rect.width}-${rect.height}-${index}`}
+              className="held-selection-rect"
+              style={{
+                left: `${rect.left}px`,
+                top: `${rect.top}px`,
+                width: `${rect.width}px`,
+                height: `${rect.height}px`,
+              }}
+            />
+          ))}
         </div>
       )}
       {contextMenu && (
