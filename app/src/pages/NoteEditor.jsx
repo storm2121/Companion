@@ -51,6 +51,7 @@ const AUTO_SAVE_IDLE_MS = 8000;
 const LOCAL_DRAFT_IDLE_MS = 1000;
 const FORCE_SAVE_INTERVAL_MS = 60000;
 const DRAFT_STORAGE_PREFIX = 'companion-note-draft';
+const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
 const HISTORY_LIMIT = 20;
 const TEXT_HISTORY_IDLE_MS = 1200;
 const NUDGE_HOLD_DELAY_MS = 180;
@@ -218,7 +219,8 @@ const elementHasOnlyBreakLikeContent = (element) => {
   });
 };
 
-const stripZeroWidthTextNodes = (root) => {
+const stripZeroWidthTextNodes = (root, options = {}) => {
+  const { skipWithin = null } = options;
   if (!(root instanceof HTMLElement)) return;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const textNodes = [];
@@ -227,6 +229,7 @@ const stripZeroWidthTextNodes = (root) => {
   }
   textNodes.forEach((node) => {
     if (!(node instanceof Text)) return;
+    if (skipWithin && skipWithin.contains(node)) return;
     if (!node.nodeValue?.includes('\u200b')) return;
     node.nodeValue = node.nodeValue.replace(/\u200b/g, '');
     if ((node.nodeValue || '').length > 0) return;
@@ -240,13 +243,15 @@ const cleanupFontSizeArtifacts = (root, options = {}) => {
   if (!(root instanceof HTMLElement)) return;
   const { keepNode = null, fallbackPx = BLOCK_DEFAULTS.text.fontSize } = options;
   normalizeLegacyFontNodes(root, fallbackPx);
-  stripZeroWidthTextNodes(root);
+  stripZeroWidthTextNodes(root, { skipWithin: keepNode });
   const formattingNodes = Array.from(root.querySelectorAll('*'));
   formattingNodes.forEach((node) => {
     if (!(node instanceof HTMLElement)) return;
     if (node === root) return;
     if (node.matches('[data-note-table-shell], [data-note-table], table, tr, td, th')) return;
-    if (keepNode && (node === keepNode || node.contains(keepNode))) return;
+    if (keepNode && (node === keepNode || keepNode.contains(node))) return;
+
+    const touchesKeepNode = Boolean(keepNode && node.contains(keepNode));
     const breakOnly = elementHasOnlyBreakLikeContent(node);
     const hadFontSizing =
       Boolean(node.style.fontSize) ||
@@ -257,6 +262,11 @@ const cleanupFontSizeArtifacts = (root, options = {}) => {
       Boolean(node.style.paddingBottom) ||
       node.tagName === 'FONT' ||
       node.hasAttribute('size');
+    if (touchesKeepNode || breakOnly) {
+      if (node.style.fontSize) node.style.removeProperty('font-size');
+      if (node.style.lineHeight) node.style.removeProperty('line-height');
+      if (node.tagName === 'FONT') node.removeAttribute('size');
+    }
     if (breakOnly) {
       node.style.removeProperty('font-size');
       node.style.removeProperty('line-height');
@@ -406,6 +416,31 @@ const NoteEditor = () => {
   const tableResizeRef = useRef(null);
   const navigate = useNavigate();
   const isOnline = useNetworkStatus();
+  const returnToDashboardClass = useCallback(() => {
+    if (classId) {
+      try {
+        sessionStorage.setItem(DASHBOARD_RETURN_CLASS_KEY, classId);
+      } catch {
+        // Ignore storage write issues and fall back to query+state.
+      }
+      navigate(`/dashboard?class=${encodeURIComponent(classId)}`, {
+        state: { selectedClassId: classId },
+      });
+      return;
+    }
+    navigate('/dashboard');
+  }, [navigate, classId]);
+
+  useEffect(() => {
+    if (!classId) return undefined;
+    return () => {
+      try {
+        sessionStorage.setItem(DASHBOARD_RETURN_CLASS_KEY, classId);
+      } catch {
+        // Ignore storage write issues in restricted environments.
+      }
+    };
+  }, [classId]);
 
   const draftKey = useMemo(() => {
     if (!firebaseUser) return '';
@@ -1090,7 +1125,6 @@ const NoteEditor = () => {
     }
     if (root instanceof HTMLElement) {
       normalizeTableShells(root);
-      cleanupFontSizeArtifacts(root, { fallbackPx: activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize });
       html = root.innerHTML;
     }
     textDraftsRef.current[id] = stripZeroWidth(html);
@@ -1112,6 +1146,48 @@ const NoteEditor = () => {
     [activeTextId],
   );
 
+  const setSelectionRangeSafe = (root, range, options = {}) => {
+    const { fallbackToEnd = false } = options;
+    const selection = document.getSelection();
+    if (!root || !range || !selection) return false;
+
+    const assignRange = (nextRange) => {
+      try {
+        selection.removeAllRanges();
+        selection.addRange(nextRange);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const validRange =
+      range.startContainer &&
+      range.endContainer &&
+      Boolean(range.startContainer.isConnected) &&
+      Boolean(range.endContainer.isConnected) &&
+      root.contains(range.startContainer) &&
+      root.contains(range.endContainer);
+
+    if (validRange && assignRange(range)) {
+      return true;
+    }
+    if (!fallbackToEnd) return false;
+
+    try {
+      const fallbackRange = document.createRange();
+      fallbackRange.selectNodeContents(root);
+      fallbackRange.collapse(false);
+      if (assignRange(fallbackRange)) {
+        selectionRangeRef.current = fallbackRange.cloneRange();
+        return true;
+      }
+    } catch {
+      // Ignore fallback selection errors.
+    }
+    return false;
+  };
+
   const placeCaretFromPoint = (root, x, y) => {
     if (!root) return false;
     const selection = document.getSelection();
@@ -1129,10 +1205,12 @@ const NoteEditor = () => {
     }
     if (!range) return false;
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
-    selection.removeAllRanges();
-    selection.addRange(range);
-    selectionRangeRef.current = range.cloneRange();
-    return true;
+    if (!setSelectionRangeSafe(root, range)) return false;
+    const active = document.getSelection();
+    if (active && active.rangeCount > 0) {
+      selectionRangeRef.current = active.getRangeAt(0).cloneRange();
+    }
+    return Boolean(active && active.rangeCount > 0);
   };
 
   const clearHeldSelectionHighlight = useCallback(() => {
@@ -1258,13 +1336,9 @@ const NoteEditor = () => {
   }, [fontSizeEditing, showHeldSelectionHighlight]);
 
   const restoreSelection = (root) => {
-    const selection = document.getSelection();
-    if (!root || !selectionRangeRef.current || !selection) return false;
+    if (!root || !selectionRangeRef.current) return false;
     const range = selectionRangeRef.current;
-    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
+    return setSelectionRangeSafe(root, range);
   };
 
   const applyFontSizeToSelection = (root, value) => {
@@ -1273,7 +1347,7 @@ const NoteEditor = () => {
     const range = selection.getRangeAt(0);
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
     const nextSize = `${Math.max(MIN_FONT_SIZE, Math.min(Number(value) || BLOCK_DEFAULTS.text.fontSize, MAX_FONT_SIZE))}px`;
-    cleanupFontSizeArtifacts(root, { fallbackPx: activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize });
+    normalizeLegacyFontNodes(root, activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize);
     if (range.collapsed) {
       const span = document.createElement('span');
       span.style.fontSize = nextSize;
@@ -1288,10 +1362,13 @@ const NoteEditor = () => {
           : Math.min(1, targetNode.childNodes?.length || 0);
       nextRange.setStart(targetNode, targetOffset);
       nextRange.setEnd(targetNode, targetOffset);
-      selection.removeAllRanges();
-      selection.addRange(nextRange);
-      selectionRangeRef.current = nextRange.cloneRange();
-      return true;
+      if (!setSelectionRangeSafe(root, nextRange, { fallbackToEnd: true })) return false;
+      const active = document.getSelection();
+      if (active && active.rangeCount > 0) {
+        selectionRangeRef.current = active.getRangeAt(0).cloneRange();
+        return true;
+      }
+      return false;
     }
     const extracted = range.extractContents();
     clearInlineFontSizeInFragment(extracted);
@@ -1303,9 +1380,11 @@ const NoteEditor = () => {
     stripZeroWidthTextNodes(root);
     const nextRange = document.createRange();
     nextRange.selectNodeContents(span);
-    selection.removeAllRanges();
-    selection.addRange(nextRange);
-    selectionRangeRef.current = nextRange.cloneRange();
+    if (!setSelectionRangeSafe(root, nextRange, { fallbackToEnd: true })) return false;
+    const active = document.getSelection();
+    if (active && active.rangeCount > 0) {
+      selectionRangeRef.current = active.getRangeAt(0).cloneRange();
+    }
     root.normalize();
     return true;
   };
@@ -1347,8 +1426,7 @@ const NoteEditor = () => {
           element.contains(heldRange.startContainer) &&
           element.contains(heldRange.endContainer)
         ) {
-          activeSelection.removeAllRanges();
-          activeSelection.addRange(heldRange.cloneRange());
+          setSelectionRangeSafe(element, heldRange.cloneRange(), { fallbackToEnd: true });
         }
       }
     }
@@ -1600,10 +1678,7 @@ const NoteEditor = () => {
       const nextRange = heldRange.cloneRange();
       selectionRangeRef.current = nextRange.cloneRange();
       root.focus({ preventScroll: true });
-      const selection = document.getSelection();
-      if (!selection) return;
-      selection.removeAllRanges();
-      selection.addRange(nextRange);
+      setSelectionRangeSafe(root, nextRange, { fallbackToEnd: true });
     } catch {
       // Ignore detached-range errors and let regular selection flow continue.
     }
@@ -2438,7 +2513,7 @@ const NoteEditor = () => {
       <div className="gate-shell">
         <div className="gate-card centered">
           <p className="status-text">Note not found.</p>
-          <button className="ghost-btn" onClick={() => navigate('/dashboard')}>
+          <button className="ghost-btn" onClick={returnToDashboardClass}>
             Return to dashboard
           </button>
         </div>
@@ -2449,7 +2524,7 @@ const NoteEditor = () => {
   return (
     <div className="page-shell note-page-shell">
       <header className="note-topbar compact no-title">
-        <button className="ghost-btn note-back" onClick={() => navigate('/dashboard')} title="Back">
+        <button className="ghost-btn note-back" onClick={returnToDashboardClass} title="Back">
           <FaArrowLeft />
         </button>
         <div className="note-toolbar">
@@ -2654,6 +2729,7 @@ const NoteEditor = () => {
                                 if (el.innerHTML !== desired) {
                                   el.innerHTML = desired;
                                 }
+                                normalizeLegacyFontNodes(el, block.fontSize || BLOCK_DEFAULTS.text.fontSize);
                                 cleanupFontSizeArtifacts(el, { fallbackPx: block.fontSize || BLOCK_DEFAULTS.text.fontSize });
                               }}
                               className="note-textarea"

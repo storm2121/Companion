@@ -11,7 +11,7 @@ import {
   FaThumbtack,
   FaTrash,
 } from 'react-icons/fa';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   createNote,
   deleteClass,
@@ -61,6 +61,7 @@ const getNoteTimestamp = (note) => {
 };
 
 const normalizeThemeMode = (mode) => (THEME_PRESETS[mode] ? mode : THEME_DEFAULT_MODE);
+const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
 
 const Dashboard = () => {
   const { firebaseUser, profile, logout, updateThemeMode, applyThemeMode, updateNoteTemplateDefault } = useAuth();
@@ -104,12 +105,38 @@ const Dashboard = () => {
   const summaryRef = useRef(null);
   const imageRef = useRef(null);
   const themeMenuRef = useRef(null);
+  const preferredClassIdRef = useRef('');
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isOnline = useNetworkStatus();
   const moveOptions = useMemo(
     () => classes.filter((item) => item.id !== selectedClassId),
     [classes, selectedClassId],
   );
+
+  useEffect(() => {
+    const queryClassId = searchParams.get('class') || '';
+    const stateClassId =
+      typeof location.state?.selectedClassId === 'string' ? location.state.selectedClassId : '';
+    let storedClassId = '';
+    try {
+      storedClassId = sessionStorage.getItem(DASHBOARD_RETURN_CLASS_KEY) || '';
+    } catch {
+      storedClassId = '';
+    }
+    const preferred = stateClassId || queryClassId || storedClassId;
+    if (!preferred) return;
+    preferredClassIdRef.current = preferred;
+    setSelectedClassId((current) => (current === preferred ? current : preferred));
+    if (storedClassId && storedClassId === preferred) {
+      try {
+        sessionStorage.removeItem(DASHBOARD_RETURN_CLASS_KEY);
+      } catch {
+        // Ignore storage cleanup failures in restricted environments.
+      }
+    }
+  }, [location.state, searchParams]);
 
   useEffect(() => {
     if (!firebaseUser) return;
@@ -119,15 +146,29 @@ const Dashboard = () => {
         const items = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
         setClasses(items);
         setSelectedClassId((current) => {
-          if (!current && items.length) return items[0].id;
-          if (current && !items.find((item) => item.id === current)) return items[0]?.id || '';
-          return current;
+          const preferredClassId = preferredClassIdRef.current;
+          if (preferredClassId) {
+            preferredClassIdRef.current = '';
+            if (items.some((item) => item.id === preferredClassId)) {
+              return preferredClassId;
+            }
+          }
+          if (current && items.find((item) => item.id === current)) return current;
+          return items[0]?.id || '';
         });
       },
       (err) => console.error(err),
     );
     return () => unsub();
   }, [firebaseUser]);
+
+  useEffect(() => {
+    const queryClassId = searchParams.get('class');
+    if (!queryClassId || selectedClassId !== queryClassId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('class');
+    setSearchParams(next, { replace: true });
+  }, [selectedClassId, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!firebaseUser || !selectedClassId) {
