@@ -378,11 +378,14 @@ const NoteEditor = () => {
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
   const [tablePickerHover, setTablePickerHover] = useState({ rows: 2, cols: 2 });
   const [tablePickerPos, setTablePickerPos] = useState({ left: 12, top: 72 });
+  const [blockMenuPos, setBlockMenuPos] = useState({ left: 12, top: 72 });
   const [historyVersion, setHistoryVersion] = useState(0);
   const addMenuRef = useRef(null);
   const toolbarMoreRef = useRef(null);
   const tablePickerTriggerRef = useRef(null);
   const tablePickerPopoverRef = useRef(null);
+  const blockMenuPanelRef = useRef(null);
+  const blockMenuTriggerRefs = useRef({});
   const fileInputRef = useRef(null);
   const canvasScrollRef = useRef(null);
   const canvasRef = useRef(null);
@@ -793,6 +796,65 @@ const NoteEditor = () => {
     };
   }, [tablePickerOpen]);
 
+  const syncBlockMenuPosition = useCallback((id) => {
+    if (!id) return;
+    const trigger = blockMenuTriggerRefs.current[id];
+    if (!(trigger instanceof HTMLElement)) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const panel = blockMenuPanelRef.current;
+    const panelWidth = panel?.offsetWidth || 236;
+    const panelHeight = panel?.offsetHeight || 292;
+    const gap = 8;
+
+    let nextLeft = triggerRect.right - panelWidth;
+    let nextTop = triggerRect.bottom + gap;
+    if (nextTop + panelHeight > window.innerHeight - gap) {
+      nextTop = triggerRect.top - panelHeight - gap;
+    }
+    if (nextTop < gap) {
+      nextTop = Math.max(gap, window.innerHeight - panelHeight - gap);
+    }
+    if (nextLeft + panelWidth > window.innerWidth - gap) {
+      nextLeft = window.innerWidth - panelWidth - gap;
+    }
+    if (nextLeft < gap) {
+      nextLeft = gap;
+    }
+    setBlockMenuPos({ left: Math.round(nextLeft), top: Math.round(nextTop) });
+  }, []);
+
+  useEffect(() => {
+    if (!blockMenuOpenId) return;
+    const syncPosition = () => syncBlockMenuPosition(blockMenuOpenId);
+    const rafId = requestAnimationFrame(syncPosition);
+    window.addEventListener('resize', syncPosition);
+    window.addEventListener('scroll', syncPosition, true);
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', syncPosition);
+      window.removeEventListener('scroll', syncPosition, true);
+    };
+  }, [blockMenuOpenId, syncBlockMenuPosition, blocks]);
+
+  useEffect(() => {
+    if (!blockMenuOpenId) return;
+    const handleClick = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('.block-menu-panel') || target.closest('.block-menu-trigger')) return;
+      setBlockMenuOpenId('');
+    };
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') setBlockMenuOpenId('');
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [blockMenuOpenId]);
+
   useEffect(() => {
     if (!contextMenu) return;
     const closeMenu = () => setContextMenu(null);
@@ -841,6 +903,10 @@ const NoteEditor = () => {
   const colorValue = normalizeHexColor(toolbarColor || activeTextColor, '#ffffff');
   const highlightColorValue = normalizeHexColor(toolbarHighlightColor, '#fff2a8');
   const lineSpacingValue = toolbarLineSpacing || activeLineSpacing;
+  const blockMenuBlock = useMemo(() => {
+    if (!blockMenuOpenId) return null;
+    return blocks.find((item) => item.id === blockMenuOpenId) || null;
+  }, [blockMenuOpenId, blocks]);
   const contextMenuBlock = useMemo(() => {
     if (!contextMenu?.blockId) return null;
     return blocks.find((item) => item.id === contextMenu.blockId) || null;
@@ -854,6 +920,12 @@ const NoteEditor = () => {
     }, 720);
     return Math.max(720, Math.ceil(maxRightEdge + 40));
   }, [blocks]);
+
+  useEffect(() => {
+    if (!blockMenuOpenId) return;
+    if (blockMenuBlock) return;
+    setBlockMenuOpenId('');
+  }, [blockMenuOpenId, blockMenuBlock]);
 
   useEffect(() => {
     if (fontSizeEditing) return;
@@ -2707,6 +2779,13 @@ const NoteEditor = () => {
                           <button
                             type="button"
                             className="block-menu-trigger"
+                            ref={(el) => {
+                              if (el) {
+                                blockMenuTriggerRefs.current[block.id] = el;
+                              } else {
+                                delete blockMenuTriggerRefs.current[block.id];
+                              }
+                            }}
                             onMouseDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -2757,55 +2836,6 @@ const NoteEditor = () => {
                         </div>
                       )}
                     </div>
-                    {blockMenuOpenId === block.id && (
-                      <div className="block-menu-panel">
-                        <div className="block-menu-row">
-                          <label htmlFor={`title-${block.id}`}>Title</label>
-                          <input
-                            id={`title-${block.id}`}
-                            value={block.title}
-                            placeholder="Add a title"
-                            onChange={(event) => updateBlock(block.id, { title: event.target.value })}
-                          />
-                        </div>
-                        {block.type === 'text' && (
-                          <div className="block-menu-row">
-                            <label htmlFor={`bg-${block.id}`}>Block color</label>
-                            <div className="block-color-row">
-                              <input
-                                id={`bg-${block.id}`}
-                                type="color"
-                                value={block.bgColor || '#161b21'}
-                                onChange={(event) =>
-                                  updateBlock(block.id, { bgColor: event.target.value }, { recordHistory: true, reason: 'bg-color' })
-                                }
-                              />
-                              <button
-                                type="button"
-                                className="block-color-reset"
-                                onClick={() => updateBlock(block.id, { bgColor: '' }, { recordHistory: true, reason: 'bg-color' })}
-                              >
-                                Reset
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        <div className="block-menu-actions">
-                          <button type="button" onClick={() => updateBlock(block.id, { locked: !block.locked })}>
-                            {block.locked ? <FaLockOpen /> : <FaLock />}
-                            {block.locked ? 'Unpin' : 'Pin'}
-                          </button>
-                          <button type="button" onClick={() => togglePriority(block.id)}>
-                            <FaStar />
-                            {block.priority ? 'Priority on' : 'Priority off'}
-                          </button>
-                          <button type="button" className="danger" onClick={() => deleteBlock(block.id)}>
-                            <FaTrash />
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </Rnd>
               );
@@ -2908,6 +2938,69 @@ const NoteEditor = () => {
           }}
         />
       </div>
+      {blockMenuOpenId && blockMenuBlock && (
+        <div
+          ref={blockMenuPanelRef}
+          className="block-menu-panel floating"
+          style={{ left: `${blockMenuPos.left}px`, top: `${blockMenuPos.top}px` }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="block-menu-row">
+            <label htmlFor={`title-${blockMenuBlock.id}`}>Title</label>
+            <input
+              id={`title-${blockMenuBlock.id}`}
+              value={blockMenuBlock.title}
+              placeholder="Add a title"
+              onChange={(event) => updateBlock(blockMenuBlock.id, { title: event.target.value })}
+            />
+          </div>
+          {blockMenuBlock.type === 'text' && (
+            <div className="block-menu-row">
+              <label htmlFor={`bg-${blockMenuBlock.id}`}>Block color</label>
+              <div className="block-color-row">
+                <input
+                  id={`bg-${blockMenuBlock.id}`}
+                  type="color"
+                  value={blockMenuBlock.bgColor || '#161b21'}
+                  onChange={(event) =>
+                    updateBlock(
+                      blockMenuBlock.id,
+                      { bgColor: event.target.value },
+                      { recordHistory: true, reason: 'bg-color' },
+                    )
+                  }
+                />
+                <button
+                  type="button"
+                  className="block-color-reset"
+                  onClick={() =>
+                    updateBlock(blockMenuBlock.id, { bgColor: '' }, { recordHistory: true, reason: 'bg-color' })
+                  }
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="block-menu-actions">
+            <button
+              type="button"
+              onClick={() => updateBlock(blockMenuBlock.id, { locked: !blockMenuBlock.locked })}
+            >
+              {blockMenuBlock.locked ? <FaLockOpen /> : <FaLock />}
+              {blockMenuBlock.locked ? 'Unpin' : 'Pin'}
+            </button>
+            <button type="button" onClick={() => togglePriority(blockMenuBlock.id)}>
+              <FaStar />
+              {blockMenuBlock.priority ? 'Priority on' : 'Priority off'}
+            </button>
+            <button type="button" className="danger" onClick={() => deleteBlock(blockMenuBlock.id)}>
+              <FaTrash />
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
       {tablePickerOpen && !textControlsDisabled && (
         <div
           ref={tablePickerPopoverRef}

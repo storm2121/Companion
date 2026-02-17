@@ -2347,18 +2347,25 @@ a {
 }
 
 .block-menu-panel {
-  position: absolute;
-  top: 26px;
-  right: -6px;
+  position: fixed;
   min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: min(72vh, 520px);
+  overflow-y: auto;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.6rem;
   display: grid;
   gap: 0.6rem;
-  z-index: 30;
+  z-index: 3000001;
   animation: slideIn 0.18s ease-out;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28);
+}
+
+.block-menu-panel.floating {
+  left: 8px;
+  top: 8px;
 }
 
 .note-context-menu {
