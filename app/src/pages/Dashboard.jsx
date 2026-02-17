@@ -778,7 +778,7 @@ const Dashboard = () => {
                       </button>
                       <span className="dot" style={{ background: item.color || 'var(--accent)' }} />
                       <div className="class-text">
-                        <p>{item.name}</p>
+                        <p title={item.name}>{item.name}</p>
                         <span>{item.noteCount || 0} notes</span>
                       </div>
                     </div>
