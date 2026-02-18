@@ -9,6 +9,7 @@ import {
   FaPlus,
   FaSearch,
   FaThumbtack,
+  FaTimes,
   FaTrash,
 } from 'react-icons/fa';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -16,8 +17,10 @@ import {
   createNote,
   deleteClass,
   deleteNote,
+  deleteNoteTemplate,
   deleteNotes,
   listenToClasses,
+  listenToNoteTemplates,
   listenToNotes,
   moveNotes,
   reorderClasses,
@@ -30,7 +33,7 @@ import AddClassSheet from '../components/classes/AddClassSheet';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
 import { THEME_DEFAULT_MODE, THEME_OPTIONS, THEME_PRESETS } from '../themePresets';
-import { buildTemplateBlocks, DEFAULT_TEMPLATE_ID, getTemplateById, NOTE_TEMPLATES } from '../data/noteTemplates';
+import { DEFAULT_TEMPLATE_ID } from '../data/noteTemplates';
 import useNetworkStatus from '../hooks/useNetworkStatus';
 
 const CLASS_COLORS = ['#c8a46a', '#4a5a63', '#4b5b49', '#b49a62', '#3a3c42', '#586471', '#3e4c59'];
@@ -62,10 +65,19 @@ const getNoteTimestamp = (note) => {
 
 const normalizeThemeMode = (mode) => (THEME_PRESETS[mode] ? mode : THEME_DEFAULT_MODE);
 const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
+const TEMPLATE_DRAFT_STORAGE_KEY = 'companion:new-note-draft';
+const TEMPLATE_RESULT_STORAGE_KEY = 'companion:new-note-template-result';
+const CUSTOM_TEMPLATE_PREFIX = 'custom:';
+
+const toCustomTemplateId = (id) => `${CUSTOM_TEMPLATE_PREFIX}${id}`;
+
+const cloneTemplateBlocks = (blocks = []) => blocks.map((block) => ({ ...block }));
 
 const Dashboard = () => {
   const { firebaseUser, profile, logout, updateThemeMode, applyThemeMode, updateNoteTemplateDefault } = useAuth();
   const [classes, setClasses] = useState([]);
+  const [customTemplates, setCustomTemplates] = useState([]);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [selectedClassId, setSelectedClassId] = useState('');
   const [notes, setNotes] = useState([]);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -98,6 +110,10 @@ const Dashboard = () => {
   const [noteSaving, setNoteSaving] = useState(false);
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [templateDefault, setTemplateDefault] = useState(false);
+  const [templatePromptOpen, setTemplatePromptOpen] = useState(false);
+  const [templatePromptName, setTemplatePromptName] = useState('');
+  const [templateDeleteTarget, setTemplateDeleteTarget] = useState(null);
+  const [templateDeleting, setTemplateDeleting] = useState(false);
   const [quickAddBusy, setQuickAddBusy] = useState(false);
   const [themeMode, setThemeMode] = useState(THEME_DEFAULT_MODE);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
@@ -105,11 +121,39 @@ const Dashboard = () => {
   const summaryRef = useRef(null);
   const imageRef = useRef(null);
   const themeMenuRef = useRef(null);
+  const templatePromptRef = useRef(null);
   const preferredClassIdRef = useRef('');
+  const templateRestoreDoneRef = useRef(false);
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const isOnline = useNetworkStatus();
+  const availableTemplates = useMemo(() => {
+    const blankTemplate = {
+      id: DEFAULT_TEMPLATE_ID,
+      label: 'Blank',
+      description: 'Start with an empty canvas.',
+      autoTitlePrefix: 'Quick Note',
+      kind: 'builtin',
+      blocks: [],
+      canvasHeight: 720,
+    };
+    const custom = customTemplates.map((template) => ({
+      id: toCustomTemplateId(template.id),
+      sourceId: template.id,
+      label: template.name || 'Custom template',
+      description: 'Your custom layout.',
+      autoTitlePrefix: template.name || 'Template',
+      kind: 'custom',
+      blocks: Array.isArray(template.blocks) ? template.blocks : [],
+      canvasHeight: Number.isFinite(template.canvasHeight) ? template.canvasHeight : 720,
+    }));
+    return [blankTemplate, ...custom];
+  }, [customTemplates]);
+  const resolveTemplateById = useMemo(() => {
+    const templateMap = new Map(availableTemplates.map((item) => [item.id, item]));
+    return (id) => templateMap.get(id) || availableTemplates[0];
+  }, [availableTemplates]);
   const moveOptions = useMemo(
     () => classes.filter((item) => item.id !== selectedClassId),
     [classes, selectedClassId],
@@ -158,6 +202,27 @@ const Dashboard = () => {
         });
       },
       (err) => console.error(err),
+    );
+    return () => unsub();
+  }, [firebaseUser]);
+
+  useEffect(() => {
+    if (!firebaseUser) {
+      setCustomTemplates([]);
+      setTemplatesLoaded(false);
+      return;
+    }
+    const unsub = listenToNoteTemplates(
+      firebaseUser.uid,
+      (snapshot) => {
+        const items = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        setCustomTemplates(items);
+        setTemplatesLoaded(true);
+      },
+      (err) => {
+        console.error(err);
+        setTemplatesLoaded(true);
+      },
     );
     return () => unsub();
   }, [firebaseUser]);
@@ -270,6 +335,93 @@ const Dashboard = () => {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [themeMenuOpen]);
 
+  useEffect(() => {
+    if (!templatePromptOpen) return;
+    templatePromptRef.current?.focus();
+  }, [templatePromptOpen]);
+
+  useEffect(() => {
+    templateRestoreDoneRef.current = false;
+  }, [firebaseUser?.uid]);
+
+  useEffect(() => {
+    if (!firebaseUser || templateRestoreDoneRef.current) return;
+    let draftRaw = '';
+    let resultRaw = '';
+    try {
+      draftRaw = sessionStorage.getItem(TEMPLATE_DRAFT_STORAGE_KEY) || '';
+      resultRaw = sessionStorage.getItem(TEMPLATE_RESULT_STORAGE_KEY) || '';
+    } catch {
+      draftRaw = '';
+      resultRaw = '';
+    }
+    if (!draftRaw) return;
+    let draft = null;
+    let result = null;
+    try {
+      draft = JSON.parse(draftRaw);
+    } catch {
+      draft = null;
+    }
+    try {
+      result = resultRaw ? JSON.parse(resultRaw) : null;
+    } catch {
+      result = null;
+    }
+    if (!draft || draft.uid !== firebaseUser.uid) {
+      try {
+        sessionStorage.removeItem(TEMPLATE_DRAFT_STORAGE_KEY);
+        sessionStorage.removeItem(TEMPLATE_RESULT_STORAGE_KEY);
+      } catch {
+        // Ignore storage failures.
+      }
+      return;
+    }
+    const resultTemplateId =
+      result && result.uid === firebaseUser.uid && typeof result.templateId === 'string'
+        ? result.templateId
+        : '';
+    if (
+      resultTemplateId &&
+      !availableTemplates.some((item) => item.id === resultTemplateId) &&
+      !templatesLoaded
+    ) {
+      return;
+    }
+    templateRestoreDoneRef.current = true;
+    try {
+      sessionStorage.removeItem(TEMPLATE_DRAFT_STORAGE_KEY);
+      sessionStorage.removeItem(TEMPLATE_RESULT_STORAGE_KEY);
+    } catch {
+      // Ignore storage cleanup failures.
+    }
+    const resultTemplate =
+      resultTemplateId && availableTemplates.some((item) => item.id === resultTemplateId)
+        ? resultTemplateId
+        : '';
+    const draftTemplate =
+      typeof draft.templateId === 'string' && availableTemplates.some((item) => item.id === draft.templateId)
+        ? draft.templateId
+        : '';
+    const restoredTemplateId = resultTemplate || draftTemplate || DEFAULT_TEMPLATE_ID;
+    const restoredClassId = typeof draft.classId === 'string' ? draft.classId : '';
+    if (restoredClassId) {
+      preferredClassIdRef.current = restoredClassId;
+      setSelectedClassId((current) => current || restoredClassId);
+    }
+    setNoteMenuOpenId('');
+    setNoteModalMode('create');
+    setNoteModalNote(null);
+    setNoteTitle(draft.noteTitle || '');
+    setNoteSummary(draft.noteSummary || '');
+    setNoteImageFile(null);
+    setNoteImagePreview('');
+    setNoteFocus('title');
+    setTemplateId(restoredTemplateId);
+    setTemplateDefault(Boolean(draft.templateDefault));
+    setNoteModalOpen(true);
+  }, [firebaseUser, availableTemplates, templatesLoaded]);
+
   const selectedClass = classes.find((item) => item.id === selectedClassId);
   const trimmedSearch = search.trim().toLowerCase();
   const searchTokens = useMemo(
@@ -294,7 +446,10 @@ const Dashboard = () => {
     [notes, selectedNoteIds],
   );
   const defaultTemplateId = profile?.noteTemplateDefault || DEFAULT_TEMPLATE_ID;
-  const defaultTemplate = useMemo(() => getTemplateById(defaultTemplateId), [defaultTemplateId]);
+  const defaultTemplate = useMemo(
+    () => resolveTemplateById(defaultTemplateId),
+    [defaultTemplateId, resolveTemplateById],
+  );
 
   const getAutoTitle = (prefix) => {
     if (!prefix) return 'Untitled Note';
@@ -329,12 +484,15 @@ const Dashboard = () => {
     setNoteMenuOpenId('');
   };
 
-  const getTemplateCanvas = () => {
-    if (typeof window === 'undefined') {
-      return { width: 720, height: 720 };
-    }
-    const width = Math.max(320, Math.floor(window.innerWidth - 96));
-    return { width, height: 720 };
+  const getTemplateBlocks = (template) => {
+    if (!template || template.kind !== 'custom') return [];
+    return cloneTemplateBlocks(template.blocks || []);
+  };
+
+  const findTemplateById = (id) => {
+    if (typeof id !== 'string' || !id.trim()) return availableTemplates[0];
+    const found = availableTemplates.find((item) => item.id === id);
+    return found || availableTemplates[0];
   };
 
   const handleOpenCreateNote = () => {
@@ -347,7 +505,7 @@ const Dashboard = () => {
     setNoteImageFile(null);
     setNoteImagePreview('');
     setNoteFocus('title');
-    setTemplateId(defaultTemplateId);
+    setTemplateId(defaultTemplate?.id || DEFAULT_TEMPLATE_ID);
     setTemplateDefault(false);
     setNoteModalOpen(true);
   };
@@ -356,16 +514,16 @@ const Dashboard = () => {
     if (!firebaseUser || !selectedClassId || quickAddBusy) return;
     setQuickAddBusy(true);
     try {
-      const template = defaultTemplate;
+      const template = findTemplateById(defaultTemplate?.id || defaultTemplateId);
       const title = getAutoTitle(template.autoTitlePrefix || 'Quick Note');
       const nextOrder = getNextNoteOrder();
-      const { width, height } = getTemplateCanvas();
-      const blocks = buildTemplateBlocks(template.id, { canvasWidth: width, canvasHeight: height });
+      const blocks = getTemplateBlocks(template);
       const noteId = await createNote(firebaseUser.uid, selectedClassId, {
         title,
         summary: '',
         coverUrl: '',
         blocks,
+        canvasHeight: Number.isFinite(template.canvasHeight) ? template.canvasHeight : 720,
         templateId: template.id,
         order: nextOrder,
       });
@@ -374,6 +532,82 @@ const Dashboard = () => {
       console.error('Failed to quick add note', err);
     } finally {
       setQuickAddBusy(false);
+    }
+  };
+
+  const beginTemplateBuilderFlow = (name) => {
+    if (!firebaseUser || !selectedClassId) return;
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+    const draft = {
+      uid: firebaseUser.uid,
+      classId: selectedClassId,
+      noteTitle,
+      noteSummary,
+      templateId,
+      templateDefault,
+      savedAt: Date.now(),
+    };
+    try {
+      sessionStorage.setItem(TEMPLATE_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+      sessionStorage.removeItem(TEMPLATE_RESULT_STORAGE_KEY);
+    } catch {
+      // Ignore storage failures in restricted browsers.
+    }
+    setTemplatePromptOpen(false);
+    setTemplatePromptName('');
+    navigate('/template/new', {
+      state: {
+        templateMode: true,
+        templateName: trimmedName,
+      },
+    });
+  };
+
+  const handleOpenTemplatePrompt = () => {
+    if (noteModalMode !== 'create') return;
+    setTemplatePromptName('');
+    setTemplatePromptOpen(true);
+  };
+
+  const handleCloseTemplatePrompt = () => {
+    setTemplatePromptOpen(false);
+    setTemplatePromptName('');
+  };
+
+  const handleConfirmTemplatePrompt = () => {
+    const trimmed = templatePromptName.trim();
+    if (!trimmed) return;
+    beginTemplateBuilderFlow(trimmed);
+  };
+
+  const requestTemplateDelete = (template) => {
+    if (!template || template.kind !== 'custom') return;
+    setTemplateDeleteTarget(template);
+  };
+
+  const cancelTemplateDelete = () => {
+    if (templateDeleting) return;
+    setTemplateDeleteTarget(null);
+  };
+
+  const confirmTemplateDelete = async () => {
+    if (!firebaseUser || !templateDeleteTarget?.sourceId) return;
+    setTemplateDeleting(true);
+    try {
+      await deleteNoteTemplate(firebaseUser.uid, templateDeleteTarget.sourceId);
+      if (templateId === templateDeleteTarget.id) {
+        setTemplateId(DEFAULT_TEMPLATE_ID);
+      }
+      if (profile?.noteTemplateDefault === templateDeleteTarget.id) {
+        await updateNoteTemplateDefault(DEFAULT_TEMPLATE_ID);
+        setTemplateDefault(false);
+      }
+      setTemplateDeleteTarget(null);
+    } catch (err) {
+      console.error('Failed to delete custom template', err);
+    } finally {
+      setTemplateDeleting(false);
     }
   };
 
@@ -398,6 +632,10 @@ const Dashboard = () => {
     setNoteImageFile(null);
     setNoteImagePreview('');
     setTemplateDefault(false);
+    setTemplatePromptOpen(false);
+    setTemplatePromptName('');
+    setTemplateDeleteTarget(null);
+    setTemplateDeleting(false);
   };
 
   const uploadCover = async (noteId) => {
@@ -416,15 +654,15 @@ const Dashboard = () => {
     setNoteSaving(true);
     try {
       if (noteModalMode === 'create') {
-        const template = getTemplateById(templateId || DEFAULT_TEMPLATE_ID);
+        const template = findTemplateById(templateId || defaultTemplateId);
         const nextOrder = getNextNoteOrder();
-        const { width, height } = getTemplateCanvas();
-        const blocks = buildTemplateBlocks(template.id, { canvasWidth: width, canvasHeight: height });
+        const blocks = getTemplateBlocks(template);
         const noteId = await createNote(firebaseUser.uid, selectedClassId, {
           title: noteTitle.trim(),
           summary: noteSummary.trim(),
           coverUrl: '',
           blocks,
+          canvasHeight: Number.isFinite(template.canvasHeight) ? template.canvasHeight : 720,
           templateId: template.id,
           order: nextOrder,
         });
@@ -1075,20 +1313,47 @@ const Dashboard = () => {
                       </label>
                     </div>
                     <div className="template-grid">
-                      {NOTE_TEMPLATES.map((template) => (
-                        <button
+                      {availableTemplates.map((template) => (
+                        <div
                           key={template.id}
-                          type="button"
-                          className={`template-card ${templateId === template.id ? 'active' : ''}`}
-                          onClick={() => setTemplateId(template.id)}
+                          className={`template-card-wrap ${templateId === template.id ? 'active' : ''}`}
                         >
-                          <strong>{template.label}</strong>
-                          <span>{template.description}</span>
-                        </button>
+                          <button
+                            type="button"
+                            className={`template-card ${templateId === template.id ? 'active' : ''}`}
+                            onClick={() => setTemplateId(template.id)}
+                          >
+                            <strong>{template.label}</strong>
+                            <span>{template.description}</span>
+                            {template.kind === 'custom' && <em>Custom</em>}
+                          </button>
+                          {template.kind === 'custom' && (
+                            <button
+                              type="button"
+                              className="template-card-delete"
+                              title="Delete custom template"
+                              aria-label={`Delete ${template.label}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                requestTemplateDelete(template);
+                              }}
+                            >
+                              <FaTimes />
+                            </button>
+                          )}
+                        </div>
                       ))}
+                      <button
+                        type="button"
+                        className="template-card template-card-create"
+                        onClick={handleOpenTemplatePrompt}
+                      >
+                        <strong>Create your own</strong>
+                        <span>Design a layout and save it for future notes.</span>
+                      </button>
                     </div>
                     <p className="template-hint">
-                      Default template: {defaultTemplate.label}
+                      Default template: {defaultTemplate?.label || 'Blank'}
                     </p>
                   </div>
                 )}
@@ -1103,6 +1368,73 @@ const Dashboard = () => {
                   disabled={noteSaving || !noteTitle.trim()}
                 >
                   {noteSaving ? 'Saving...' : 'Confirm'}
+                </button>
+              </footer>
+            </div>
+          </div>
+        </>
+      )}
+
+      {templatePromptOpen && (
+        <>
+          <div className="overlay show" onClick={handleCloseTemplatePrompt} />
+          <div className="modal open" role="dialog" aria-modal="true">
+            <div className="modal-card modal-card-sm">
+              <header>
+                <h3>Create custom template</h3>
+                <p className="status-text">Give your template a name, then build it on the canvas.</p>
+              </header>
+              <div className="sheet-fields">
+                <label>
+                  Template name
+                  <input
+                    ref={templatePromptRef}
+                    value={templatePromptName}
+                    onChange={(event) => setTemplatePromptName(event.target.value)}
+                    placeholder="e.g. Lecture split"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        handleConfirmTemplatePrompt();
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+              <footer className="modal-actions">
+                <button className="ghost-btn" onClick={handleCloseTemplatePrompt}>
+                  Cancel
+                </button>
+                <button
+                  className="primary-btn"
+                  onClick={handleConfirmTemplatePrompt}
+                  disabled={!templatePromptName.trim()}
+                >
+                  Continue
+                </button>
+              </footer>
+            </div>
+          </div>
+        </>
+      )}
+
+      {templateDeleteTarget && (
+        <>
+          <div className="overlay show" onClick={cancelTemplateDelete} />
+          <div className="modal open" role="dialog" aria-modal="true">
+            <div className="modal-card modal-card-sm">
+              <header>
+                <h3>Delete template</h3>
+                <p className="status-text">
+                  Delete {templateDeleteTarget.label}? This cannot be undone.
+                </p>
+              </header>
+              <footer className="modal-actions">
+                <button className="ghost-btn" onClick={cancelTemplateDelete} disabled={templateDeleting}>
+                  Cancel
+                </button>
+                <button className="danger-btn" onClick={confirmTemplateDelete} disabled={templateDeleting}>
+                  {templateDeleting ? 'Deleting...' : 'Delete template'}
                 </button>
               </footer>
             </div>

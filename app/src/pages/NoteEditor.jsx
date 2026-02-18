@@ -34,8 +34,8 @@ import {
   FaUndo,
 } from 'react-icons/fa';
 import { Rnd } from 'react-rnd';
-import { useNavigate, useParams } from 'react-router-dom';
-import { getNote, updateNote } from '../services/library';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { createNoteTemplate, getNote, updateNote } from '../services/library';
 import { useAuth } from '../context/AuthContext';
 import ScreenLoader from '../components/ui/ScreenLoader';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
@@ -52,6 +52,9 @@ const LOCAL_DRAFT_IDLE_MS = 1000;
 const FORCE_SAVE_INTERVAL_MS = 60000;
 const DRAFT_STORAGE_PREFIX = 'companion-note-draft';
 const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
+const TEMPLATE_DRAFT_STORAGE_KEY = 'companion:new-note-draft';
+const TEMPLATE_RESULT_STORAGE_KEY = 'companion:new-note-template-result';
+const CUSTOM_TEMPLATE_PREFIX = 'custom:';
 const HISTORY_LIMIT = 20;
 const TEXT_HISTORY_IDLE_MS = 1200;
 const NUDGE_HOLD_DELAY_MS = 180;
@@ -345,11 +348,20 @@ const getMaxZIndex = (items, predicate) =>
 
 const NoteEditor = () => {
   const { classId, noteId } = useParams();
+  const location = useLocation();
+  const isTemplateMode = location.pathname === '/template/new';
+  const templateBuilderName =
+    typeof location.state?.templateName === 'string' && location.state.templateName.trim()
+      ? location.state.templateName.trim()
+      : 'Custom template';
   const { firebaseUser } = useAuth();
-  const [note, setNote] = useState(null);
+  const [note, setNote] = useState(() =>
+    isTemplateMode ? { title: templateBuilderName, templateBuilder: true } : null,
+  );
   const [blocks, setBlocks] = useState([]);
   const [canvasHeight, setCanvasHeight] = useState(PAGE_HEIGHT);
   const [saveStatus, setSaveStatus] = useState('All changes saved');
+  const [templateSaving, setTemplateSaving] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [blockMenuOpenId, setBlockMenuOpenId] = useState('');
   const [activeBlockId, setActiveBlockId] = useState('');
@@ -420,6 +432,27 @@ const NoteEditor = () => {
   const navigate = useNavigate();
   const isOnline = useNetworkStatus();
   const returnToDashboardClass = useCallback(() => {
+    if (isTemplateMode) {
+      let preferredClassId = '';
+      try {
+        const cached = sessionStorage.getItem(TEMPLATE_DRAFT_STORAGE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          preferredClassId =
+            typeof parsed?.classId === 'string' && parsed.classId.trim() ? parsed.classId : '';
+        }
+      } catch {
+        preferredClassId = '';
+      }
+      if (preferredClassId) {
+        navigate(`/dashboard?class=${encodeURIComponent(preferredClassId)}`, {
+          state: { selectedClassId: preferredClassId },
+        });
+      } else {
+        navigate('/dashboard');
+      }
+      return;
+    }
     if (classId) {
       try {
         sessionStorage.setItem(DASHBOARD_RETURN_CLASS_KEY, classId);
@@ -432,7 +465,7 @@ const NoteEditor = () => {
       return;
     }
     navigate('/dashboard');
-  }, [navigate, classId]);
+  }, [navigate, classId, isTemplateMode]);
 
   useEffect(() => {
     if (!classId) return undefined;
@@ -446,9 +479,9 @@ const NoteEditor = () => {
   }, [classId]);
 
   const draftKey = useMemo(() => {
-    if (!firebaseUser) return '';
+    if (!firebaseUser || isTemplateMode) return '';
     return `${DRAFT_STORAGE_PREFIX}:${firebaseUser.uid}:${classId}:${noteId}`;
-  }, [firebaseUser, classId, noteId]);
+  }, [firebaseUser, classId, noteId, isTemplateMode]);
 
   const updateSaveStatus = useCallback((next) => {
     if (saveStatusRef.current === next) return;
@@ -484,7 +517,7 @@ const NoteEditor = () => {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
-    if (!firebaseUser || !note || note.missing) return;
+    if (isTemplateMode || !firebaseUser || !note || note.missing) return;
     if (!dirtyRef.current) return;
     if (savingRef.current) return;
     if (lastSavedVersionRef.current === changeVersionRef.current) return;
@@ -521,7 +554,7 @@ const NoteEditor = () => {
     } finally {
       savingRef.current = false;
     }
-  }, [firebaseUser, note, classId, noteId, draftKey, getBlocksSnapshot, updateSaveStatus]);
+  }, [isTemplateMode, firebaseUser, note, classId, noteId, draftKey, getBlocksSnapshot, updateSaveStatus]);
 
   useEffect(() => {
     flushSaveRef.current = flushSave;
@@ -613,6 +646,23 @@ const NoteEditor = () => {
   }, [canvasHeight]);
 
   useEffect(() => {
+    if (isTemplateMode) {
+      const normalized = normalizeBlocks([]);
+      setNote({ title: templateBuilderName, templateBuilder: true });
+      setBlocks(normalized);
+      seedTextDrafts(normalized);
+      setCanvasHeight(PAGE_HEIGHT);
+      dirtyRef.current = false;
+      changeVersionRef.current = 0;
+      lastSavedVersionRef.current = 0;
+      updateSaveStatus('Template draft');
+      historyRef.current = [
+        { blocks: cloneBlocks(normalized), canvasHeight: PAGE_HEIGHT, ts: Date.now(), reason: 'load-template' },
+      ];
+      futureRef.current = [];
+      setHistoryVersion((prev) => prev + 1);
+      return;
+    }
     const loadNote = async () => {
       if (!firebaseUser) return;
       const data = await getNote(firebaseUser.uid, classId, noteId);
@@ -671,10 +721,20 @@ const NoteEditor = () => {
       }
     };
     loadNote();
-  }, [firebaseUser, classId, noteId, draftKey, scheduleSave, seedTextDrafts, updateSaveStatus]);
+  }, [
+    isTemplateMode,
+    templateBuilderName,
+    firebaseUser,
+    classId,
+    noteId,
+    draftKey,
+    scheduleSave,
+    seedTextDrafts,
+    updateSaveStatus,
+  ]);
 
   useEffect(() => {
-    if (!note || note.missing || !firebaseUser) return;
+    if (isTemplateMode || !note || note.missing || !firebaseUser) return;
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') {
         void flushSave('visibility');
@@ -693,7 +753,7 @@ const NoteEditor = () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       if (forceSaveRef.current) clearInterval(forceSaveRef.current);
     };
-  }, [note, firebaseUser, classId, noteId, flushSave]);
+  }, [isTemplateMode, note, firebaseUser, classId, noteId, flushSave]);
 
   useEffect(() => {
     return () => {
@@ -1048,7 +1108,10 @@ const NoteEditor = () => {
     try {
       const { width, height } = await loadImageDimensions(file);
       const size = fitImageSize(width, height);
-      const ref = storageRef(storage, `notes/${firebaseUser.uid}/${noteId}/${Date.now()}-${file.name}`);
+      const assetPath = isTemplateMode
+        ? `templates/${firebaseUser.uid}/${Date.now()}-${file.name}`
+        : `notes/${firebaseUser.uid}/${noteId}/${Date.now()}-${file.name}`;
+      const ref = storageRef(storage, assetPath);
       await uploadBytes(ref, file);
       const url = await getDownloadURL(ref);
       const position = getNextPosition(size);
@@ -2169,6 +2232,56 @@ const NoteEditor = () => {
     setAddMenuOpen(false);
   };
 
+  const handleSaveTemplate = async () => {
+    if (!isTemplateMode || !firebaseUser || templateSaving) return;
+    const name = templateBuilderName.trim();
+    if (!name) return;
+    setTemplateSaving(true);
+    try {
+      const blocksSnapshot = cloneBlocks(getBlocksSnapshot());
+      const createdId = await createNoteTemplate(firebaseUser.uid, {
+        name,
+        blocks: blocksSnapshot,
+        canvasHeight: canvasHeightRef.current,
+      });
+      let preferredClassId = '';
+      try {
+        const cachedDraft = sessionStorage.getItem(TEMPLATE_DRAFT_STORAGE_KEY);
+        if (cachedDraft) {
+          const parsedDraft = JSON.parse(cachedDraft);
+          preferredClassId =
+            typeof parsedDraft?.classId === 'string' && parsedDraft.classId.trim()
+              ? parsedDraft.classId
+              : '';
+        }
+        if (preferredClassId) {
+          sessionStorage.setItem(DASHBOARD_RETURN_CLASS_KEY, preferredClassId);
+        }
+        sessionStorage.setItem(
+          TEMPLATE_RESULT_STORAGE_KEY,
+          JSON.stringify({
+            uid: firebaseUser.uid,
+            templateId: `${CUSTOM_TEMPLATE_PREFIX}${createdId}`,
+            createdAt: Date.now(),
+          }),
+        );
+      } catch {
+        // Ignore storage failures and still navigate back.
+      }
+      if (preferredClassId) {
+        navigate(`/dashboard?class=${encodeURIComponent(preferredClassId)}`, {
+          state: { selectedClassId: preferredClassId },
+        });
+      } else {
+        navigate('/dashboard');
+      }
+    } catch (err) {
+      console.error('Failed to save template', err);
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
   useEffect(() => {
     const handleGlobalRelease = () => {
       nudgePressedRef.current = false;
@@ -2594,11 +2707,16 @@ const NoteEditor = () => {
   }
 
   return (
-    <div className="page-shell note-page-shell">
-      <header className="note-topbar compact no-title">
+    <div className={`page-shell note-page-shell ${isTemplateMode ? 'template-mode' : ''}`}>
+      <header className={`note-topbar compact ${isTemplateMode ? '' : 'no-title'}`}>
         <button className="ghost-btn note-back" onClick={returnToDashboardClass} title="Back">
           <FaArrowLeft />
         </button>
+        {isTemplateMode && (
+          <span className="template-mode-pill" title="Template creation mode">
+            Template mode: {templateBuilderName}
+          </span>
+        )}
         <div className="note-toolbar">
           <div className={`text-command-bar ${toolbarMode} ${textControlsDisabled ? 'disabled' : ''}`}>
             {toolbarMode === 'segmented' && (
@@ -2938,6 +3056,18 @@ const NoteEditor = () => {
           }}
         />
       </div>
+      {isTemplateMode && (
+        <div className="template-save-dock">
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={handleSaveTemplate}
+            disabled={templateSaving}
+          >
+            {templateSaving ? 'Saving template...' : 'Save template'}
+          </button>
+        </div>
+      )}
       {blockMenuOpenId && blockMenuBlock && (
         <div
           ref={blockMenuPanelRef}

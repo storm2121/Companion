@@ -71,6 +71,7 @@ export const createNote = async (uid, classId, payload = {}) => {
     summary: payload.summary || '',
     coverUrl: payload.coverUrl || '',
     blocks: payload.blocks || [],
+    canvasHeight: Number.isFinite(payload.canvasHeight) ? payload.canvasHeight : 720,
     tags: payload.tags || [],
     pinned: payload.pinned || false,
     templateId: payload.templateId || '',
@@ -144,4 +145,28 @@ export const reorderNotes = async (uid, classId, orderedNotes) => {
     batch.update(doc(db, 'users', uid, 'classes', classId, 'notes', note.id), { order: index });
   });
   await batch.commit();
+};
+
+export const listenToNoteTemplates = (uid, onData, onError) => {
+  const q = query(collection(db, 'users', uid, 'noteTemplates'), orderBy('updatedAt', 'desc'));
+  return onSnapshot(q, onData, onError);
+};
+
+export const createNoteTemplate = async (uid, payload = {}) => {
+  const name = (payload.name || 'Custom template').trim() || 'Custom template';
+  const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
+  const canvasHeight = Number.isFinite(payload.canvasHeight) ? payload.canvasHeight : 720;
+  const ref = await addDoc(collection(db, 'users', uid, 'noteTemplates'), {
+    name,
+    blocks,
+    canvasHeight,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+};
+
+export const deleteNoteTemplate = async (uid, templateId) => {
+  if (!uid || !templateId) return;
+  await deleteDoc(doc(db, 'users', uid, 'noteTemplates', templateId));
 };

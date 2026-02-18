@@ -1185,16 +1185,22 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.template-card-wrap {
+  position: relative;
+}
+
 .template-card {
   border: 1px solid var(--border);
   background: var(--surface-1);
   border-radius: var(--radius-sm);
   padding: 0.7rem 0.8rem;
+  padding-right: 2.2rem;
   display: grid;
   gap: 0.25rem;
   text-align: left;
   cursor: pointer;
   transition: border var(--transition), background var(--transition);
+  width: 100%;
 }
 
 .template-card strong {
@@ -1208,6 +1214,12 @@ a {
   color: var(--text-muted);
 }
 
+.template-card em {
+  font-style: normal;
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+}
+
 .template-card:hover {
   background: var(--surface-2);
 }
@@ -1217,10 +1229,41 @@ a {
   background: rgba(200, 164, 106, 0.12);
 }
 
+.template-card-create {
+  border-style: dashed;
+  padding-right: 0.8rem;
+}
+
+.template-card-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border var(--transition);
+}
+
+.template-card-delete:hover {
+  background: rgba(213, 154, 154, 0.14);
+  border-color: rgba(213, 154, 154, 0.45);
+  color: var(--danger);
+}
+
 .template-hint {
   margin: 0;
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.modal-card-sm {
+  width: min(460px, 92vw);
 }
 
 .modal-card header {
@@ -1270,6 +1313,18 @@ a {
 
 .note-topbar.no-title {
   grid-template-columns: auto 1fr;
+}
+
+.template-mode-pill {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
 }
 
 .note-title-wrap {
@@ -1896,6 +1951,10 @@ a {
   overflow: hidden;
 }
 
+.note-page-shell.template-mode .note-canvas {
+  filter: grayscale(0.32);
+}
+
 .note-block {
   position: relative;
   overflow: visible;
@@ -2218,6 +2277,19 @@ a {
 .note-fab .add-block-btn {
   position: relative;
   z-index: 2000002;
+}
+
+.template-save-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 2000003;
+}
+
+.template-save-dock .primary-btn {
+  min-width: 180px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
 }
 
 .fab-text-panel {
@@ -2603,6 +2675,14 @@ a {
 
   .note-topbar.no-title {
     grid-template-columns: auto 1fr;
+  }
+
+  .template-mode-pill {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.68rem;
   }
 
   .main-body,

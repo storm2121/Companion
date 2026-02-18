@@ -47,6 +47,14 @@ const App = () => {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/template/new"
+            element={
+              <ProtectedRoute requireProfile>
+                <NoteEditor />
+              </ProtectedRoute>
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

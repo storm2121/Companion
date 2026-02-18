@@ -10,6 +10,10 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if isVerified() && request.auth.uid == userId;
 
+      match /noteTemplates/{templateId} {
+        allow read, write: if isVerified() && request.auth.uid == userId;
+      }
+
       match /classes/{classId} {
         allow read, write: if isVerified() && request.auth.uid == userId;
 
