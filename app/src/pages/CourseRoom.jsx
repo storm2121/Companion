@@ -43,7 +43,10 @@ const CourseRoom = () => {
     if (!file) return null;
     const refPath = `course-media/${courseId}/${Date.now()}-${file.name}`;
     const ref = storageRef(storage, refPath);
-    await uploadBytes(ref, file);
+    await uploadBytes(ref, file, {
+      contentType: file.type || undefined,
+      cacheControl: 'public,max-age=31536000,immutable',
+    });
     return getDownloadURL(ref);
   };
 

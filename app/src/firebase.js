@@ -1,6 +1,11 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { enableIndexedDbPersistence, getFirestore } from 'firebase/firestore';
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -16,9 +21,16 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+let dbInstance;
+try {
+  dbInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  });
+} catch (err) {
+  console.warn('Falling back to default Firestore initialization', err);
+  dbInstance = getFirestore(app);
+}
+export const db = dbInstance;
 export const storage = getStorage(app);
-
-enableIndexedDbPersistence(db).catch((err) => {
-  console.warn('Firestore persistence unavailable', err);
-});

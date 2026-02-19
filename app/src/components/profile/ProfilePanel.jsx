@@ -45,7 +45,10 @@ const ProfilePanel = () => {
     setFeedback('');
     try {
       const ref = storageRef(storage, `avatars/${firebaseUser.uid}`);
-      await uploadBytes(ref, file);
+      await uploadBytes(ref, file, {
+        contentType: file.type || undefined,
+        cacheControl: 'public,max-age=31536000,immutable',
+      });
       const url = await getDownloadURL(ref);
       await updateDoc(doc(db, 'users', firebaseUser.uid), { photoUrl: url });
       setFeedback('Portrait updated.');

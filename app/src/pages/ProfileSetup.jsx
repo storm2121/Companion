@@ -49,7 +49,10 @@ const ProfileSetup = () => {
     setError('');
     try {
       const ref = storageRef(storage, `avatars/${firebaseUser.uid}/${Date.now()}-${file.name}`);
-      await uploadBytes(ref, file);
+      await uploadBytes(ref, file, {
+        contentType: file.type || undefined,
+        cacheControl: 'public,max-age=31536000,immutable',
+      });
       const url = await getDownloadURL(ref);
       setPhotoUrl(url);
     } catch (err) {

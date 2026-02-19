@@ -13,6 +13,12 @@ const getNoteTimestamp = (note) => {
   return 0;
 };
 
+const toNoteMeta = (docSnap) => {
+  const data = docSnap.data() || {};
+  const { blocks, canvasHeight, ...meta } = data;
+  return { id: docSnap.id, ...meta };
+};
+
 const ClassNotes = () => {
   const { classId } = useParams();
   const { firebaseUser } = useAuth();
@@ -39,7 +45,7 @@ const ClassNotes = () => {
       firebaseUser.uid,
       classId,
       (snapshot) => {
-        const items = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        const items = snapshot.docs.map((docSnap) => toNoteMeta(docSnap));
         const ordered = [...items].sort((a, b) => {
           const aHasOrder = Number.isFinite(a.order);
           const bHasOrder = Number.isFinite(b.order);
@@ -118,9 +124,7 @@ const ClassNotes = () => {
             <span className="note-number">{String(index + 1).padStart(2, '0')}</span>
             <strong>{note.title || 'Untitled Note'}</strong>
             <div className="note-preview">
-              {note.summary ||
-                (note.blocks?.[0]?.type === 'image' ? 'Image block' : note.blocks?.[0]?.value) ||
-                'No preview yet.'}
+              {note.summary || 'No preview yet.'}
             </div>
           </div>
         ))}

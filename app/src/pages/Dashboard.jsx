@@ -38,9 +38,10 @@ import useNetworkStatus from '../hooks/useNetworkStatus';
 
 const CLASS_COLORS = ['#c8a46a', '#4a5a63', '#4b5b49', '#b49a62', '#3a3c42', '#586471', '#3e4c59'];
 
-const stripHtml = (value) => {
-  if (!value) return '';
-  return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+const toNoteMeta = (docSnap) => {
+  const data = docSnap.data() || {};
+  const { blocks, canvasHeight, ...meta } = data;
+  return { id: docSnap.id, ...meta };
 };
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -244,7 +245,7 @@ const Dashboard = () => {
       firebaseUser.uid,
       selectedClassId,
       (snapshot) => {
-        const items = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        const items = snapshot.docs.map((docSnap) => toNoteMeta(docSnap));
         const ordered = [...items].sort((a, b) => {
           const aHasOrder = Number.isFinite(a.order);
           const bHasOrder = Number.isFinite(b.order);
@@ -431,11 +432,8 @@ const Dashboard = () => {
   const filteredNotes = useMemo(() => {
     if (!searchTokens.length) return notes;
     return notes.filter((note) => {
-      const blocksText = (note.blocks || [])
-        .map((block) => (block.type === 'text' ? stripHtml(block.value) : ''))
-        .join(' ');
       const tagsText = (note.tags || []).join(' ');
-      const haystack = `${note.title || ''} ${note.summary || ''} ${tagsText} ${blocksText}`
+      const haystack = `${note.title || ''} ${note.summary || ''} ${tagsText}`
         .toLowerCase()
         .trim();
       return searchTokens.every((token) => haystack.includes(token));
@@ -644,7 +642,10 @@ const Dashboard = () => {
       storage,
       `notes/${firebaseUser.uid}/${noteId}/cover-${Date.now()}-${noteImageFile.name}`,
     );
-    await uploadBytes(ref, noteImageFile);
+    await uploadBytes(ref, noteImageFile, {
+      contentType: noteImageFile.type || undefined,
+      cacheControl: 'public,max-age=31536000,immutable',
+    });
     return getDownloadURL(ref);
   };
 

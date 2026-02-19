@@ -19,6 +19,10 @@ service cloud.firestore {
 
         match /notes/{noteId} {
           allow read, write: if isVerified() && request.auth.uid == userId;
+
+          match /content/{contentId} {
+            allow read, write: if isVerified() && request.auth.uid == userId;
+          }
         }
       }
     }

@@ -35,7 +35,7 @@ import {
 } from 'react-icons/fa';
 import { Rnd } from 'react-rnd';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { createNoteTemplate, getNote, updateNote } from '../services/library';
+import { createNoteTemplate, getNote, updateNoteContent } from '../services/library';
 import { useAuth } from '../context/AuthContext';
 import ScreenLoader from '../components/ui/ScreenLoader';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
@@ -47,9 +47,9 @@ const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 72;
 const PRIORITY_Z_OFFSET = 100000;
 const COLLAPSED_HEIGHT = 34;
-const AUTO_SAVE_IDLE_MS = 8000;
+const AUTO_SAVE_IDLE_MS = 22000;
 const LOCAL_DRAFT_IDLE_MS = 1000;
-const FORCE_SAVE_INTERVAL_MS = 60000;
+const META_TOUCH_INTERVAL_MS = 120000;
 const DRAFT_STORAGE_PREFIX = 'companion-note-draft';
 const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
 const TEMPLATE_DRAFT_STORAGE_KEY = 'companion:new-note-draft';
@@ -417,10 +417,10 @@ const NoteEditor = () => {
   const savingRef = useRef(false);
   const saveTimeoutRef = useRef(null);
   const flushSaveRef = useRef(null);
-  const forceSaveRef = useRef(null);
   const localDraftTimeoutRef = useRef(null);
   const changeVersionRef = useRef(0);
   const lastSavedVersionRef = useRef(0);
+  const lastMetaTouchRef = useRef(0);
   const saveStatusRef = useRef(saveStatus);
   const nudgeAnimationRef = useRef(null);
   const nudgePressTimeoutRef = useRef(null);
@@ -512,7 +512,7 @@ const NoteEditor = () => {
     });
   }, []);
 
-  const flushSave = useCallback(async (_reason = 'idle') => {
+  const flushSave = useCallback(async (reason = 'idle') => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
@@ -528,8 +528,17 @@ const NoteEditor = () => {
       blocks: getBlocksSnapshot(),
       canvasHeight: canvasHeightRef.current,
     };
+    const now = Date.now();
+    const shouldTouchMeta =
+      reason === 'visibility' ||
+      reason === 'unload' ||
+      reason === 'unmount' ||
+      now - lastMetaTouchRef.current >= META_TOUCH_INTERVAL_MS;
     try {
-      await updateNote(firebaseUser.uid, classId, noteId, payload);
+      await updateNoteContent(firebaseUser.uid, classId, noteId, payload, { touchMeta: shouldTouchMeta });
+      if (shouldTouchMeta) {
+        lastMetaTouchRef.current = now;
+      }
       lastSavedVersionRef.current = saveVersion;
       if (changeVersionRef.current === saveVersion) {
         dirtyRef.current = false;
@@ -655,6 +664,7 @@ const NoteEditor = () => {
       dirtyRef.current = false;
       changeVersionRef.current = 0;
       lastSavedVersionRef.current = 0;
+      lastMetaTouchRef.current = Date.now();
       updateSaveStatus('Template draft');
       historyRef.current = [
         { blocks: cloneBlocks(normalized), canvasHeight: PAGE_HEIGHT, ts: Date.now(), reason: 'load-template' },
@@ -676,6 +686,7 @@ const NoteEditor = () => {
         dirtyRef.current = false;
         changeVersionRef.current = 0;
         lastSavedVersionRef.current = 0;
+        lastMetaTouchRef.current = Date.now();
         updateSaveStatus('All changes saved');
         historyRef.current = [
           { blocks: cloneBlocks(normalizedBlocks), canvasHeight: initialHeight, ts: Date.now(), reason: 'load' },
@@ -745,13 +756,9 @@ const NoteEditor = () => {
     };
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('beforeunload', handleBeforeUnload);
-    forceSaveRef.current = setInterval(() => {
-      void flushSave('force');
-    }, FORCE_SAVE_INTERVAL_MS);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      if (forceSaveRef.current) clearInterval(forceSaveRef.current);
     };
   }, [isTemplateMode, note, firebaseUser, classId, noteId, flushSave]);
 
@@ -759,7 +766,6 @@ const NoteEditor = () => {
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       if (localDraftTimeoutRef.current) clearTimeout(localDraftTimeoutRef.current);
-      if (forceSaveRef.current) clearInterval(forceSaveRef.current);
       if (historyTimeoutRef.current) clearTimeout(historyTimeoutRef.current);
       if (tableResizeRef.current?.end) {
         tableResizeRef.current.end();
@@ -1112,7 +1118,10 @@ const NoteEditor = () => {
         ? `templates/${firebaseUser.uid}/${Date.now()}-${file.name}`
         : `notes/${firebaseUser.uid}/${noteId}/${Date.now()}-${file.name}`;
       const ref = storageRef(storage, assetPath);
-      await uploadBytes(ref, file);
+      await uploadBytes(ref, file, {
+        contentType: file.type || undefined,
+        cacheControl: 'public,max-age=31536000,immutable',
+      });
       const url = await getDownloadURL(ref);
       const position = getNextPosition(size);
       pushHistory('add-image');
