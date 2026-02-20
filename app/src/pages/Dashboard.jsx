@@ -636,6 +636,17 @@ const Dashboard = () => {
     setTemplateDeleting(false);
   };
 
+  useEffect(() => {
+    if (!noteModalOpen) return;
+    const handleEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      closeNoteModal();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [noteModalOpen, noteSaving]);
+
   const uploadCover = async (noteId) => {
     if (!firebaseUser || !noteImageFile) return '';
     const ref = storageRef(
@@ -1260,8 +1271,17 @@ const Dashboard = () => {
       {noteModalOpen && (
         <>
           <div className="overlay show" onClick={closeNoteModal} />
-          <div className="modal open" role="dialog" aria-modal="true">
-            <div className="modal-card">
+          <div
+            className="modal open"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                closeNoteModal();
+              }
+            }}
+          >
+            <div className="modal-card note-modal-card" onMouseDown={(event) => event.stopPropagation()}>
               <header>
                 <h3>{noteModalMode === 'create' ? 'New note' : 'Update note'}</h3>
                 <p className="status-text">Add a title, summary, and optional cover image.</p>
@@ -1283,7 +1303,7 @@ const Dashboard = () => {
                     value={noteSummary}
                     onChange={(e) => setNoteSummary(e.target.value)}
                     placeholder="Short summary for the dashboard"
-                    rows={3}
+                    rows={2}
                   />
                 </label>
                 <label>
