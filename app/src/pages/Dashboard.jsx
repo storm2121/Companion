@@ -117,11 +117,9 @@ const Dashboard = () => {
   const [templateDeleting, setTemplateDeleting] = useState(false);
   const [quickAddBusy, setQuickAddBusy] = useState(false);
   const [themeMode, setThemeMode] = useState(THEME_DEFAULT_MODE);
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const titleRef = useRef(null);
   const summaryRef = useRef(null);
   const imageRef = useRef(null);
-  const themeMenuRef = useRef(null);
   const templatePromptRef = useRef(null);
   const preferredClassIdRef = useRef('');
   const templateRestoreDoneRef = useRef(false);
@@ -323,18 +321,6 @@ const Dashboard = () => {
     }
     setNoteImagePreview(noteModalNote?.coverUrl || '');
   }, [noteModalOpen, noteImageFile, noteModalNote]);
-
-  useEffect(() => {
-    if (!themeMenuOpen) return;
-    const handleClick = (event) => {
-      if (!themeMenuRef.current) return;
-      if (!themeMenuRef.current.contains(event.target)) {
-        setThemeMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [themeMenuOpen]);
 
   useEffect(() => {
     if (!templatePromptOpen) return;
@@ -904,6 +890,15 @@ const Dashboard = () => {
   const notesEmpty = notes.length === 0;
   const filteredNotesEmpty = filteredNotes.length === 0;
   const appTitle = selectedClass ? `Classes / ${selectedClass.name}` : 'Classes';
+  const toggleTheme = () => {
+    const current = normalizeThemeMode(themeMode);
+    const currentIndex = THEME_OPTIONS.findIndex((option) => option.id === current);
+    const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % THEME_OPTIONS.length;
+    const nextMode = normalizeThemeMode(THEME_OPTIONS[nextIndex]?.id);
+    setThemeMode(nextMode);
+    applyThemeMode(nextMode);
+  };
+  const currentThemeLabel = THEME_OPTIONS.find((option) => option.id === normalizeThemeMode(themeMode))?.label;
 
   return (
     <div className="app-shell">
@@ -924,35 +919,16 @@ const Dashboard = () => {
           </div>
           <div className="app-actions">
             {!isOnline && <span className="net-status offline">Offline</span>}
-            <div className="theme-control" ref={themeMenuRef}>
+            <div className="theme-control">
               <button
                 type="button"
                 className="theme-trigger"
-                onClick={() => setThemeMenuOpen((prev) => !prev)}
-                title="Choose theme"
+                onClick={toggleTheme}
+                title="Switch theme"
               >
                 <FaMoon />
-                Theme
+                {currentThemeLabel ? `Theme: ${currentThemeLabel}` : 'Theme'}
               </button>
-              {themeMenuOpen && (
-                <div className="theme-menu">
-                  {THEME_OPTIONS.map((mode) => (
-                    <button
-                      key={mode.id}
-                      type="button"
-                      className={`theme-option ${themeMode === mode.id ? 'active' : ''}`}
-                      onClick={() => {
-                        setThemeMode(mode.id);
-                        applyThemeMode(mode.id);
-                        setThemeMenuOpen(false);
-                      }}
-                    >
-                      <span className="theme-swatch" style={{ background: mode.swatch }} />
-                      {mode.label}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
             <button className="icon-btn" title="Settings">
               <FaCog />
