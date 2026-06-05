@@ -35,7 +35,7 @@ import {
 } from 'react-icons/fa';
 import { Rnd } from 'react-rnd';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { createNoteTemplate, getNote, updateNoteContent } from '../services/library';
+import { createNoteTemplate, getNote, saveNoteContentDelta } from '../services/library';
 import { useAuth } from '../context/AuthContext';
 import ScreenLoader from '../components/ui/ScreenLoader';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
@@ -158,17 +158,31 @@ const toHexColor = (value) => {
   return rgbPartsToHex(looseParts);
 };
 
-const normalizeLegacyFontNodes = (root, fallbackPx = BLOCK_DEFAULTS.text.fontSize) => {
+const normalizeLegacyFontNodes = (root) => {
   if (!root) return;
   root.querySelectorAll('font').forEach((fontNode) => {
+    const span = document.createElement('span');
+    const existingStyle = fontNode.getAttribute('style');
+    if (existingStyle) span.setAttribute('style', existingStyle);
     const declaredSize = fontNode.getAttribute('size');
     const inlineSize = (fontNode.style?.fontSize || '').trim();
     const pxMatch = inlineSize.match(/^([\d.]+)px$/i);
-    const resolvedPx = pxMatch
-      ? Number.parseFloat(pxMatch[1])
-      : LEGACY_FONT_SIZE_MAP[declaredSize || ''] || fallbackPx;
-    const span = document.createElement('span');
-    span.style.fontSize = `${Math.max(MIN_FONT_SIZE, Math.min(Number.isFinite(resolvedPx) ? resolvedPx : fallbackPx, MAX_FONT_SIZE))}px`;
+    let resolvedPx = null;
+    if (pxMatch) {
+      resolvedPx = Number.parseFloat(pxMatch[1]);
+    } else if (declaredSize && LEGACY_FONT_SIZE_MAP[declaredSize]) {
+      resolvedPx = LEGACY_FONT_SIZE_MAP[declaredSize];
+    }
+    // Only pin a font-size when the legacy node actually declared one. Forcing a
+    // fallback here was overriding inherited sizes and snapping pasted text to the
+    // block's base size.
+    if (Number.isFinite(resolvedPx)) {
+      span.style.fontSize = `${Math.max(MIN_FONT_SIZE, Math.min(resolvedPx, MAX_FONT_SIZE))}px`;
+    }
+    const face = fontNode.getAttribute('face');
+    if (face && !span.style.fontFamily) span.style.fontFamily = face;
+    const color = fontNode.getAttribute('color');
+    if (color && !span.style.color) span.style.color = color;
     while (fontNode.firstChild) span.appendChild(fontNode.firstChild);
     fontNode.replaceWith(span);
   });
@@ -244,8 +258,8 @@ const stripZeroWidthTextNodes = (root, options = {}) => {
 
 const cleanupFontSizeArtifacts = (root, options = {}) => {
   if (!(root instanceof HTMLElement)) return;
-  const { keepNode = null, fallbackPx = BLOCK_DEFAULTS.text.fontSize } = options;
-  normalizeLegacyFontNodes(root, fallbackPx);
+  const { keepNode = null } = options;
+  normalizeLegacyFontNodes(root);
   stripZeroWidthTextNodes(root, { skipWithin: keepNode });
   const formattingNodes = Array.from(root.querySelectorAll('*'));
   formattingNodes.forEach((node) => {
@@ -280,7 +294,13 @@ const cleanupFontSizeArtifacts = (root, options = {}) => {
       if (node.tagName === 'FONT') {
         node.removeAttribute('size');
       }
-      if (hadFontSizing) {
+      const isInlineWrapper = node.tagName === 'SPAN' || node.tagName === 'FONT';
+      const containsBreak = Boolean(node.querySelector?.('br'));
+      const visibleTextLength = stripZeroWidth(node.textContent || '').length;
+      // Only drop genuinely-empty inline style wrappers (font-size artifacts).
+      // Never delete blank lines (<br>) or whitespace text — doing so was eating
+      // user spaces and collapsing intentional blank lines.
+      if (hadFontSizing && isInlineWrapper && !containsBreak && visibleTextLength === 0) {
         node.remove();
         return;
       }
@@ -296,13 +316,127 @@ const cleanupFontSizeArtifacts = (root, options = {}) => {
     if (keepNode && (span === keepNode || span.contains(keepNode))) return;
     const hasTable = span.querySelector('[data-note-table-shell="true"]');
     const hasBreak = span.querySelector('br');
-    if (!hasTable && !hasBreak && isWhitespaceLike(span.textContent || '')) {
+    // Truly empty wrappers only — a span holding a real space must survive so the
+    // space between words is preserved.
+    if (!hasTable && !hasBreak && stripZeroWidth(span.textContent || '').length === 0) {
       span.remove();
     }
   });
 };
 
+const PASTE_ALLOWED_TAGS = new Set([
+  'P', 'DIV', 'BR', 'SPAN', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'SUB', 'SUP',
+  'BLOCKQUOTE', 'UL', 'OL', 'LI', 'A', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH',
+  'CODE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+]);
+
+const PASTE_REMOVE_TAGS = [
+  'script', 'style', 'meta', 'link', 'head', 'title', 'iframe', 'object', 'embed',
+  'noscript', 'form', 'input', 'textarea', 'button', 'select', 'option', 'svg', 'img',
+  'video', 'audio', 'canvas',
+];
+
+const PASTE_STYLE_BASE = new Set([
+  'color', 'background-color', 'background', 'font-size', 'font-family', 'font-weight',
+  'font-style', 'text-decoration', 'text-decoration-line', 'text-align', 'line-height',
+]);
+
+const PASTE_STYLE_TABLE = new Set([
+  'border', 'border-color', 'border-width', 'border-style', 'padding', 'width', 'height',
+  'min-width', 'vertical-align',
+]);
+
+const normalizePasteFontSize = (raw) => {
+  const trimmed = (raw || '').trim();
+  const pxMatch = trimmed.match(/^([\d.]+)px$/i);
+  const ptMatch = trimmed.match(/^([\d.]+)pt$/i);
+  let px = null;
+  if (pxMatch) px = Number.parseFloat(pxMatch[1]);
+  else if (ptMatch) px = Number.parseFloat(ptMatch[1]) * (96 / 72);
+  if (!Number.isFinite(px)) return '';
+  return `${Math.round(Math.max(MIN_FONT_SIZE, Math.min(px, MAX_FONT_SIZE)))}px`;
+};
+
+const sanitizePasteStyle = (element) => {
+  const style = element.style;
+  if (!style || style.length === 0) {
+    element.removeAttribute('style');
+    return;
+  }
+  const isTableCell = ['TABLE', 'TR', 'TD', 'TH'].includes(element.tagName);
+  const kept = [];
+  for (let index = 0; index < style.length; index += 1) {
+    const prop = style.item(index);
+    const allowed = PASTE_STYLE_BASE.has(prop) || (isTableCell && PASTE_STYLE_TABLE.has(prop));
+    if (!allowed) continue;
+    let value = style.getPropertyValue(prop);
+    if (prop === 'font-size') {
+      value = normalizePasteFontSize(value);
+      if (!value) continue;
+    }
+    kept.push([prop, value]);
+  }
+  element.removeAttribute('style');
+  kept.forEach(([prop, value]) => element.style.setProperty(prop, value));
+};
+
+// Sanitize pasted HTML in a detached container: drop dangerous/structural nodes,
+// unwrap unknown tags (keeping their text), and strip every attribute except a
+// safe inline-style allow-list. This is what lets us stop running destructive
+// cleanup on every render — junk is cleaned once, at the door.
+const sanitizePastedFragment = (container) => {
+  if (!(container instanceof HTMLElement)) return;
+  PASTE_REMOVE_TAGS.forEach((tag) => {
+    container.querySelectorAll(tag).forEach((node) => node.remove());
+  });
+  // Convert <font> → <span style> first so face/color/size survive the attr scrub.
+  normalizeLegacyFontNodes(container);
+  Array.from(container.querySelectorAll('*')).forEach((element) => {
+    if (!(element instanceof HTMLElement) || !element.isConnected) return;
+    if (!PASTE_ALLOWED_TAGS.has(element.tagName)) {
+      unwrapElementKeepChildren(element);
+      return;
+    }
+    Array.from(element.attributes).forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      if (name === 'style') return;
+      if (element.tagName === 'A' && name === 'href') {
+        if (/^\s*javascript:/i.test(attr.value)) element.removeAttribute(attr.name);
+        return;
+      }
+      if ((element.tagName === 'TD' || element.tagName === 'TH') && (name === 'colspan' || name === 'rowspan')) {
+        return;
+      }
+      element.removeAttribute(attr.name);
+    });
+    sanitizePasteStyle(element);
+  });
+};
+
+const escapeHtmlForPaste = (value) =>
+  (value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .split(/\r?\n/)
+    .join('<br>');
+
 const cloneBlocks = (items = []) => items.map((block) => ({ ...block }));
+
+// Baseline of what is persisted, used to diff future saves. Mirrors getBlocksSnapshot so
+// the first diff after load doesn't falsely flag every block as changed.
+const buildContentBaseline = (blocks, canvasHeight) => {
+  const blocksJson = new Map();
+  const order = [];
+  (blocks || []).forEach((block) => {
+    if (!block?.id) return;
+    order.push(block.id);
+    const persistedBlock =
+      block.type === 'text' ? { ...block, value: stripZeroWidth(block.value || '') } : block;
+    blocksJson.set(block.id, JSON.stringify(persistedBlock));
+  });
+  return { blocksJson, order, canvasHeight };
+};
 
 const getBlockId = () => {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -421,6 +555,11 @@ const NoteEditor = () => {
   const changeVersionRef = useRef(0);
   const lastSavedVersionRef = useRef(0);
   const lastMetaTouchRef = useRef(0);
+  // Persistence baseline: a hash of what is currently in Firestore, used to diff and
+  // write only the blocks that actually changed. blocksSchemaRef tracks whether the
+  // stored doc is already on the map schema ('map') or still legacy ('array').
+  const lastSavedContentRef = useRef({ blocksJson: new Map(), order: [], canvasHeight: PAGE_HEIGHT });
+  const blocksSchemaRef = useRef('array');
   const saveStatusRef = useRef(saveStatus);
   const nudgeAnimationRef = useRef(null);
   const nudgePressTimeoutRef = useRef(null);
@@ -524,39 +663,102 @@ const NoteEditor = () => {
     savingRef.current = true;
     updateSaveStatus('Saving...');
     const saveVersion = changeVersionRef.current;
-    const payload = {
-      blocks: getBlocksSnapshot(),
-      canvasHeight: canvasHeightRef.current,
-    };
-    const now = Date.now();
-    const shouldTouchMeta =
-      reason === 'visibility' ||
-      reason === 'unload' ||
-      reason === 'unmount' ||
-      now - lastMetaTouchRef.current >= META_TOUCH_INTERVAL_MS;
     try {
-      await updateNoteContent(firebaseUser.uid, classId, noteId, payload, { touchMeta: shouldTouchMeta });
+      // Diff the current snapshot against the last persisted baseline so only the
+      // blocks that actually changed get written (or one full rewrite to migrate a
+      // legacy array note onto the map schema).
+      const snapshot = getBlocksSnapshot();
+      const snapshotHeight = canvasHeightRef.current;
+      const baseline = lastSavedContentRef.current;
+      const order = snapshot.map((block) => block.id);
+      const snapshotJson = new Map(snapshot.map((block) => [block.id, JSON.stringify(block)]));
+      const changedBlocks = {};
+      snapshot.forEach((block) => {
+        if (baseline.blocksJson.get(block.id) !== snapshotJson.get(block.id)) {
+          changedBlocks[block.id] = block;
+        }
+      });
+      const removedBlockIds = [];
+      baseline.blocksJson.forEach((_value, id) => {
+        if (!snapshotJson.has(id)) removedBlockIds.push(id);
+      });
+      const orderChanged =
+        order.length !== baseline.order.length ||
+        order.some((id, index) => baseline.order[index] !== id);
+      const canvasChanged = snapshotHeight !== baseline.canvasHeight;
+      const needsFullRewrite = blocksSchemaRef.current !== 'map';
+
+      const settleClean = () => {
+        lastSavedVersionRef.current = saveVersion;
+        if (changeVersionRef.current === saveVersion) {
+          dirtyRef.current = false;
+          updateSaveStatus('All changes saved');
+          if (draftKey) localStorage.removeItem(draftKey);
+        } else {
+          dirtyRef.current = true;
+          updateSaveStatus('Unsaved changes');
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = setTimeout(() => {
+            const handler = flushSaveRef.current;
+            if (handler) void handler('idle');
+          }, AUTO_SAVE_IDLE_MS);
+        }
+      };
+
+      if (
+        !needsFullRewrite &&
+        !Object.keys(changedBlocks).length &&
+        !removedBlockIds.length &&
+        !orderChanged &&
+        !canvasChanged
+      ) {
+        // No material change (e.g. a formatting toggle that cancelled out).
+        settleClean();
+        return;
+      }
+
+      const now = Date.now();
+      const shouldTouchMeta =
+        reason === 'visibility' ||
+        reason === 'unload' ||
+        reason === 'unmount' ||
+        now - lastMetaTouchRef.current >= META_TOUCH_INTERVAL_MS;
+
+      if (needsFullRewrite) {
+        await saveNoteContentDelta(
+          firebaseUser.uid,
+          classId,
+          noteId,
+          { fullRewrite: true, allBlocks: snapshot, canvasHeight: snapshotHeight },
+          { touchMeta: shouldTouchMeta },
+        );
+      } else {
+        await saveNoteContentDelta(
+          firebaseUser.uid,
+          classId,
+          noteId,
+          {
+            changedBlocks,
+            removedBlockIds,
+            order: orderChanged ? order : null,
+            canvasHeight: canvasChanged ? snapshotHeight : undefined,
+          },
+          { touchMeta: shouldTouchMeta },
+        );
+      }
+
       if (shouldTouchMeta) {
         lastMetaTouchRef.current = now;
       }
-      lastSavedVersionRef.current = saveVersion;
-      if (changeVersionRef.current === saveVersion) {
-        dirtyRef.current = false;
-        updateSaveStatus('All changes saved');
-        if (draftKey) {
-          localStorage.removeItem(draftKey);
-        }
-      } else {
-        dirtyRef.current = true;
-        updateSaveStatus('Unsaved changes');
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => {
-          const handler = flushSaveRef.current;
-          if (handler) {
-            void handler('idle');
-          }
-        }, AUTO_SAVE_IDLE_MS);
-      }
+      // The stored doc now matches `snapshot` (and is on the map schema), regardless of
+      // any edits that landed during the await.
+      blocksSchemaRef.current = 'map';
+      lastSavedContentRef.current = {
+        blocksJson: snapshotJson,
+        order,
+        canvasHeight: snapshotHeight,
+      };
+      settleClean();
     } catch (err) {
       console.error('Failed to save note', err);
       updateSaveStatus('Save failed. Changes kept locally.');
@@ -665,6 +867,8 @@ const NoteEditor = () => {
       changeVersionRef.current = 0;
       lastSavedVersionRef.current = 0;
       lastMetaTouchRef.current = Date.now();
+      blocksSchemaRef.current = 'map';
+      lastSavedContentRef.current = buildContentBaseline(normalized, PAGE_HEIGHT);
       updateSaveStatus('Template draft');
       historyRef.current = [
         { blocks: cloneBlocks(normalized), canvasHeight: PAGE_HEIGHT, ts: Date.now(), reason: 'load-template' },
@@ -687,6 +891,11 @@ const NoteEditor = () => {
         changeVersionRef.current = 0;
         lastSavedVersionRef.current = 0;
         lastMetaTouchRef.current = Date.now();
+        // Baseline always reflects what is in Firestore (the remote doc), even when a
+        // newer local draft is restored below — so the first save writes the delta
+        // between the draft and what's actually persisted.
+        blocksSchemaRef.current = data.blocksSchema || 'array';
+        lastSavedContentRef.current = buildContentBaseline(normalizedBlocks, initialHeight);
         updateSaveStatus('All changes saved');
         historyRef.current = [
           { blocks: cloneBlocks(normalizedBlocks), canvasHeight: initialHeight, ts: Date.now(), reason: 'load' },
@@ -1276,6 +1485,37 @@ const NoteEditor = () => {
     scheduleTextIdleReset();
   };
 
+  const handleEditorPaste = (event, blockId) => {
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    event.preventDefault();
+    const html = clipboard.getData('text/html');
+    const text = clipboard.getData('text/plain');
+    let payload = '';
+    if (html && html.trim()) {
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      sanitizePastedFragment(holder);
+      cleanupFontSizeArtifacts(holder, { fallbackPx: BLOCK_DEFAULTS.text.fontSize });
+      payload = holder.innerHTML;
+    } else if (text) {
+      payload = escapeHtmlForPaste(text);
+    }
+    if (!payload) return;
+    if (!textTypingRef.current) {
+      pushHistory('paste');
+      textTypingRef.current = true;
+    }
+    document.execCommand('insertHTML', false, payload);
+    const root = textRefs.current[blockId];
+    if (root instanceof HTMLElement) {
+      normalizeTableShells(root);
+      textDraftsRef.current[blockId] = stripZeroWidth(root.innerHTML);
+    }
+    markDirty();
+    scheduleTextIdleReset();
+  };
+
   const rememberSelection = useCallback(
     (preferredBlockId) => {
       const blockId = preferredBlockId || activeTextId;
@@ -1491,7 +1731,7 @@ const NoteEditor = () => {
     const range = selection.getRangeAt(0);
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
     const nextSize = `${Math.max(MIN_FONT_SIZE, Math.min(Number(value) || BLOCK_DEFAULTS.text.fontSize, MAX_FONT_SIZE))}px`;
-    normalizeLegacyFontNodes(root, activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize);
+    normalizeLegacyFontNodes(root);
     if (range.collapsed) {
       const span = document.createElement('span');
       span.style.fontSize = nextSize;
@@ -2930,19 +3170,26 @@ const NoteEditor = () => {
                               ref={(el) => {
                                 if (!el) return;
                                 textRefs.current[block.id] = el;
-                                const desired = textDraftsRef.current[block.id] ?? block.value ?? '';
                                 if (document.activeElement === el) return;
+                                const desired = textDraftsRef.current[block.id] ?? block.value ?? '';
                                 if (el.innerHTML !== desired) {
                                   el.innerHTML = desired;
+                                  // Normalize/clean only when we (re)hydrate from a trusted
+                                  // source (load, undo/redo). Running the destructive cleanup
+                                  // on every render is what deleted spaces and reset sizes.
+                                  normalizeLegacyFontNodes(el);
+                                  cleanupFontSizeArtifacts(el, {
+                                    fallbackPx: block.fontSize || BLOCK_DEFAULTS.text.fontSize,
+                                  });
+                                  textDraftsRef.current[block.id] = stripZeroWidth(el.innerHTML);
                                 }
-                                normalizeLegacyFontNodes(el, block.fontSize || BLOCK_DEFAULTS.text.fontSize);
-                                cleanupFontSizeArtifacts(el, { fallbackPx: block.fontSize || BLOCK_DEFAULTS.text.fontSize });
                               }}
                               className="note-textarea"
                               data-block-id={block.id}
                               contentEditable
                               suppressContentEditableWarning
                               onMouseDown={(event) => handleTableResizeHandleMouseDown(event, block.id)}
+                              onPaste={(event) => handleEditorPaste(event, block.id)}
                               onInput={(event) =>
                                 handleTextInput(block.id, event.currentTarget.innerHTML, event.currentTarget)
                               }

@@ -27,14 +27,58 @@ const getNoteContentRef = (uid, classId, noteId) =>
 const sanitizeBlocks = (blocks) => (Array.isArray(blocks) ? blocks : []);
 const sanitizeCanvasHeight = (value) => (Number.isFinite(value) ? value : DEFAULT_CANVAS_HEIGHT);
 
+// Storage model: blocks are kept as a map { [id]: block } plus an `order` array so
+// a single edit can be persisted as a delta (one field path) instead of rewriting the
+// whole array. These helpers convert between the on-disk map and the array the app uses.
+const blocksArrayToMap = (blocks) => {
+  const map = {};
+  const order = [];
+  (Array.isArray(blocks) ? blocks : []).forEach((block) => {
+    if (!block || typeof block !== 'object' || !block.id) return;
+    map[block.id] = block;
+    order.push(block.id);
+  });
+  return { map, order };
+};
+
+const blocksMapToArray = (map, order) => {
+  if (!map || typeof map !== 'object') return [];
+  const ids = Array.isArray(order) && order.length ? order : Object.keys(map);
+  const seen = new Set();
+  const result = [];
+  const pushId = (id) => {
+    if (seen.has(id)) return;
+    const block = map[id];
+    if (block && typeof block === 'object') {
+      result.push(block);
+      seen.add(id);
+    }
+  };
+  ids.forEach(pushId);
+  // Safety net: include any map entries missing from the order array.
+  Object.keys(map).forEach(pushId);
+  return result;
+};
+
 const normalizeMergedNote = (meta = {}, content = {}) => {
   const { blocks: legacyBlocks, canvasHeight: legacyCanvasHeight, ...metaFields } = meta || {};
-  const blocks = sanitizeBlocks(content?.blocks ?? legacyBlocks);
+  const rawBlocks = content?.blocks ?? legacyBlocks;
+  let blocks;
+  let blocksSchema;
+  if (rawBlocks && !Array.isArray(rawBlocks) && typeof rawBlocks === 'object') {
+    blocks = blocksMapToArray(rawBlocks, content?.order);
+    blocksSchema = 'map';
+  } else {
+    blocks = sanitizeBlocks(rawBlocks);
+    blocksSchema = 'array';
+  }
   const canvasHeight = sanitizeCanvasHeight(content?.canvasHeight ?? legacyCanvasHeight);
   return {
     ...metaFields,
     blocks,
     canvasHeight,
+    // 'map' = already on the delta-friendly schema; 'array' = legacy, first save migrates.
+    blocksSchema,
   };
 };
 
@@ -116,8 +160,10 @@ export const createNote = async (uid, classId, payload = {}) => {
     updatedAt: serverTimestamp(),
     contentUpdatedAt: serverTimestamp(),
   };
+  const { map: newBlocksMap, order: newBlocksOrder } = blocksArrayToMap(sanitizeBlocks(payload.blocks));
   const contentPayload = {
-    blocks: sanitizeBlocks(payload.blocks),
+    blocks: newBlocksMap,
+    order: newBlocksOrder,
     canvasHeight: sanitizeCanvasHeight(payload.canvasHeight),
     updatedAt: serverTimestamp(),
   };
@@ -172,16 +218,20 @@ export const getNote = async (uid, classId, noteId) => {
 
   const hasLegacyContent = Array.isArray(meta?.blocks) || Number.isFinite(meta?.canvasHeight);
   if (!contentData && hasLegacyContent) {
+    const { map: legacyMap, order: legacyOrder } = blocksArrayToMap(sanitizeBlocks(meta.blocks));
+    const legacyCanvasHeight = sanitizeCanvasHeight(meta.canvasHeight);
     contentData = {
-      blocks: sanitizeBlocks(meta.blocks),
-      canvasHeight: sanitizeCanvasHeight(meta.canvasHeight),
+      blocks: legacyMap,
+      order: legacyOrder,
+      canvasHeight: legacyCanvasHeight,
       updatedAt: meta.updatedAt || serverTimestamp(),
     };
     try {
       const batch = writeBatch(db);
       batch.set(contentRef, {
-        blocks: contentData.blocks,
-        canvasHeight: contentData.canvasHeight,
+        blocks: legacyMap,
+        order: legacyOrder,
+        canvasHeight: legacyCanvasHeight,
         updatedAt: serverTimestamp(),
       });
       batch.update(noteRef, {
@@ -208,12 +258,14 @@ export const updateNote = async (uid, classId, noteId, payload) => {
     });
   }
   if (blocks !== undefined || canvasHeight !== undefined) {
-    await updateNoteContent(
+    // Full content replace on the map schema (rare path — editor uses delta saves).
+    await saveNoteContentDelta(
       uid,
       classId,
       noteId,
       {
-        blocks: blocks !== undefined ? blocks : [],
+        fullRewrite: true,
+        allBlocks: blocks !== undefined ? blocks : [],
         canvasHeight: canvasHeight !== undefined ? canvasHeight : DEFAULT_CANVAS_HEIGHT,
       },
       { touchMeta: true },
@@ -221,42 +273,70 @@ export const updateNote = async (uid, classId, noteId, payload) => {
   }
 };
 
-export const updateNoteContent = async (uid, classId, noteId, payload = {}, options = {}) => {
+// Incremental content save. With `fullRewrite` it replaces the whole content doc
+// (used for the first save / legacy array -> map migration). Otherwise it writes only
+// the changed/removed block field paths, so a one-character edit costs a tiny write.
+export const saveNoteContentDelta = async (uid, classId, noteId, delta = {}, options = {}) => {
   const contentRef = getNoteContentRef(uid, classId, noteId);
   const noteRef = getNoteRef(uid, classId, noteId);
-  const contentPayload = {};
-  if (Object.prototype.hasOwnProperty.call(payload, 'blocks')) {
-    contentPayload.blocks = sanitizeBlocks(payload.blocks);
-  }
-  if (Object.prototype.hasOwnProperty.call(payload, 'canvasHeight')) {
-    contentPayload.canvasHeight = sanitizeCanvasHeight(payload.canvasHeight);
-  }
-  if (!Object.keys(contentPayload).length) return;
   const touchMeta = options.touchMeta !== false;
-  if (touchMeta) {
-    const batch = writeBatch(db);
-    batch.set(
-      contentRef,
-      {
-        ...contentPayload,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
+  const {
+    fullRewrite = false,
+    allBlocks = null,
+    changedBlocks = {},
+    removedBlockIds = [],
+    order = null,
+    canvasHeight,
+  } = delta;
+
+  const touchNoteMeta = (batch) => {
     batch.update(noteRef, {
       updatedAt: serverTimestamp(),
       contentUpdatedAt: serverTimestamp(),
     });
+  };
+
+  if (fullRewrite) {
+    const { map, order: builtOrder } = blocksArrayToMap(sanitizeBlocks(allBlocks || []));
+    const payload = {
+      blocks: map,
+      order: builtOrder,
+      canvasHeight: sanitizeCanvasHeight(canvasHeight),
+      updatedAt: serverTimestamp(),
+    };
+    // setDoc without merge fully replaces the doc, dropping any legacy `blocks` array.
+    if (touchMeta) {
+      const batch = writeBatch(db);
+      batch.set(contentRef, payload);
+      touchNoteMeta(batch);
+      await batch.commit();
+    } else {
+      await setDoc(contentRef, payload);
+    }
+    return;
+  }
+
+  const update = {};
+  Object.entries(changedBlocks || {}).forEach(([id, block]) => {
+    if (!id || !block) return;
+    update[`blocks.${id}`] = block;
+  });
+  (Array.isArray(removedBlockIds) ? removedBlockIds : []).forEach((id) => {
+    if (!id) return;
+    update[`blocks.${id}`] = deleteField();
+  });
+  if (Array.isArray(order)) update.order = order;
+  if (canvasHeight !== undefined) update.canvasHeight = sanitizeCanvasHeight(canvasHeight);
+  if (!Object.keys(update).length) return;
+  update.updatedAt = serverTimestamp();
+
+  if (touchMeta) {
+    const batch = writeBatch(db);
+    batch.update(contentRef, update);
+    touchNoteMeta(batch);
     await batch.commit();
   } else {
-    await setDoc(
-      contentRef,
-      {
-        ...contentPayload,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
+    await updateDoc(contentRef, update);
   }
 };
 
