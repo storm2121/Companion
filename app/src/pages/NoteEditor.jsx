@@ -2045,11 +2045,29 @@ const NoteEditor = () => {
     }
   };
 
+  const hasRangeSelectionInActiveBlock = () => {
+    const root = textRefs.current[activeTextId];
+    if (!root) return false;
+    const selection = document.getSelection();
+    if (!selection || selection.rangeCount === 0) return false;
+    const range = selection.getRangeAt(0);
+    if (range.collapsed) return false;
+    return root.contains(range.startContainer) && root.contains(range.endContainer);
+  };
+
   const applyFontSize = (size) => {
     if (!activeTextId) return;
     const nextSize = Math.max(MIN_FONT_SIZE, Math.min(size, MAX_FONT_SIZE));
     setToolbarFontSize(nextSize);
-    updateTextStyle(activeTextId, { fontSize: nextSize });
+    if (hasRangeSelectionInActiveBlock()) {
+      // Real text is highlighted → resize just that selection.
+      updateTextStyle(activeTextId, { fontSize: nextSize });
+    } else {
+      // Collapsed caret / empty block → change the block's base size so the change
+      // actually sticks and persists, instead of inserting a throwaway zero-width
+      // span that the cleanup immediately removes (which made the value toggle).
+      updateBlock(activeTextId, { fontSize: nextSize }, { recordHistory: true, reason: 'font-size' });
+    }
   };
 
   const restoreHeldSelectionForFontSize = () => {
