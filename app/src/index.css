@@ -2194,6 +2194,110 @@ a {
   cursor: text;
 }
 
+/* TipTap (Phase 3) structured editor block */
+.note-textarea-shell {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-textarea-content {
+  width: 100%;
+  height: 100%;
+}
+
+.note-textarea.tiptap-editor {
+  /* Inherit the block's base size/line-height/color from the shell so per-run
+     stored marks layer on top of the block default (and don't get overridden by
+     the .note-textarea font-size rule above). */
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.note-textarea.tiptap-editor:focus,
+.note-textarea.tiptap-editor:focus-visible {
+  outline: none;
+}
+
+.note-textarea.tiptap-editor p {
+  margin: 0 0 0.35em;
+}
+
+.note-textarea.tiptap-editor ul,
+.note-textarea.tiptap-editor ol {
+  padding-left: 1.4em;
+  margin: 0.2em 0;
+}
+
+.note-textarea.tiptap-editor ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0.2em;
+}
+
+.note-textarea.tiptap-editor ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+
+.note-textarea.tiptap-editor ul[data-type='taskList'] li > label {
+  margin-top: 0.15em;
+}
+
+.note-textarea.tiptap-editor ul[data-type='taskList'] li > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.note-textarea.tiptap-editor blockquote {
+  border-left: 3px solid color-mix(in srgb, var(--text-muted) 50%, transparent);
+  margin: 0.3em 0;
+  padding-left: 0.8em;
+  color: var(--text-muted);
+}
+
+.note-textarea.tiptap-editor table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0.35rem 0;
+  overflow: hidden;
+}
+
+.note-textarea.tiptap-editor td,
+.note-textarea.tiptap-editor th {
+  border: 1px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
+  padding: 6px;
+  min-width: 56px;
+  vertical-align: top;
+  position: relative;
+}
+
+.note-textarea.tiptap-editor th {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+}
+
+.note-textarea.tiptap-editor .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background: var(--accent, #6aa3ff);
+  cursor: col-resize;
+}
+
+.note-textarea.tiptap-editor .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent, #6aa3ff) 18%, transparent);
+  pointer-events: none;
+}
+
 .note-textarea .note-table-shell {
   position: relative;
   display: inline-block;
