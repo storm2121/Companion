@@ -2063,6 +2063,72 @@ const NoteEditor = () => {
     }
   };
 
+  // --- TipTap bridge (Phase 3) -------------------------------------------------
+  // Reads formatting state from the active TipTap editor into the toolbar.
+  const syncToolbarFromTiptap = useCallback((editor) => {
+    if (!editor) return;
+    const textStyle = editor.getAttributes('textStyle');
+    const sizePx = Number.parseInt(textStyle.fontSize || '', 10);
+    if (Number.isFinite(sizePx)) {
+      setToolbarFontSize(sizePx);
+    }
+    const family = (textStyle.fontFamily || '').split(',')[0]?.replace(/["']/g, '').trim();
+    const matchedFamily = FONT_FAMILY_OPTIONS.find((option) =>
+      family?.toLowerCase()?.includes(option.value.replace(/["']/g, '').toLowerCase()),
+    );
+    setToolbarFontFamily(matchedFamily?.value || FONT_FAMILY_OPTIONS[0].value);
+    const colorHex = toHexColor(textStyle.color || '');
+    if (colorHex) setToolbarColor(colorHex);
+    const highlightHex = toHexColor(editor.getAttributes('highlight').color || '');
+    if (highlightHex) setToolbarHighlightColor(highlightHex);
+    setToolbarBold(editor.isActive('bold'));
+    setToolbarItalic(editor.isActive('italic'));
+    setToolbarUnderline(editor.isActive('underline'));
+    setToolbarStrike(editor.isActive('strike'));
+    setToolbarBullets(editor.isActive('bulletList'));
+    setToolbarNumbered(editor.isActive('orderedList'));
+    setToolbarChecklist(editor.isActive('taskList'));
+    if (editor.isActive({ textAlign: 'center' })) setToolbarAlign('center');
+    else if (editor.isActive({ textAlign: 'right' })) setToolbarAlign('right');
+    else if (editor.isActive({ textAlign: 'justify' })) setToolbarAlign('justify');
+    else setToolbarAlign('left');
+  }, []);
+
+  const handleTiptapEditorActive = useCallback(
+    (editor) => {
+      activeEditorRef.current = editor;
+      syncToolbarFromTiptap(editor);
+    },
+    [syncToolbarFromTiptap],
+  );
+
+  // Maps a toolbar updates object to TipTap commands. With a collapsed caret these set
+  // stored marks, so the format applies only to the next typed text.
+  const applyTiptapAction = (updates) => {
+    const editor = activeEditorRef.current;
+    if (!editor) return;
+    const chain = editor.chain().focus();
+    if (updates.fontSize !== undefined) chain.setFontSize(`${updates.fontSize}px`);
+    if (updates.textColor) chain.setColor(updates.textColor);
+    if (updates.highlightColor) chain.setHighlight({ color: updates.highlightColor });
+    if (updates.fontFamily) chain.setFontFamily(updates.fontFamily);
+    if (updates.bold !== undefined) chain.toggleBold();
+    if (updates.italic !== undefined) chain.toggleItalic();
+    if (updates.underline !== undefined) chain.toggleUnderline();
+    if (updates.strike !== undefined) chain.toggleStrike();
+    if (updates.bullets) chain.toggleBulletList();
+    if (updates.numbered) chain.toggleOrderedList();
+    if (updates.checklist) chain.toggleTaskList();
+    if (updates.quote) chain.toggleBlockquote();
+    if (updates.align) chain.setTextAlign(updates.align);
+    chain.run();
+    // Line spacing stays a block-level property (applied on the editor shell).
+    if (updates.lineSpacing !== undefined) {
+      updateBlock(activeTextId, { lineHeight: updates.lineSpacing }, { skipDirty: true });
+      markDirty();
+    }
+  };
+
   const hasRangeSelectionInActiveBlock = () => {
     const root = textRefs.current[activeTextId];
     if (!root) return false;
@@ -2077,6 +2143,12 @@ const NoteEditor = () => {
     if (!activeTextId) return;
     const nextSize = Math.max(MIN_FONT_SIZE, Math.min(size, MAX_FONT_SIZE));
     setToolbarFontSize(nextSize);
+    if (USE_TIPTAP_EDITOR) {
+      // Structured editor: a caret sets a stored mark (next typed text only); a
+      // selection resizes just that selection. No block-wide side effects.
+      applyTiptapAction({ fontSize: nextSize });
+      return;
+    }
     if (hasRangeSelectionInActiveBlock()) {
       // Real text is highlighted → resize just that selection.
       updateTextStyle(activeTextId, { fontSize: nextSize });
@@ -2123,6 +2195,10 @@ const NoteEditor = () => {
 
   const applyToolbarAction = (updates) => {
     if (!activeTextId) return;
+    if (USE_TIPTAP_EDITOR) {
+      applyTiptapAction(updates);
+      return;
+    }
     updateTextStyle(activeTextId, updates);
   };
 
@@ -3207,9 +3283,7 @@ const NoteEditor = () => {
                               <RichTextBlock
                                 block={block}
                                 onChange={(html) => handleRichTextChange(block.id, html)}
-                                onEditorActive={(instance) => {
-                                  activeEditorRef.current = instance;
-                                }}
+                                onEditorActive={handleTiptapEditorActive}
                                 onFocusBlock={() => selectBlock(block.id, { raise: false })}
                               />
                             </Suspense>
