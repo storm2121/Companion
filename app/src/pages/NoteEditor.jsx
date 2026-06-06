@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaArrowLeft,
   FaArrowRight,
@@ -41,6 +41,13 @@ import ScreenLoader from '../components/ui/ScreenLoader';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
 import useNetworkStatus from '../hooks/useNetworkStatus';
+// Lazy-loaded so TipTap is code-split into its own chunk and never weighs down the
+// main bundle while the cutover flag is off.
+const RichTextBlock = lazy(() => import('../components/editor/RichTextBlock'));
+
+// Phase 3 cutover flag. OFF until the TipTap editor reaches feature parity with the
+// legacy contentEditable block; flip to true to make it the live editor.
+const USE_TIPTAP_EDITOR = false;
 
 const PAGE_HEIGHT = 720;
 const MIN_FONT_SIZE = 8;
@@ -536,6 +543,7 @@ const NoteEditor = () => {
   const canvasScrollRef = useRef(null);
   const canvasRef = useRef(null);
   const textRefs = useRef({});
+  const activeEditorRef = useRef(null);
   const selectionRangeRef = useRef(null);
   const heldSelectionRangeRef = useRef(null);
   const skipNextFontSizeBlurCommitRef = useRef(false);
@@ -1479,6 +1487,16 @@ const NoteEditor = () => {
     if (root instanceof HTMLElement) {
       normalizeTableShells(root);
       html = root.innerHTML;
+    }
+    textDraftsRef.current[id] = stripZeroWidth(html);
+    markDirty();
+    scheduleTextIdleReset();
+  };
+
+  const handleRichTextChange = (id, html) => {
+    if (!textTypingRef.current) {
+      pushHistory('text');
+      textTypingRef.current = true;
     }
     textDraftsRef.current[id] = stripZeroWidth(html);
     markDirty();
@@ -3184,6 +3202,18 @@ const NoteEditor = () => {
                       {!block.collapsed && (
                         <div className="note-block-body">
                           {block.type === 'text' ? (
+                            USE_TIPTAP_EDITOR ? (
+                            <Suspense fallback={null}>
+                              <RichTextBlock
+                                block={block}
+                                onChange={(html) => handleRichTextChange(block.id, html)}
+                                onEditorActive={(instance) => {
+                                  activeEditorRef.current = instance;
+                                }}
+                                onFocusBlock={() => selectBlock(block.id, { raise: false })}
+                              />
+                            </Suspense>
+                            ) : (
                             <div
                               ref={(el) => {
                                 if (!el) return;
@@ -3222,6 +3252,7 @@ const NoteEditor = () => {
                                 textDecoration: block.underline ? 'underline' : 'none',
                               }}
                             />
+                            )
                           ) : (
                             <img className="note-image" src={block.value} alt="Note asset" />
                           )}
