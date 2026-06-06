@@ -2102,11 +2102,50 @@ const NoteEditor = () => {
     [syncToolbarFromTiptap],
   );
 
+  const applyTiptapTableAction = (action, options) => {
+    const editor = activeEditorRef.current;
+    if (!editor) return;
+    const chain = editor.chain().focus();
+    switch (action) {
+      case 'insertTable':
+        chain.insertTable({
+          rows: Math.max(1, Number(options?.rows) || 2),
+          cols: Math.max(1, Number(options?.cols) || 2),
+          withHeaderRow: false,
+        });
+        break;
+      case 'tableRow':
+        chain.addRowAfter();
+        break;
+      case 'tableColumn':
+        chain.addColumnAfter();
+        break;
+      case 'tableDeleteRow':
+        chain.deleteRow();
+        break;
+      case 'tableDeleteColumn':
+        chain.deleteColumn();
+        break;
+      case 'tableDeleteTable':
+        chain.deleteTable();
+        break;
+      default:
+        // Row-height / column-width steppers have no TipTap equivalent — tables resize
+        // by dragging column borders (resizable: true).
+        return;
+    }
+    chain.run();
+  };
+
   // Maps a toolbar updates object to TipTap commands. With a collapsed caret these set
   // stored marks, so the format applies only to the next typed text.
   const applyTiptapAction = (updates) => {
     const editor = activeEditorRef.current;
     if (!editor) return;
+    if (updates.tableAction) {
+      applyTiptapTableAction(updates.tableAction, updates.tableOptions);
+      return;
+    }
     const chain = editor.chain().focus();
     if (updates.fontSize !== undefined) chain.setFontSize(`${updates.fontSize}px`);
     if (updates.textColor) chain.setColor(updates.textColor);
@@ -2360,7 +2399,11 @@ const NoteEditor = () => {
     const tableCommand = tableCommandMap[action];
     if (tableCommand) {
       pushHistory('table-context');
-      applySelectionCommand(blockId, tableCommand.command, tableCommand.value || null);
+      if (USE_TIPTAP_EDITOR) {
+        applyTiptapTableAction(tableCommand.command, tableCommand.value || null);
+      } else {
+        applySelectionCommand(blockId, tableCommand.command, tableCommand.value || null);
+      }
       setContextMenu(null);
       return;
     }
