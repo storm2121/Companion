@@ -2,8 +2,9 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     function isVerified() {
+      // Email verification temporarily disabled. To restore it, re-add:
+      //   && request.auth.token.email_verified == true
       return request.auth != null
-        && request.auth.token.email_verified == true
         && request.auth.token.email.matches('.*@aui\\.ma');
     }
 

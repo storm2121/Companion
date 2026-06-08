@@ -4,7 +4,6 @@ import {
   createUserWithEmailAndPassword,
   isSignInWithEmailLink,
   onAuthStateChanged,
-  sendEmailVerification,
   sendSignInLinkToEmail,
   setPersistence,
   signInWithEmailAndPassword,
@@ -87,11 +86,7 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
-      if (!user.emailVerified) {
-        setProfile(null);
-        setLoading(false);
-        return;
-      }
+      // Email verification temporarily disabled — load the profile for any signed-in user.
 
       const profileRef = doc(db, 'users', user.uid);
       profileUnsub = onSnapshot(
@@ -180,28 +175,16 @@ export const AuthProvider = ({ children }) => {
     if (!EMAIL_REGEX.test(email)) {
       throw new Error('Only @aui.ma email addresses are permitted.');
     }
-    const credential = await createUserWithEmailAndPassword(auth, email, password);
-    await sendEmailVerification(credential.user, {
-      url: `${window.location.origin}/`,
-      handleCodeInApp: false,
-    });
-    setStatusMessage('Verification email sent. Please verify before logging in.');
-    await signOut(auth);
+    // Email verification temporarily disabled — the new account stays signed in.
+    await createUserWithEmailAndPassword(auth, email, password);
   };
 
   const loginWithPassword = async (email, password) => {
     if (!EMAIL_REGEX.test(email)) {
       throw new Error('Only @aui.ma email addresses are permitted.');
     }
+    // Email verification temporarily disabled.
     const result = await signInWithEmailAndPassword(auth, email, password);
-    if (!result.user.emailVerified) {
-      await sendEmailVerification(result.user, {
-        url: `${window.location.origin}/`,
-        handleCodeInApp: false,
-      });
-      await signOut(auth);
-      throw new Error('Verify your email first. We sent a new verification link.');
-    }
     return result.user;
   };
 

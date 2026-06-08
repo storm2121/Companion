@@ -26,7 +26,8 @@ const AuthHub = () => {
 
   useEffect(() => {
     if (loading) return;
-    if (firebaseUser && firebaseUser.emailVerified) {
+    // Email verification temporarily disabled.
+    if (firebaseUser) {
       navigate(profileReady ? '/dashboard' : '/setup', { replace: true });
     }
   }, [firebaseUser, profileReady, loading, navigate]);

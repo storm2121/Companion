@@ -2017,7 +2017,7 @@ a {
   overflow: auto;
   border-radius: var(--radius);
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
   scroll-behavior: smooth;
 }
 
@@ -2030,7 +2030,7 @@ a {
   background: transparent;
   border-radius: 999px;
   transition: background var(--transition), opacity var(--transition);
-  opacity: 0;
+  opacity: 0.6;
 }
 
 .note-canvas-scroll::-webkit-scrollbar-track:hover {
@@ -2039,10 +2039,12 @@ a {
 }
 
 .note-canvas-scroll::-webkit-scrollbar-thumb {
-  background: transparent;
+  /* Visible by default (was invisible until hover) so users can see scroll position. */
+  background: color-mix(in srgb, var(--text-muted) 38%, transparent);
   border-radius: 999px;
   border: 2px solid transparent;
-  opacity: 0;
+  background-clip: padding-box;
+  opacity: 1;
   transition: opacity var(--transition), background var(--transition), border-color var(--transition);
 }
 
@@ -2074,7 +2076,13 @@ a {
   position: relative;
   min-width: 100%;
   min-height: 560px;
-  background: var(--surface-1);
+  background-color: var(--surface-1);
+  /* Subtle dot grid gives spatial orientation on the large canvas. */
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--text-muted) 13%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   padding: 0.6rem;
@@ -2124,7 +2132,7 @@ a {
   background: var(--surface-3);
   border-bottom: 1px solid var(--border);
   cursor: grab;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   color: var(--text-muted);
 }
 
@@ -2225,6 +2233,16 @@ a {
   margin: 0 0 0.35em;
 }
 
+/* Empty-block hint (TipTap Placeholder). */
+.note-textarea.tiptap-editor p.is-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  opacity: 0.7;
+  pointer-events: none;
+  height: 0;
+  float: left;
+}
+
 .note-textarea.tiptap-editor ul,
 .note-textarea.tiptap-editor ol {
   padding-left: 1.4em;
@@ -2249,6 +2267,53 @@ a {
 .note-textarea.tiptap-editor ul[data-type='taskList'] li > div {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.note-textarea.tiptap-editor ul[data-type='taskList'] li > label input[type='checkbox'] {
+  width: 1em;
+  height: 1em;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent, #6aa3ff);
+}
+
+.note-textarea.tiptap-editor ul[data-type='taskList'] li[data-checked='true'] > div {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* Block body stays mounted when collapsed (so the editor survives) — hide it here. */
+.note-block-body-collapsed {
+  display: none !important;
+}
+
+/* Priority block: header star + a subtle accent ring so it's visibly distinct. */
+.note-block-priority-star {
+  color: #f5c451;
+  margin-right: 0.4em;
+  font-size: 0.85em;
+  flex: 0 0 auto;
+}
+
+.note-block.priority {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, #f5c451 70%, transparent),
+    0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.note-block.priority .note-block-header {
+  background: color-mix(in srgb, #f5c451 16%, var(--surface-3));
+}
+
+/* Back button shows a label, not just an arrow. */
+.note-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.note-back-label {
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .note-textarea.tiptap-editor blockquote {

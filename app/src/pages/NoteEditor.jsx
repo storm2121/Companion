@@ -47,7 +47,7 @@ const RichTextBlock = lazy(() => import('../components/editor/RichTextBlock'));
 
 // Phase 3 cutover flag. OFF until the TipTap editor reaches feature parity with the
 // legacy contentEditable block; flip to true to make it the live editor.
-const USE_TIPTAP_EDITOR = false;
+const USE_TIPTAP_EDITOR = true;
 
 const PAGE_HEIGHT = 720;
 const MIN_FONT_SIZE = 8;
@@ -92,7 +92,7 @@ const LINE_SPACING_OPTIONS = [
 ];
 
 const BLOCK_DEFAULTS = {
-  text: { w: 260, h: 180, fontSize: 12 },
+  text: { w: 260, h: 180, fontSize: 14 },
   image: { w: 280, h: 200 },
 };
 
@@ -544,6 +544,9 @@ const NoteEditor = () => {
   const canvasRef = useRef(null);
   const textRefs = useRef({});
   const activeEditorRef = useRef(null);
+  const lastActiveBlockIdRef = useRef('');
+  const editorsByBlockRef = useRef({});
+  const tiptapSelectionRef = useRef(null);
   const selectionRangeRef = useRef(null);
   const heldSelectionRangeRef = useRef(null);
   const skipNextFontSizeBlurCommitRef = useRef(false);
@@ -1375,6 +1378,15 @@ const NoteEditor = () => {
     }
   };
 
+  // Open the OS file picker. Must run synchronously inside the click handler to keep
+  // the user-activation the dialog requires (deferring via rAF/timeout drops it).
+  const openImagePicker = () => {
+    const input = fileInputRef.current;
+    if (!input) return;
+    input.click();
+    setAddMenuOpen(false);
+  };
+
   const updateBlock = (id, updates, options = {}) => {
     if (typeof updates.value === 'string') {
       textDraftsRef.current[id] = stripZeroWidth(updates.value);
@@ -1410,10 +1422,18 @@ const NoteEditor = () => {
   const deleteBlock = (id) => {
     pushHistory('delete');
     delete textDraftsRef.current[id];
+    delete editorsByBlockRef.current[id];
     setBlocks((prev) => prev.filter((block) => block.id !== id));
     markDirty();
     if (blockMenuOpenId === id) setBlockMenuOpenId('');
     if (activeBlockId === id) setActiveBlockId('');
+  };
+
+  const confirmDeleteBlock = (id) => {
+    if (typeof window !== 'undefined' && !window.confirm('Delete this block? You can undo with the ↺ button.')) {
+      return;
+    }
+    deleteBlock(id);
   };
 
   const toggleCollapseBlock = (id) => {
@@ -2095,15 +2115,46 @@ const NoteEditor = () => {
   }, []);
 
   const handleTiptapEditorActive = useCallback(
-    (editor) => {
+    (editor, blockId) => {
       activeEditorRef.current = editor;
+      if (blockId) lastActiveBlockIdRef.current = blockId;
       syncToolbarFromTiptap(editor);
     },
     [syncToolbarFromTiptap],
   );
 
+  const registerBlockEditor = useCallback((blockId, editor) => {
+    if (editor) {
+      editorsByBlockRef.current[blockId] = editor;
+    } else {
+      delete editorsByBlockRef.current[blockId];
+      if (activeEditorRef.current && !Object.values(editorsByBlockRef.current).includes(activeEditorRef.current)) {
+        activeEditorRef.current = null;
+      }
+    }
+  }, []);
+
+  // Resolve the editor a toolbar/context action should target, and the block id.
+  const resolveActiveBlockId = () => activeTextId || lastActiveBlockIdRef.current || '';
+  const resolveActiveEditor = () => {
+    const id = resolveActiveBlockId();
+    return editorsByBlockRef.current[id] || activeEditorRef.current || null;
+  };
+
+  // Capture the active editor's selection before a focus-stealing control (native
+  // select, color picker, popups) takes focus, so we can restore it on apply.
+  const rememberTiptapSelection = () => {
+    const editor = resolveActiveEditor();
+    if (!editor) {
+      tiptapSelectionRef.current = null;
+      return;
+    }
+    const { from, to } = editor.state.selection;
+    tiptapSelectionRef.current = { from, to };
+  };
+
   const applyTiptapTableAction = (action, options) => {
-    const editor = activeEditorRef.current;
+    const editor = resolveActiveEditor();
     if (!editor) return;
     const chain = editor.chain().focus();
     switch (action) {
@@ -2140,13 +2191,24 @@ const NoteEditor = () => {
   // Maps a toolbar updates object to TipTap commands. With a collapsed caret these set
   // stored marks, so the format applies only to the next typed text.
   const applyTiptapAction = (updates) => {
-    const editor = activeEditorRef.current;
+    const editor = resolveActiveEditor();
     if (!editor) return;
     if (updates.tableAction) {
       applyTiptapTableAction(updates.tableAction, updates.tableOptions);
       return;
     }
-    const chain = editor.chain().focus();
+    let chain = editor.chain().focus();
+    // Restore a selection captured before a focus-stealing control opened, so the
+    // format lands on the text the user had selected.
+    const stored = tiptapSelectionRef.current;
+    if (stored && Number.isFinite(stored.from) && stored.from !== stored.to) {
+      const max = editor.state.doc.content.size;
+      chain = chain.setTextSelection({
+        from: Math.min(stored.from, max),
+        to: Math.min(stored.to, max),
+      });
+    }
+    tiptapSelectionRef.current = null;
     if (updates.fontSize !== undefined) chain.setFontSize(`${updates.fontSize}px`);
     if (updates.textColor) chain.setColor(updates.textColor);
     if (updates.highlightColor) chain.setHighlight({ color: updates.highlightColor });
@@ -2161,11 +2223,6 @@ const NoteEditor = () => {
     if (updates.quote) chain.toggleBlockquote();
     if (updates.align) chain.setTextAlign(updates.align);
     chain.run();
-    // Line spacing stays a block-level property (applied on the editor shell).
-    if (updates.lineSpacing !== undefined) {
-      updateBlock(activeTextId, { lineHeight: updates.lineSpacing }, { skipDirty: true });
-      markDirty();
-    }
   };
 
   const hasRangeSelectionInActiveBlock = () => {
@@ -2178,25 +2235,76 @@ const NoteEditor = () => {
     return root.contains(range.startContainer) && root.contains(range.endContainer);
   };
 
+  const clampFontSize = (value) => Math.max(MIN_FONT_SIZE, Math.min(Math.round(value), MAX_FONT_SIZE));
+
+  const readFontSizeAtCursor = (editor) => {
+    const attr = editor.getAttributes('textStyle').fontSize;
+    const parsed = Number.parseInt(attr || '', 10);
+    if (Number.isFinite(parsed)) return parsed;
+    const block = blocksRef.current.find((item) => item.id === resolveActiveBlockId());
+    return block?.fontSize || BLOCK_DEFAULTS.text.fontSize;
+  };
+
+  // Absolute set (font-size number input). Selection → that whole selection becomes the
+  // size; collapsed caret → a stored mark so only the next typed text takes it. Never
+  // touches the block base (which would rescale every other line + the line spacing).
   const applyFontSize = (size) => {
-    if (!activeTextId) return;
-    const nextSize = Math.max(MIN_FONT_SIZE, Math.min(size, MAX_FONT_SIZE));
+    const nextSize = clampFontSize(size);
     setToolbarFontSize(nextSize);
     if (USE_TIPTAP_EDITOR) {
-      // Structured editor: a caret sets a stored mark (next typed text only); a
-      // selection resizes just that selection. No block-wide side effects.
+      const editor = resolveActiveEditor();
+      if (!editor) return;
       applyTiptapAction({ fontSize: nextSize });
       return;
     }
+    const blockId = resolveActiveBlockId();
+    if (!blockId) return;
     if (hasRangeSelectionInActiveBlock()) {
-      // Real text is highlighted → resize just that selection.
       updateTextStyle(activeTextId, { fontSize: nextSize });
     } else {
-      // Collapsed caret / empty block → change the block's base size so the change
-      // actually sticks and persists, instead of inserting a throwaway zero-width
-      // span that the cleanup immediately removes (which made the value toggle).
       updateBlock(activeTextId, { fontSize: nextSize }, { recordHistory: true, reason: 'font-size' });
     }
+  };
+
+  // Increment/decrement. On a selection, bumps EACH text run by delta so mixed sizes
+  // keep their differences (30+25 → 31+26, not both equal). On a collapsed caret, sets
+  // a stored mark at current±delta for the next typed text only — never the block base.
+  const stepFontSizeTiptap = (delta) => {
+    const editor = resolveActiveEditor();
+    if (!editor) return;
+    const { state } = editor;
+    const markType = state.schema.marks.textStyle;
+    const { from, to, empty } = state.selection;
+
+    if (empty || !markType) {
+      const next = clampFontSize(readFontSizeAtCursor(editor) + delta);
+      setToolbarFontSize(next);
+      editor.chain().focus().setFontSize(`${next}px`).run();
+      return;
+    }
+
+    const block = blocksRef.current.find((item) => item.id === resolveActiveBlockId());
+    const blockBase = block?.fontSize || BLOCK_DEFAULTS.text.fontSize;
+    let tr = state.tr;
+    let anchorSize = null;
+    state.doc.nodesBetween(from, to, (node, pos) => {
+      if (!node.isText) return;
+      const start = Math.max(pos, from);
+      const end = Math.min(pos + node.nodeSize, to);
+      if (start >= end) return;
+      const existing = node.marks.find((mark) => mark.type === markType);
+      const current = Number.parseInt(existing?.attrs?.fontSize || '', 10);
+      const base = Number.isFinite(current) ? current : blockBase;
+      const next = clampFontSize(base + delta);
+      if (anchorSize === null) anchorSize = next;
+      const attrs = { ...(existing ? existing.attrs : {}), fontSize: `${next}px` };
+      tr = tr.addMark(start, end, markType.create(attrs));
+    });
+    if (tr.docChanged) {
+      editor.view.focus();
+      editor.view.dispatch(tr);
+    }
+    if (anchorSize !== null) setToolbarFontSize(anchorSize);
   };
 
   const restoreHeldSelectionForFontSize = () => {
@@ -2229,13 +2337,25 @@ const NoteEditor = () => {
   };
 
   const stepFontSize = (delta) => {
+    if (USE_TIPTAP_EDITOR) {
+      stepFontSizeTiptap(delta);
+      return;
+    }
     applyFontSize((fontSizeValue || BLOCK_DEFAULTS.text.fontSize) + delta);
   };
 
   const applyToolbarAction = (updates) => {
-    if (!activeTextId) return;
+    const blockId = resolveActiveBlockId();
+    if (!blockId) return;
     if (USE_TIPTAP_EDITOR) {
-      applyTiptapAction(updates);
+      // Line spacing is a block-level property (applied on the editor shell) and must
+      // not require an active editor/selection.
+      if (updates.lineSpacing !== undefined) {
+        updateBlock(blockId, { lineHeight: updates.lineSpacing }, { recordHistory: true, reason: 'line-spacing' });
+      }
+      const editorUpdates = { ...updates };
+      delete editorUpdates.lineSpacing;
+      if (Object.keys(editorUpdates).length) applyTiptapAction(editorUpdates);
       return;
     }
     updateTextStyle(activeTextId, updates);
@@ -2247,6 +2367,35 @@ const NoteEditor = () => {
   };
 
   const copyCurrentStyle = () => {
+    if (USE_TIPTAP_EDITOR) {
+      const editor = resolveActiveEditor();
+      if (!editor) return;
+      const ts = editor.getAttributes('textStyle');
+      const hl = editor.getAttributes('highlight');
+      const sizePx = Number.parseInt(ts.fontSize || '', 10);
+      const align = editor.isActive({ textAlign: 'center' })
+        ? 'center'
+        : editor.isActive({ textAlign: 'right' })
+          ? 'right'
+          : editor.isActive({ textAlign: 'justify' })
+            ? 'justify'
+            : 'left';
+      setCopiedTextStyle({
+        fontSize: Number.isFinite(sizePx)
+          ? sizePx
+          : activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize,
+        fontFamily: (ts.fontFamily || '').split(',')[0]?.replace(/["']/g, '').trim() || '',
+        textColor: toHexColor(ts.color || '') || '',
+        highlightColor: toHexColor(hl.color || '') || '',
+        bold: editor.isActive('bold'),
+        italic: editor.isActive('italic'),
+        underline: editor.isActive('underline'),
+        strike: editor.isActive('strike'),
+        align,
+        lineSpacing: activeTextBlock?.lineHeight || 1.4,
+      });
+      return;
+    }
     if (!activeTextId) return;
     const root = textRefs.current[activeTextId];
     const selection = document.getSelection();
@@ -2281,7 +2430,28 @@ const NoteEditor = () => {
   };
 
   const pasteCopiedStyle = () => {
-    if (!activeTextId || !copiedTextStyle) return;
+    if (!copiedTextStyle) return;
+    if (USE_TIPTAP_EDITOR) {
+      const editor = resolveActiveEditor();
+      const blockId = resolveActiveBlockId();
+      if (!editor || !blockId) return;
+      pushHistory('paste-style');
+      const chain = editor.chain().focus();
+      if (copiedTextStyle.fontSize) chain.setFontSize(`${copiedTextStyle.fontSize}px`);
+      if (copiedTextStyle.fontFamily) chain.setFontFamily(copiedTextStyle.fontFamily);
+      if (copiedTextStyle.textColor) chain.setColor(copiedTextStyle.textColor);
+      if (copiedTextStyle.highlightColor) chain.setHighlight({ color: copiedTextStyle.highlightColor });
+      else chain.unsetHighlight();
+      if (copiedTextStyle.align) chain.setTextAlign(copiedTextStyle.align);
+      chain.run();
+      if (editor.isActive('bold') !== copiedTextStyle.bold) editor.chain().focus().toggleBold().run();
+      if (editor.isActive('italic') !== copiedTextStyle.italic) editor.chain().focus().toggleItalic().run();
+      if (editor.isActive('underline') !== copiedTextStyle.underline) editor.chain().focus().toggleUnderline().run();
+      if (editor.isActive('strike') !== copiedTextStyle.strike) editor.chain().focus().toggleStrike().run();
+      updateBlock(blockId, { lineHeight: copiedTextStyle.lineSpacing || 1.4 });
+      return;
+    }
+    if (!activeTextId) return;
     pushHistory('paste-style');
     applySelectionCommand(activeTextId, 'fontSize', copiedTextStyle.fontSize);
     applySelectionCommand(activeTextId, 'fontName', copiedTextStyle.fontFamily);
@@ -2317,11 +2487,13 @@ const NoteEditor = () => {
 
   const handleToolbarButtonMouseDown = (event) => {
     rememberSelection();
+    rememberTiptapSelection();
     event.preventDefault();
   };
 
   const handleToolbarFieldMouseDown = () => {
     rememberSelection();
+    rememberTiptapSelection();
   };
 
   const toggleTablePicker = () => {
@@ -2351,7 +2523,7 @@ const NoteEditor = () => {
       return;
     }
     if (action === 'add-photo') {
-      fileInputRef.current?.click();
+      openImagePicker();
       setContextMenu(null);
       return;
     }
@@ -2366,8 +2538,8 @@ const NoteEditor = () => {
     rememberSelection(blockId);
 
     if (action === 'delete-block') {
-      deleteBlock(blockId);
       setContextMenu(null);
+      confirmDeleteBlock(blockId);
       return;
     }
     if (action === 'toggle-lock') {
@@ -2408,16 +2580,31 @@ const NoteEditor = () => {
       return;
     }
 
-    const formatCommandMap = {
+    const formatTiptapMap = {
+      'fmt-bold': { bold: true },
+      'fmt-italic': { italic: true },
+      'fmt-underline': { underline: true },
+      'fmt-strike': { strike: true },
+    };
+    const formatLegacyMap = {
       'fmt-bold': 'bold',
       'fmt-italic': 'italic',
       'fmt-underline': 'underline',
       'fmt-strike': 'strikeThrough',
     };
-    const formatCommand = formatCommandMap[action];
-    if (formatCommand) {
+    if (formatTiptapMap[action]) {
       pushHistory('format-context');
-      applySelectionCommand(blockId, formatCommand);
+      if (USE_TIPTAP_EDITOR) {
+        const editor = editorsByBlockRef.current[blockId];
+        if (editor) {
+          activeEditorRef.current = editor;
+          lastActiveBlockIdRef.current = blockId;
+          tiptapSelectionRef.current = null;
+          applyTiptapAction(formatTiptapMap[action]);
+        }
+      } else {
+        applySelectionCommand(blockId, formatLegacyMap[action]);
+      }
       setContextMenu(null);
     }
   };
@@ -2726,7 +2913,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => stepFontSize(-1)}
-        title="Decrease font size"
+        title="Decrease font size (Ctrl+Shift+,)"
       >
         -
       </button>
@@ -2796,7 +2983,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => stepFontSize(1)}
-        title="Increase font size"
+        title="Increase font size (Ctrl+Shift+.)"
       >
         +
       </button>
@@ -2840,7 +3027,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ bold: !toolbarBold })}
-        title="Bold"
+        title="Bold (Ctrl+B)"
       >
         <FaBold />
       </button>
@@ -2850,7 +3037,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ italic: !toolbarItalic })}
-        title="Italic"
+        title="Italic (Ctrl+I)"
       >
         <FaItalic />
       </button>
@@ -2860,7 +3047,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ underline: !toolbarUnderline })}
-        title="Underline"
+        title="Underline (Ctrl+U)"
       >
         <FaUnderline />
       </button>
@@ -2870,7 +3057,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ strike: !toolbarStrike })}
-        title="Strikethrough"
+        title="Strikethrough (Ctrl+Shift+S)"
       >
         <FaStrikethrough />
       </button>
@@ -2885,7 +3072,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ align: 'left' })}
-        title="Align left"
+        title="Align left (Ctrl+Shift+L)"
       >
         <FaAlignLeft />
       </button>
@@ -2895,7 +3082,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ align: 'center' })}
-        title="Align center"
+        title="Align center (Ctrl+Shift+E)"
       >
         <FaAlignCenter />
       </button>
@@ -2905,7 +3092,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ align: 'right' })}
-        title="Align right"
+        title="Align right (Ctrl+Shift+R)"
       >
         <FaAlignRight />
       </button>
@@ -2915,7 +3102,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ align: 'justify' })}
-        title="Justify"
+        title="Justify (Ctrl+Shift+J)"
       >
         <FaAlignJustify />
       </button>
@@ -2971,7 +3158,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ bullets: true })}
-        title="Bulleted list"
+        title="Bulleted list (Ctrl+Shift+8)"
       >
         <FaListUl />
       </button>
@@ -2981,7 +3168,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ numbered: true })}
-        title="Numbered list"
+        title="Numbered list (Ctrl+Shift+7)"
       >
         <FaListOl />
       </button>
@@ -2991,7 +3178,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ checklist: true })}
-        title="Checklist"
+        title="Checklist (Ctrl+Shift+9)"
       >
         <FaCheckSquare />
       </button>
@@ -3000,7 +3187,7 @@ const NoteEditor = () => {
         disabled={textControlsDisabled}
         onMouseDown={handleToolbarButtonMouseDown}
         onClick={() => applyToolbarAction({ quote: true })}
-        title="Quote block"
+        title="Quote (Ctrl+Shift+B)"
       >
         <FaQuoteRight />
       </button>
@@ -3113,8 +3300,14 @@ const NoteEditor = () => {
   return (
     <div className={`page-shell note-page-shell ${isTemplateMode ? 'template-mode' : ''}`}>
       <header className={`note-topbar compact ${isTemplateMode ? '' : 'no-title'}`}>
-        <button className="ghost-btn note-back" onClick={returnToDashboardClass} title="Back">
+        <button
+          className="ghost-btn note-back"
+          onClick={returnToDashboardClass}
+          title="Back to notes"
+          aria-label="Back to notes"
+        >
           <FaArrowLeft />
+          <span className="note-back-label">Back</span>
         </button>
         {isTemplateMode && (
           <span className="template-mode-pill" title="Template creation mode">
@@ -3270,7 +3463,7 @@ const NoteEditor = () => {
                     data-block-id={block.id}
                     className={`note-block ${isActive ? 'active' : ''} ${block.locked ? 'locked' : ''} ${
                       block.collapsed ? 'collapsed' : ''
-                    }`}
+                    } ${block.priority ? 'priority' : ''}`}
                   >
                     <div className="note-block-shell" style={blockBackground ? { background: blockBackground } : undefined}>
                       <div
@@ -3283,6 +3476,9 @@ const NoteEditor = () => {
                         }}
                       >
                         <span className={`note-block-title ${block.title ? '' : 'muted'}`}>
+                          {block.priority && (
+                            <FaStar className="note-block-priority-star" aria-label="Priority" />
+                          )}
                           {block.title || (block.type === 'text' ? 'Text block' : 'Image block')}
                         </span>
                         <div className="note-block-actions">
@@ -3318,16 +3514,22 @@ const NoteEditor = () => {
                           </button>
                         </div>
                       </div>
-                      {!block.collapsed && (
-                        <div className="note-block-body">
+                      {/* Body stays mounted when collapsed (hidden via CSS) so the
+                          TipTap editor instance and its content/undo survive collapse. */}
+                      {(
+                        <div
+                          className={`note-block-body${block.collapsed ? ' note-block-body-collapsed' : ''}`}
+                        >
                           {block.type === 'text' ? (
                             USE_TIPTAP_EDITOR ? (
                             <Suspense fallback={null}>
                               <RichTextBlock
                                 block={block}
                                 onChange={(html) => handleRichTextChange(block.id, html)}
-                                onEditorActive={handleTiptapEditorActive}
+                                onRegister={(instance) => registerBlockEditor(block.id, instance)}
+                                onActivate={(instance) => handleTiptapEditorActive(instance, block.id)}
                                 onFocusBlock={() => selectBlock(block.id, { raise: false })}
+                                onStepFontSize={stepFontSize}
                               />
                             </Suspense>
                             ) : (
@@ -3455,14 +3657,13 @@ const NoteEditor = () => {
               </button>
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={openImagePicker}
                 disabled={imageUploading}
-                onMouseDown={(event) => event.preventDefault()}
               >
                 <FaImage /> {imageUploading ? 'Uploading...' : 'Photo block'}
               </button>
               <button type="button" onClick={increaseCanvas} onMouseDown={(event) => event.preventDefault()}>
-                <FaPlus /> Add page
+                <FaPlus /> Extend canvas
               </button>
             </div>
           )}
@@ -3470,7 +3671,16 @@ const NoteEditor = () => {
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          hidden
+          aria-hidden="true"
+          tabIndex={-1}
+          style={{
+            position: 'absolute',
+            width: 1,
+            height: 1,
+            opacity: 0,
+            overflow: 'hidden',
+            pointerEvents: 'none',
+          }}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) addImageBlock(file);
@@ -3546,7 +3756,7 @@ const NoteEditor = () => {
               <FaStar />
               {blockMenuBlock.priority ? 'Priority on' : 'Priority off'}
             </button>
-            <button type="button" className="danger" onClick={() => deleteBlock(blockMenuBlock.id)}>
+            <button type="button" className="danger" onClick={() => confirmDeleteBlock(blockMenuBlock.id)}>
               <FaTrash />
               Delete
             </button>
@@ -3641,7 +3851,7 @@ const NoteEditor = () => {
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => executeContextAction('add-page')}
               >
-                Add page
+                Extend canvas
               </button>
             </>
           )}

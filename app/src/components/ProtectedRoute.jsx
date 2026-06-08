@@ -13,9 +13,7 @@ const ProtectedRoute = ({ children, requireProfile = false }) => {
     return <Navigate to="/" replace />;
   }
 
-  if (!firebaseUser.emailVerified) {
-    return <Navigate to="/" replace />;
-  }
+  // Email verification temporarily disabled.
 
   if (requireProfile && !profile) {
     return <ScreenLoader note="Loading profile..." />;

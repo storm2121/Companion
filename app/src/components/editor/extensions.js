@@ -11,6 +11,7 @@ import Table from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableHeader from '@tiptap/extension-table-header';
 import TableCell from '@tiptap/extension-table-cell';
+import Placeholder from '@tiptap/extension-placeholder';
 import { FontSize } from './fontSize';
 
 // Single source of truth for the editor schema. Used by the live editor and by any
@@ -30,4 +31,8 @@ export const buildEditorExtensions = () => [
   TableRow,
   TableHeader,
   TableCell,
+  Placeholder.configure({
+    placeholder: 'Write something…',
+    showOnlyWhenEditable: true,
+  }),
 ];
