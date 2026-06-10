@@ -688,7 +688,7 @@ a {
   padding: 0;
   color: var(--text-muted);
   cursor: grab;
-  opacity: 0.65;
+  opacity: 0.32;
   transition: background var(--transition), border var(--transition), opacity var(--transition);
 }
 
@@ -1818,6 +1818,114 @@ a {
   place-items: center;
   color: var(--text);
   font-weight: 600;
+}
+
+/* Account dropdown (avatar menu) — replaces the old click-to-logout avatar. */
+.user-menu {
+  position: relative;
+}
+
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
+  padding: 0.45rem;
+  display: grid;
+  gap: 0.3rem;
+  z-index: 60;
+}
+
+.user-menu-head {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.35rem 0.55rem 0.5rem;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 0.15rem;
+}
+
+.user-menu-head strong {
+  font-size: 0.92rem;
+  color: var(--text);
+}
+
+.user-menu-head span {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu-panel button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: 0.5rem 0.55rem;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.88rem;
+  width: 100%;
+}
+
+.user-menu-panel button:hover {
+  background: var(--surface-3);
+}
+
+.user-menu-panel button.danger {
+  color: var(--danger);
+}
+
+/* Inline class rename field. */
+.class-rename-input {
+  width: 100%;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.15rem 0.35rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+/* Raise a row whose action menu is open so the menu isn't painted over by later
+   rows (each row is position:relative, forming its own stacking context). */
+.class-row.menu-open,
+.note-row.menu-open {
+  z-index: 30;
+}
+
+/* Loading screen: visible spinner + readable text (was near-invisible muted text). */
+.screen-loader {
+  justify-items: center;
+  text-align: center;
+  gap: 1.1rem;
+}
+
+.screen-loader-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-top-color: var(--accent, #c8a46a);
+  animation: screen-loader-spin 0.8s linear infinite;
+}
+
+.screen-loader-text {
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+@keyframes screen-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .avatar-picker {

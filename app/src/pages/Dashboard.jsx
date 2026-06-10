@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  FaCog,
   FaEllipsisH,
   FaImage,
   FaMoon,
@@ -23,6 +22,7 @@ import {
   listenToNoteTemplates,
   listenToNotes,
   moveNotes,
+  renameClass,
   reorderClasses,
   reorderNotes,
   updateClassColor,
@@ -117,6 +117,10 @@ const Dashboard = () => {
   const [templateDeleting, setTemplateDeleting] = useState(false);
   const [quickAddBusy, setQuickAddBusy] = useState(false);
   const [themeMode, setThemeMode] = useState(THEME_DEFAULT_MODE);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef(null);
+  const [renamingClassId, setRenamingClassId] = useState('');
+  const [renameDraft, setRenameDraft] = useState('');
   const titleRef = useRef(null);
   const summaryRef = useRef(null);
   const imageRef = useRef(null);
@@ -264,6 +268,7 @@ const Dashboard = () => {
     setMoveTargetId('');
     setNoteDraggingId('');
     setNoteDragOverId('');
+    setSearch('');
   }, [selectedClassId]);
 
   useEffect(() => {
@@ -633,6 +638,24 @@ const Dashboard = () => {
     return () => document.removeEventListener('keydown', handleEscape);
   }, [noteModalOpen, noteSaving]);
 
+  useEffect(() => {
+    if (!userMenuOpen) return undefined;
+    const handlePointer = (event) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setUserMenuOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') setUserMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointer);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handlePointer);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [userMenuOpen]);
+
   const uploadCover = async (noteId) => {
     if (!firebaseUser || !noteImageFile) return '';
     const ref = storageRef(
@@ -764,6 +787,34 @@ const Dashboard = () => {
     } finally {
       setMenuOpenId('');
       setColorPickerId('');
+    }
+  };
+
+  const startRenameClass = (item) => {
+    setRenamingClassId(item.id);
+    setRenameDraft(item.name || '');
+    setMenuOpenId('');
+    setColorPickerId('');
+  };
+
+  const cancelRenameClass = () => {
+    setRenamingClassId('');
+    setRenameDraft('');
+  };
+
+  const commitRenameClass = async (classId) => {
+    const nextName = renameDraft.trim();
+    const target = classes.find((item) => item.id === classId);
+    if (!firebaseUser || !nextName || (target && nextName === target.name)) {
+      cancelRenameClass();
+      return;
+    }
+    try {
+      await renameClass(firebaseUser.uid, classId, nextName);
+    } catch (err) {
+      console.error('Failed to rename class', err);
+    } finally {
+      cancelRenameClass();
     }
   };
 
@@ -930,17 +981,38 @@ const Dashboard = () => {
                 {currentThemeLabel ? `Theme: ${currentThemeLabel}` : 'Theme'}
               </button>
             </div>
-            <button className="icon-btn" title="Settings">
-              <FaCog />
-            </button>
-            <button
-              className="avatar-btn"
-              title="Logout"
-              onClick={logout}
-              style={{ backgroundImage: `url(${profile?.photoUrl || ''})` }}
-            >
-              {!profile?.photoUrl && (profile?.displayName?.slice(0, 1).toUpperCase() || 'A')}
-            </button>
+            <div className="user-menu" ref={userMenuRef}>
+              <button
+                type="button"
+                className="avatar-btn"
+                title="Account"
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
+                onClick={() => setUserMenuOpen((prev) => !prev)}
+                style={{ backgroundImage: `url(${profile?.photoUrl || ''})` }}
+              >
+                {!profile?.photoUrl && (profile?.displayName?.slice(0, 1).toUpperCase() || 'A')}
+              </button>
+              {userMenuOpen && (
+                <div className="user-menu-panel" role="menu">
+                  <div className="user-menu-head">
+                    <strong>{profile?.displayName || 'Account'}</strong>
+                    <span>{profile?.email || firebaseUser?.email || ''}</span>
+                  </div>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="danger"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      logout();
+                    }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -975,7 +1047,7 @@ const Dashboard = () => {
                     key={item.id}
                     className={`class-row ${item.id === selectedClassId ? 'active' : ''} ${
                       draggingId === item.id ? 'dragging' : ''
-                    } ${dragOverId === item.id ? 'drag-over' : ''}`}
+                    } ${dragOverId === item.id ? 'drag-over' : ''} ${menuOpen ? 'menu-open' : ''}`}
                     role="button"
                     tabIndex={0}
                     onClick={() => handleSelectClass(item.id)}
@@ -1004,8 +1076,28 @@ const Dashboard = () => {
                       </button>
                       <span className="dot" style={{ background: item.color || 'var(--accent)' }} />
                       <div className="class-text">
-                        <p title={item.name}>{item.name}</p>
-                        <span>{item.noteCount || 0} notes</span>
+                        {renamingClassId === item.id ? (
+                          <input
+                            className="class-rename-input"
+                            value={renameDraft}
+                            autoFocus
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) => setRenameDraft(event.target.value)}
+                            onBlur={() => commitRenameClass(item.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                commitRenameClass(item.id);
+                              } else if (event.key === 'Escape') {
+                                event.preventDefault();
+                                cancelRenameClass();
+                              }
+                            }}
+                          />
+                        ) : (
+                          <p title={item.name}>{item.name}</p>
+                        )}
+                        <span>{`${item.noteCount || 0} ${(item.noteCount || 0) === 1 ? 'note' : 'notes'}`}</span>
                       </div>
                     </div>
                     <div className="class-row-actions">
@@ -1021,6 +1113,9 @@ const Dashboard = () => {
                       </button>
                       {menuOpen && (
                         <div className="class-menu" onClick={(event) => event.stopPropagation()} role="menu">
+                          <button type="button" onClick={() => startRenameClass(item)}>
+                            <FaPen /> Rename
+                          </button>
                           <button type="button" onClick={() => toggleColorPicker(item.id)}>
                             <FaPalette /> Change color
                           </button>
@@ -1133,7 +1228,7 @@ const Dashboard = () => {
                     key={note.id}
                     className={`note-row ${selected ? 'selected' : ''} ${
                       noteDraggingId === note.id ? 'dragging' : ''
-                    } ${noteDragOverId === note.id ? 'drag-over' : ''}`}
+                    } ${noteDragOverId === note.id ? 'drag-over' : ''} ${menuOpen ? 'menu-open' : ''}`}
                     role="button"
                     tabIndex={0}
                     onClick={() => {
@@ -1208,13 +1303,7 @@ const Dashboard = () => {
                       {menuOpen && (
                         <div className="note-menu" role="menu" onClick={(event) => event.stopPropagation()}>
                           <button type="button" onClick={() => handleOpenEditNote(note, 'title')}>
-                            <FaPen /> Edit title
-                          </button>
-                          <button type="button" onClick={() => handleOpenEditNote(note, 'summary')}>
-                            <FaPen /> Edit summary
-                          </button>
-                          <button type="button" onClick={() => handleOpenEditNote(note, 'image')}>
-                            <FaImage /> Change picture
+                            <FaPen /> Edit details
                           </button>
                           <button type="button" className="danger" onClick={() => requestNoteDelete(note)}>
                             <FaTrash /> Delete note

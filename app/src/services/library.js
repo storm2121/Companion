@@ -115,6 +115,15 @@ export const updateClassColor = async (uid, classId, color) => {
   await updateDoc(doc(db, 'users', uid, 'classes', classId), { color });
 };
 
+export const renameClass = async (uid, classId, name) => {
+  const cleanedName = name.trim();
+  if (!cleanedName) return;
+  await updateDoc(doc(db, 'users', uid, 'classes', classId), {
+    name: cleanedName,
+    code: cleanedName,
+  });
+};
+
 export const reorderClasses = async (uid, orderedClasses) => {
   const batch = writeBatch(db);
   orderedClasses.forEach((item, index) => {

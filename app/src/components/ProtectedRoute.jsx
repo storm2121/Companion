@@ -15,8 +15,20 @@ const ProtectedRoute = ({ children, requireProfile = false }) => {
 
   // Email verification temporarily disabled.
 
+  // At this point `loading` is already false, so a null profile means the profile
+  // fetch failed (network/permissions) — show a recoverable state, not a perpetual loader.
   if (requireProfile && !profile) {
-    return <ScreenLoader note="Loading profile..." />;
+    return (
+      <div className="gate-shell">
+        <div className="gate-card centered screen-loader">
+          <p className="screen-loader-text">We couldn&apos;t load your profile.</p>
+          <p className="status-text">This can happen on a flaky connection or right after signing in.</p>
+          <button type="button" className="primary-btn" onClick={() => window.location.reload()}>
+            Reload
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (requireProfile && !profileReady) {
