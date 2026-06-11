@@ -26,28 +26,8 @@ const applyThemeMode = (mode) => {
   if (typeof document === 'undefined') return;
   const themeKey = resolveThemeMode(mode);
   const theme = THEME_PRESETS[themeKey];
-  const root = document.documentElement;
-  root.style.setProperty('--bg', theme.bg);
-  root.style.setProperty('--surface-1', theme.surface1);
-  root.style.setProperty('--surface-2', theme.surface2);
-  root.style.setProperty('--surface-3', theme.surface3);
-  root.style.setProperty('--border', theme.border);
-  root.style.setProperty('--text', theme.text);
-  root.style.setProperty('--text-secondary', theme.textSecondary);
-  root.style.setProperty('--text-muted', theme.textMuted);
-  root.style.setProperty('--accent', theme.accent);
-  root.style.setProperty('--accent-hover', theme.accentHover);
-  root.style.setProperty('--accent-pressed', theme.accentPressed);
-  root.style.setProperty('--scroll-track', theme.scrollTrack);
-  root.style.setProperty('--scroll-track-alt', theme.scrollTrackAlt || theme.scrollTrack);
-  root.style.setProperty('--scroll-thumb', theme.scrollThumb);
-  root.style.setProperty('--scroll-thumb-alt', theme.scrollThumbAlt || theme.scrollThumb);
-  root.style.setProperty('--scroll-thumb-hover', theme.scrollThumbHover);
-  root.style.setProperty(
-    '--scroll-thumb-hover-alt',
-    theme.scrollThumbHoverAlt || theme.scrollThumbHover,
-  );
-  root.style.setProperty('--scroll-thumb-border', theme.scrollThumbBorder);
+  // The palettes live in index.css; switching themes is just flipping the attribute.
+  document.documentElement.setAttribute('data-theme', theme.attr);
 };
 
 const buildActionCodeSettings = () => ({

@@ -1,85 +1,103 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Manrope:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,500&family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700&display=swap');
 
+/* ============ LAMPLIGHT (default / dark) ============
+   Warm espresso darks lifted well above black; one honey accent. */
 :root {
-  --bg: #0b0d0f;
-  --surface-1: #111418;
-  --surface-2: #161b21;
-  --surface-3: #1c2430;
-  --border: rgba(255, 255, 255, 0.07);
-  --text: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-muted: rgba(255, 255, 255, 0.45);
-  --accent: #c8a46a;
-  --accent-hover: #d6b57a;
-  --accent-pressed: #b89255;
-  --danger: #d59a9a;
-  --danger-hover: #e4b1b1;
-  --radius: 14px;
-  --radius-sm: 10px;
+  --font: 'Instrument Sans', system-ui, sans-serif;
+  --serif: 'Instrument Serif', Georgia, serif;
+  --bg: oklch(0.218 0.012 60);
+  --surface-1: oklch(0.235 0.012 61);
+  --surface-2: oklch(0.248 0.013 62);
+  --surface-3: oklch(0.288 0.015 64);
+  --row-active: oklch(0.318 0.018 66);
+  --border: oklch(0.318 0.014 64);
+  --line-2: oklch(0.375 0.015 66);
+  --text: oklch(0.95 0.01 80);
+  --text-secondary: oklch(0.73 0.013 75);
+  --text-muted: oklch(0.575 0.013 70);
+  --accent: oklch(0.8 0.125 70);
+  --accent-hover: oklch(0.84 0.12 71);
+  --accent-pressed: oklch(0.76 0.125 69);
+  --accent-ink: oklch(0.82 0.115 72);
+  --accent-soft: oklch(0.8 0.125 70 / 0.14);
+  --accent-line: oklch(0.8 0.125 70 / 0.38);
+  --glow: oklch(0.8 0.125 70 / 0.05);
+  --danger: oklch(0.72 0.1 25);
+  --danger-hover: oklch(0.78 0.1 25);
+  --radius: 16px;
+  --radius-sm: 11px;
   --page-padding: clamp(16px, 2vw, 28px);
   --gap: 16px;
-  --transition: 0.25s ease-in-out;
+  --transition: 0.22s ease;
   --crest-url: url('/images/crest-placeholder.svg');
   --card: var(--surface-2);
   --card-soft: var(--surface-1);
-  --scroll-track: rgba(20, 24, 30, 0.9);
-  --scroll-track-alt: rgba(43, 49, 58, 0.94);
-  --scroll-thumb: rgba(122, 132, 145, 0.72);
-  --scroll-thumb-alt: rgba(150, 160, 171, 0.8);
-  --scroll-thumb-hover: rgba(145, 155, 167, 0.9);
-  --scroll-thumb-hover-alt: rgba(173, 182, 191, 0.95);
-  --scroll-thumb-border: rgba(28, 33, 40, 0.95);
+  --scroll-track: oklch(0.26 0.012 62 / 0.7);
+  --scroll-track-alt: oklch(0.29 0.013 63 / 0.8);
+  --scroll-thumb: oklch(0.45 0.013 66 / 0.75);
+  --scroll-thumb-alt: oklch(0.5 0.013 68 / 0.8);
+  --scroll-thumb-hover: oklch(0.55 0.013 68 / 0.9);
+  --scroll-thumb-hover-alt: oklch(0.6 0.013 70 / 0.92);
+  --scroll-thumb-border: oklch(0.24 0.012 62 / 0.95);
   --muted: var(--text-muted);
-  --text-on-accent: #1b1b1b;
-  --focus-ring: rgba(200, 164, 106, 0.6);
-  --overlay: rgba(4, 6, 8, 0.6);
+  --text-on-accent: oklch(0.235 0.04 58);
+  --focus-ring: oklch(0.8 0.125 70 / 0.5);
+  --overlay: oklch(0.13 0.01 60 / 0.55);
   --border-soft: color-mix(in srgb, var(--border) 80%, transparent);
-  --border-strong: color-mix(in srgb, var(--border) 72%, var(--text-secondary));
-  --surface-hover: color-mix(in srgb, var(--surface-3) 72%, var(--surface-2));
-  --control-bg: color-mix(in srgb, var(--surface-2) 82%, var(--surface-1));
-  --control-border: color-mix(in srgb, var(--border) 85%, var(--text-muted));
-  --shadow-1: 0 10px 24px rgba(0, 0, 0, 0.24);
-  --shadow-2: 0 18px 40px rgba(0, 0, 0, 0.3);
+  --border-strong: var(--line-2);
+  --surface-hover: var(--surface-3);
+  --control-bg: color-mix(in srgb, var(--surface-1) 70%, var(--bg));
+  --control-border: var(--border);
+  --shadow-1: 0 1px 0 oklch(1 0 0 / 0.035) inset, 0 14px 34px -18px oklch(0 0 0 / 0.55);
+  --shadow-2: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 22px 48px -18px oklch(0 0 0 / 0.7);
   --app-max-width: 1400px;
   --pane-min-width: 240px;
   --pane-max-width: 320px;
   --content-max-width: 1500px;
 }
 
+/* ============ DAYLIGHT (light) ============
+   Soft paper and morning light. */
 html[data-theme='light'] {
-  --bg: #f2f5f8;
-  --surface-1: #ffffff;
-  --surface-2: #f6f9fc;
-  --surface-3: #edf2f7;
-  --border: rgba(15, 23, 42, 0.14);
-  --text: rgba(17, 24, 39, 0.95);
-  --text-secondary: rgba(31, 41, 55, 0.72);
-  --text-muted: rgba(55, 65, 81, 0.58);
-  --accent: #a98548;
-  --accent-hover: #b79256;
-  --accent-pressed: #94723d;
-  --danger: #bf6464;
-  --danger-hover: #cc7a7a;
+  --bg: oklch(0.968 0.007 85);
+  --surface-1: oklch(0.98 0.005 88);
+  --surface-2: oklch(0.992 0.003 90);
+  --surface-3: oklch(0.945 0.009 82);
+  --row-active: oklch(0.925 0.014 78);
+  --border: oklch(0.908 0.01 80);
+  --line-2: oklch(0.862 0.012 78);
+  --text: oklch(0.265 0.016 55);
+  --text-secondary: oklch(0.455 0.016 60);
+  --text-muted: oklch(0.6 0.014 64);
+  --accent: oklch(0.705 0.13 66);
+  --accent-hover: oklch(0.735 0.13 66);
+  --accent-pressed: oklch(0.67 0.125 64);
+  --accent-ink: oklch(0.52 0.115 60);
+  --accent-soft: oklch(0.705 0.13 66 / 0.13);
+  --accent-line: oklch(0.705 0.13 66 / 0.4);
+  --glow: transparent;
+  --danger: oklch(0.55 0.14 25);
+  --danger-hover: oklch(0.6 0.14 25);
   --card: var(--surface-2);
   --card-soft: var(--surface-1);
-  --scroll-track: rgba(203, 213, 225, 0.72);
-  --scroll-track-alt: rgba(226, 232, 240, 0.92);
-  --scroll-thumb: rgba(148, 163, 184, 0.76);
-  --scroll-thumb-alt: rgba(129, 140, 158, 0.82);
-  --scroll-thumb-hover: rgba(100, 116, 139, 0.86);
-  --scroll-thumb-hover-alt: rgba(71, 85, 105, 0.92);
-  --scroll-thumb-border: rgba(226, 232, 240, 0.95);
+  --scroll-track: oklch(0.92 0.008 82 / 0.75);
+  --scroll-track-alt: oklch(0.94 0.007 84 / 0.9);
+  --scroll-thumb: oklch(0.76 0.012 75 / 0.8);
+  --scroll-thumb-alt: oklch(0.72 0.012 73 / 0.85);
+  --scroll-thumb-hover: oklch(0.64 0.013 70 / 0.9);
+  --scroll-thumb-hover-alt: oklch(0.58 0.014 68 / 0.92);
+  --scroll-thumb-border: oklch(0.95 0.006 86 / 0.95);
   --muted: var(--text-muted);
-  --text-on-accent: #111827;
-  --focus-ring: rgba(169, 133, 72, 0.55);
-  --overlay: rgba(15, 23, 42, 0.36);
+  --text-on-accent: oklch(0.245 0.03 55);
+  --focus-ring: oklch(0.705 0.13 66 / 0.45);
+  --overlay: oklch(0.3 0.02 60 / 0.35);
   --border-soft: color-mix(in srgb, var(--border) 85%, transparent);
-  --border-strong: color-mix(in srgb, var(--border) 80%, var(--text-secondary));
-  --surface-hover: color-mix(in srgb, var(--surface-3) 62%, var(--surface-1));
-  --control-bg: color-mix(in srgb, var(--surface-1) 90%, var(--surface-2));
-  --control-border: color-mix(in srgb, var(--border) 88%, var(--text-muted));
-  --shadow-1: 0 10px 24px rgba(15, 23, 42, 0.14);
-  --shadow-2: 0 18px 40px rgba(15, 23, 42, 0.2);
+  --border-strong: var(--line-2);
+  --surface-hover: var(--surface-3);
+  --control-bg: var(--surface-2);
+  --control-border: var(--line-2);
+  --shadow-1: 0 1px 2px oklch(0.3 0.02 60 / 0.05), 0 12px 32px -16px oklch(0.3 0.03 60 / 0.14);
+  --shadow-2: 0 4px 10px oklch(0.3 0.02 60 / 0.08), 0 20px 44px -16px oklch(0.3 0.03 60 / 0.22);
 }
 
 *,
@@ -91,11 +109,15 @@ html[data-theme='light'] {
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg);
+  background:
+    radial-gradient(1100px 540px at 78% -10%, var(--glow), transparent 60%),
+    var(--bg);
   color: var(--text);
-  font-family: 'Manrope', system-ui, sans-serif;
+  font-family: var(--font);
   font-size: 15px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   transition: background var(--transition), color var(--transition);
 }
 
@@ -103,7 +125,7 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: 'Manrope', system-ui, sans-serif;
+  font-family: var(--font);
   margin: 0;
 }
 
@@ -567,7 +589,7 @@ a {
 .pane-header h3 {
   font-size: 1.05rem;
   font-weight: 600;
-  font-family: 'Manrope', system-ui, sans-serif;
+  font-family: var(--font);
 }
 
 .pane-body {
@@ -958,7 +980,7 @@ a {
   margin: 0;
   font-size: 0.95rem;
   font-weight: 600;
-  font-family: 'Manrope', system-ui, sans-serif;
+  font-family: var(--font);
 }
 
 .note-row-snippet {

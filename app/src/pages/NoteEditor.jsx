@@ -76,6 +76,7 @@ const MIN_TABLE_HEIGHT = 96;
 const TABLE_HANDLE_DIRECTIONS = ['nw', 'ne', 'sw', 'se'];
 const HELD_SELECTION_HIGHLIGHT_KEY = 'companion-held-selection';
 const FONT_FAMILY_OPTIONS = [
+  { value: '"Instrument Sans"', label: 'Instrument Sans' },
   { value: 'Manrope', label: 'Manrope' },
   { value: 'Georgia', label: 'Georgia' },
   { value: '"Times New Roman"', label: 'Times New Roman' },
@@ -2410,7 +2411,7 @@ const NoteEditor = () => {
     const styles = window.getComputedStyle(node);
     const copied = {
       fontSize: Number.parseInt(styles.fontSize || '', 10) || BLOCK_DEFAULTS.text.fontSize,
-      fontFamily: (styles.fontFamily || '').split(',')[0]?.replace(/["']/g, '').trim() || 'Manrope',
+      fontFamily: (styles.fontFamily || '').split(',')[0]?.replace(/["']/g, '').trim() || 'Instrument Sans',
       textColor: toHexColor(styles.color || '') || '#ffffff',
       highlightColor: toHexColor(styles.backgroundColor || ''),
       bold: document.queryCommandState('bold'),

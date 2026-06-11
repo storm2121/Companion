@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FaCheck,
+  FaCopy,
   FaEllipsisH,
-  FaImage,
   FaMoon,
   FaPalette,
   FaPen,
   FaPlus,
   FaSearch,
+  FaSun,
   FaThumbtack,
   FaTimes,
   FaTrash,
@@ -18,6 +20,7 @@ import {
   deleteNote,
   deleteNoteTemplate,
   deleteNotes,
+  getNote,
   listenToClasses,
   listenToNoteTemplates,
   listenToNotes,
@@ -65,6 +68,61 @@ const getNoteTimestamp = (note) => {
 };
 
 const normalizeThemeMode = (mode) => (THEME_PRESETS[mode] ? mode : THEME_DEFAULT_MODE);
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const greeting = () => {
+  const h = new Date().getHours();
+  if (h < 5) return 'Up late';
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+};
+
+const noteDate = (note) => note?.createdAt?.toDate?.() || note?.updatedAt?.toDate?.() || null;
+
+const keyForDate = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const dayKeyOf = (note) => {
+  const d = noteDate(note);
+  if (!d) return 'earlier';
+  return keyForDate(d);
+};
+
+const dayLabelOf = (key) => {
+  if (key === 'earlier') return 'Earlier';
+  const d = new Date(`${key}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return 'Earlier';
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  const diff = Math.round((today - d) / 86400000);
+  const stamp = `${WEEKDAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  if (diff === 0) return `Today · ${stamp}`;
+  if (diff === 1) return `Yesterday · ${stamp}`;
+  return stamp;
+};
+
+const noteTimeLabel = (note) => {
+  const d = noteDate(note);
+  if (!d) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+// Quick notes get a hot chip; custom-template notes a neutral one; everything else
+// reads as a lecture note. Heuristic on title/template since notes don't store a kind.
+const kindOf = (note) => {
+  if (/^Quick Note( \d+)?$/i.test((note?.title || '').trim())) return { label: 'QCK', hot: true };
+  if ((note?.templateId || '').startsWith(CUSTOM_TEMPLATE_PREFIX)) return { label: 'TPL', hot: false };
+  return { label: 'LEC', hot: false };
+};
+
+const Grip = () => (
+  <span className="grip" aria-hidden="true">
+    <i /><i /><i /><i /><i /><i />
+  </span>
+);
 const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
 const TEMPLATE_DRAFT_STORAGE_KEY = 'companion:new-note-draft';
 const TEMPLATE_RESULT_STORAGE_KEY = 'companion:new-note-template-result';
@@ -93,9 +151,7 @@ const Dashboard = () => {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [draggingId, setDraggingId] = useState('');
-  const [dragOverId, setDragOverId] = useState('');
   const [noteDraggingId, setNoteDraggingId] = useState('');
-  const [noteDragOverId, setNoteDragOverId] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [noteDeleteTarget, setNoteDeleteTarget] = useState(null);
@@ -121,6 +177,13 @@ const Dashboard = () => {
   const userMenuRef = useRef(null);
   const [renamingClassId, setRenamingClassId] = useState('');
   const [renameDraft, setRenameDraft] = useState('');
+  const [clock, setClock] = useState('');
+  const [toast, setToast] = useState(null);
+  const [flashNoteId, setFlashNoteId] = useState('');
+  const searchInputRef = useRef(null);
+  const toastTimerRef = useRef(null);
+  const flashTimerRef = useRef(null);
+  const dragDayKeyRef = useRef('');
   const titleRef = useRef(null);
   const summaryRef = useRef(null);
   const imageRef = useRef(null);
@@ -267,7 +330,6 @@ const Dashboard = () => {
     setSelectedNoteIds([]);
     setMoveTargetId('');
     setNoteDraggingId('');
-    setNoteDragOverId('');
     setSearch('');
   }, [selectedClassId]);
 
@@ -420,6 +482,24 @@ const Dashboard = () => {
     () => trimmedSearch.split(' ').map((token) => token.trim()).filter(Boolean),
     [trimmedSearch],
   );
+  // Day groups, newest day first; manual (drag) order is preserved within each day.
+  const noteGroups = useMemo(() => {
+    const source = !searchTokens.length
+      ? notes
+      : notes.filter((note) => {
+          const haystack = `${note.title || ''} ${note.summary || ''}`.toLowerCase();
+          return searchTokens.every((token) => haystack.includes(token));
+        });
+    const groups = [];
+    source.forEach((note) => {
+      const key = dayKeyOf(note);
+      const existing = groups.find((group) => group.key === key);
+      if (existing) existing.notes.push(note);
+      else groups.push({ key, notes: [note] });
+    });
+    return groups.sort((a, b) => (a.key === 'earlier' ? 1 : b.key === 'earlier' ? -1 : b.key.localeCompare(a.key)));
+  }, [notes, searchTokens]);
+
   const filteredNotes = useMemo(() => {
     if (!searchTokens.length) return notes;
     return notes.filter((note) => {
@@ -639,6 +719,46 @@ const Dashboard = () => {
   }, [noteModalOpen, noteSaving]);
 
   useEffect(() => {
+    const tick = () => {
+      const n = new Date();
+      let h = n.getHours();
+      const m = String(n.getMinutes()).padStart(2, '0');
+      const ap = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      setClock(`${h}:${m} ${ap}`);
+    };
+    tick();
+    const iv = setInterval(tick, 10000);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => {
+    const handleKey = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearTimeout(toastTimerRef.current);
+      clearTimeout(flashTimerRef.current);
+    },
+    [],
+  );
+
+  const showToast = (msg) => {
+    setToast(msg);
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2200);
+  };
+
+  useEffect(() => {
     if (!userMenuOpen) return undefined;
     const handlePointer = (event) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
@@ -751,9 +871,11 @@ const Dashboard = () => {
     if (!firebaseUser || !selectedClassId || !selectedNoteIds.length) return;
     setBulkDeleting(true);
     try {
+      const removed = selectedNoteIds.length;
       await deleteNotes(firebaseUser.uid, selectedClassId, selectedNoteIds);
       clearNoteSelection();
       setBulkDeleteOpen(false);
+      showToast(`Deleted ${removed} ${removed === 1 ? 'note' : 'notes'}`);
     } catch (err) {
       console.error('Failed to delete notes', err);
     } finally {
@@ -765,8 +887,11 @@ const Dashboard = () => {
     if (!firebaseUser || !selectedClassId || !moveTargetId || !selectedNotes.length) return;
     setMoveBusy(true);
     try {
+      const movedCount = selectedNotes.length;
+      const targetName = classes.find((item) => item.id === moveTargetId)?.name || 'class';
       await moveNotes(firebaseUser.uid, selectedClassId, moveTargetId, selectedNotes);
       clearNoteSelection();
+      showToast(`Moved ${movedCount} ${movedCount === 1 ? 'note' : 'notes'} to ${targetName}`);
     } catch (err) {
       console.error('Failed to move notes', err);
     } finally {
@@ -782,6 +907,7 @@ const Dashboard = () => {
     if (!firebaseUser) return;
     try {
       await updateClassColor(firebaseUser.uid, classId, color);
+      showToast('Color updated');
     } catch (err) {
       console.error('Failed to update class color', err);
     } finally {
@@ -811,6 +937,7 @@ const Dashboard = () => {
     }
     try {
       await renameClass(firebaseUser.uid, classId, nextName);
+      showToast('Renamed');
     } catch (err) {
       console.error('Failed to rename class', err);
     } finally {
@@ -834,6 +961,7 @@ const Dashboard = () => {
     setDeleting(true);
     try {
       await deleteClass(firebaseUser.uid, deleteTarget.id);
+      showToast('Class deleted');
     } catch (err) {
       console.error('Failed to delete class', err);
     } finally {
@@ -857,6 +985,7 @@ const Dashboard = () => {
     setNoteDeleting(true);
     try {
       await deleteNote(firebaseUser.uid, selectedClassId, noteDeleteTarget.id);
+      showToast('Note deleted');
     } catch (err) {
       console.error('Failed to delete note', err);
     } finally {
@@ -871,76 +1000,78 @@ const Dashboard = () => {
     setDraggingId(classId);
   };
 
-  const handleDragOver = (event, classId) => {
+  const handleClassDragEnter = (classId) => {
     if (!draggingId || draggingId === classId) return;
-    event.preventDefault();
-    setDragOverId(classId);
+    setClasses((prev) => reorderList(prev, draggingId, classId));
   };
 
-  const handleDrop = async (event, classId) => {
-    if (!firebaseUser || !draggingId) return;
-    event.preventDefault();
-    const updated = reorderList(classes, draggingId, classId);
-    if (updated === classes) {
-      setDraggingId('');
-      setDragOverId('');
-      return;
-    }
-    setClasses(updated);
+  const handleDragEnd = async () => {
+    const wasDragging = draggingId;
     setDraggingId('');
-    setDragOverId('');
+    if (!wasDragging || !firebaseUser) return;
     try {
-      await reorderClasses(firebaseUser.uid, updated);
+      await reorderClasses(firebaseUser.uid, classes);
     } catch (err) {
       console.error('Failed to reorder classes', err);
     }
   };
 
-  const handleDragEnd = () => {
-    setDraggingId('');
-    setDragOverId('');
-  };
-
-  const handleNoteDragStart = (event, noteId) => {
+  // Live-swap drag: rows reorder under the cursor (within their day group); the new
+  // order is persisted once, on drag end.
+  const handleNoteDragStart = (event, note) => {
     event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', `note:${noteId}`);
-    setNoteDraggingId(noteId);
+    event.dataTransfer.setData('text/plain', `note:${note.id}`);
+    dragDayKeyRef.current = dayKeyOf(note);
+    setNoteDraggingId(note.id);
   };
 
-  const handleNoteDragOver = (event, noteId) => {
-    if (!noteDraggingId || noteDraggingId === noteId) return;
-    event.preventDefault();
-    setNoteDragOverId(noteId);
+  const handleNoteDragEnter = (target) => {
+    if (!noteDraggingId || noteDraggingId === target.id) return;
+    if (dayKeyOf(target) !== dragDayKeyRef.current) return;
+    setNotes((prev) => reorderList(prev, noteDraggingId, target.id));
   };
 
-  const handleNoteDrop = async (event, noteId) => {
-    if (!firebaseUser || !selectedClassId || !noteDraggingId) return;
-    event.preventDefault();
-    const updated = reorderList(notes, noteDraggingId, noteId);
-    if (updated === notes) {
-      setNoteDraggingId('');
-      setNoteDragOverId('');
-      return;
-    }
-    setNotes(updated);
+  const handleNoteDragEnd = async () => {
+    const wasDragging = noteDraggingId;
     setNoteDraggingId('');
-    setNoteDragOverId('');
+    dragDayKeyRef.current = '';
+    if (!wasDragging || !firebaseUser || !selectedClassId) return;
     try {
-      await reorderNotes(firebaseUser.uid, selectedClassId, updated);
+      await reorderNotes(firebaseUser.uid, selectedClassId, notes);
     } catch (err) {
       console.error('Failed to reorder notes', err);
     }
   };
 
-  const handleNoteDragEnd = () => {
-    setNoteDraggingId('');
-    setNoteDragOverId('');
+  const handleDuplicateNote = async (note) => {
+    if (!firebaseUser || !selectedClassId) return;
+    setNoteMenuOpenId('');
+    try {
+      const full = await getNote(firebaseUser.uid, selectedClassId, note.id);
+      const createdId = await createNote(firebaseUser.uid, selectedClassId, {
+        title: `${note.title || 'Untitled Note'} (copy)`,
+        summary: note.summary || '',
+        coverUrl: note.coverUrl || '',
+        blocks: Array.isArray(full?.blocks) ? full.blocks : [],
+        canvasHeight: Number.isFinite(full?.canvasHeight) ? full.canvasHeight : 720,
+        templateId: note.templateId || '',
+        order: getNextNoteOrder(),
+      });
+      setFlashNoteId(createdId);
+      clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashNoteId(''), 900);
+      showToast('Duplicated');
+    } catch (err) {
+      console.error('Failed to duplicate note', err);
+    }
   };
 
   const classEmpty = classes.length === 0;
   const notesEmpty = notes.length === 0;
   const filteredNotesEmpty = filteredNotes.length === 0;
-  const appTitle = selectedClass ? `Classes / ${selectedClass.name}` : 'Classes';
+  const firstName = (profile?.displayName || '').trim().split(/\s+/)[0] || 'there';
+  const isLightTheme = THEME_PRESETS[normalizeThemeMode(themeMode)]?.attr === 'light';
+  const todayKey = keyForDate(new Date());
   const toggleTheme = () => {
     const current = normalizeThemeMode(themeMode);
     const currentIndex = THEME_OPTIONS.findIndex((option) => option.id === current);
@@ -953,34 +1084,37 @@ const Dashboard = () => {
 
   return (
     <div className="app-shell">
-      <header className="app-bar">
+      <header className="app-bar topbar">
         <div className="app-bar-inner">
-          <div className="app-title">
-            <strong>Companion</strong>
-            <span className="breadcrumb">{appTitle}</span>
+          <div className="brand">
+            <h1>
+              Companion<i>.</i>
+            </h1>
+            <span className="hello">{`${greeting()}, ${firstName}`}</span>
           </div>
-          <div className="app-search">
-            <FaSearch />
+          <div className="app-search search-pill">
+            <FaSearch aria-hidden="true" />
             <input
-              placeholder="Search notes"
+              ref={searchInputRef}
+              placeholder={`Search in ${selectedClass?.name || 'your notes'}…`}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Search notes"
             />
+            <kbd>Ctrl K</kbd>
           </div>
-          <div className="app-actions">
+          <div className="app-actions top-right">
             {!isOnline && <span className="net-status offline">Offline</span>}
-            <div className="theme-control">
-              <button
-                type="button"
-                className="theme-trigger"
-                onClick={toggleTheme}
-                title="Switch theme"
-              >
-                <FaMoon />
-                {currentThemeLabel ? `Theme: ${currentThemeLabel}` : 'Theme'}
-              </button>
-            </div>
+            <span className="clock">{clock}</span>
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={toggleTheme}
+              title={currentThemeLabel ? `Theme: ${currentThemeLabel} — click to switch` : 'Switch theme'}
+              aria-label="Toggle light or dark theme"
+            >
+              <span className="theme-knob">{isLightTheme ? <FaSun /> : <FaMoon />}</span>
+            </button>
             <div className="user-menu" ref={userMenuRef}>
               <button
                 type="button"
@@ -1019,22 +1153,18 @@ const Dashboard = () => {
 
       <div className="app-layout" data-pane={mobilePane}>
         <aside className="pane pane-classes">
-          <div className="pane-header">
-            <div className="pane-title">
-              <h3>Classes</h3>
-              <span className="status-text">{classEmpty ? 'No classes yet' : `${classes.length} total`}</span>
-            </div>
-            <div className="pane-actions">
-              <button className="icon-btn" title="New class" onClick={() => setSheetOpen(true)}>
-                <FaPlus />
-              </button>
-            </div>
+          <div className="pane-header side-head">
+            <h3>Classes</h3>
+            <button className="side-add" title="New class" onClick={() => setSheetOpen(true)}>
+              <FaPlus />
+            </button>
           </div>
           <div className="pane-body">
             {classEmpty ? (
-              <div className="empty-inline">
-                <p>Create your first class to keep notes organized.</p>
-                <button className="primary-btn btn-sm" onClick={() => setSheetOpen(true)}>
+              <div className="empty-side">
+                <p className="empty-big">A quiet start.</p>
+                <p className="empty-small">Create your first class to keep notes organized.</p>
+                <button className="btn btn-fill btn-sm" onClick={() => setSheetOpen(true)}>
                   New class
                 </button>
               </div>
@@ -1042,12 +1172,14 @@ const Dashboard = () => {
               classes.map((item) => {
                 const menuOpen = menuOpenId === item.id;
                 const colorOpen = colorPickerId === item.id;
+                const isSelected = item.id === selectedClassId;
+                const count = isSelected ? notes.length : item.noteCount || 0;
                 return (
                   <div
                     key={item.id}
-                    className={`class-row ${item.id === selectedClassId ? 'active' : ''} ${
+                    className={`class-row ${isSelected ? 'active' : ''} ${
                       draggingId === item.id ? 'dragging' : ''
-                    } ${dragOverId === item.id ? 'drag-over' : ''} ${menuOpen ? 'menu-open' : ''}`}
+                    } ${menuOpen ? 'menu-open' : ''}`}
                     role="button"
                     tabIndex={0}
                     onClick={() => handleSelectClass(item.id)}
@@ -1057,52 +1189,46 @@ const Dashboard = () => {
                         handleSelectClass(item.id);
                       }
                     }}
-                    onDragOver={(event) => handleDragOver(event, item.id)}
-                    onDrop={(event) => handleDrop(event, item.id)}
+                    draggable={renamingClassId !== item.id}
+                    onDragStart={(event) => handleDragStart(event, item.id)}
+                    onDragEnter={() => handleClassDragEnter(item.id)}
+                    onDragOver={(event) => event.preventDefault()}
                     onDragEnd={handleDragEnd}
                   >
-                    <div className="class-row-main">
-                      <button
-                        type="button"
-                        className="drag-handle-btn"
-                        title="Drag to reorder"
-                        draggable
-                        onDragStart={(event) => handleDragStart(event, item.id)}
-                        onDragEnd={handleDragEnd}
-                        onMouseDown={(event) => event.stopPropagation()}
+                    <Grip />
+                    <span
+                      className="class-dot"
+                      style={item.color ? { background: item.color } : undefined}
+                    />
+                    {renamingClassId === item.id ? (
+                      <input
+                        className="class-rename-input"
+                        value={renameDraft}
+                        autoFocus
                         onClick={(event) => event.stopPropagation()}
-                      >
-                        <span className="drag-handle-dots" aria-hidden="true" />
-                      </button>
-                      <span className="dot" style={{ background: item.color || 'var(--accent)' }} />
-                      <div className="class-text">
-                        {renamingClassId === item.id ? (
-                          <input
-                            className="class-rename-input"
-                            value={renameDraft}
-                            autoFocus
-                            onClick={(event) => event.stopPropagation()}
-                            onChange={(event) => setRenameDraft(event.target.value)}
-                            onBlur={() => commitRenameClass(item.id)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') {
-                                event.preventDefault();
-                                commitRenameClass(item.id);
-                              } else if (event.key === 'Escape') {
-                                event.preventDefault();
-                                cancelRenameClass();
-                              }
-                            }}
-                          />
-                        ) : (
-                          <p title={item.name}>{item.name}</p>
-                        )}
-                        <span>{`${item.noteCount || 0} ${(item.noteCount || 0) === 1 ? 'note' : 'notes'}`}</span>
-                      </div>
-                    </div>
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                        onBlur={() => commitRenameClass(item.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            commitRenameClass(item.id);
+                          } else if (event.key === 'Escape') {
+                            event.preventDefault();
+                            cancelRenameClass();
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span className="class-name" title={item.name}>
+                        {item.name}
+                      </span>
+                    )}
+                    <span className="class-count" title={`${count} ${count === 1 ? 'note' : 'notes'}`}>
+                      {count}
+                    </span>
                     <div className="class-row-actions">
                       <button
-                        className="icon-btn ghost"
+                        className={`dots ${menuOpen ? 'menu-open' : ''}`}
                         title="Class actions"
                         onClick={(event) => {
                           event.stopPropagation();
@@ -1112,7 +1238,7 @@ const Dashboard = () => {
                         <FaEllipsisH />
                       </button>
                       {menuOpen && (
-                        <div className="class-menu" onClick={(event) => event.stopPropagation()} role="menu">
+                        <div className="class-menu menu" onClick={(event) => event.stopPropagation()} role="menu">
                           <button type="button" onClick={() => startRenameClass(item)}>
                             <FaPen /> Rename
                           </button>
@@ -1143,14 +1269,25 @@ const Dashboard = () => {
                 );
               })
             )}
+            <p className="side-foot">⠿ drag to reorder</p>
           </div>
         </aside>
 
-        <section className="pane pane-notes">
-          <div className="pane-header">
-            <div className="pane-title">
-              <h3>Notes</h3>
-              <span className="status-text">{selectedClass ? selectedClass.name : 'Select a class'}</span>
+        <section className="pane pane-notes sheet">
+          <div className="pane-header sheet-head">
+            <div className="sheet-title">
+              <h2>{selectedClass ? selectedClass.name : 'Notes'}</h2>
+              <p className="sheet-meta">
+                {selectedClass
+                  ? `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`
+                  : 'Select a class'}
+                {Boolean(trimmedSearch) && selectedClass && (
+                  <span>
+                    {' · '}
+                    <b>{`${filteredNotes.length} ${filteredNotes.length === 1 ? 'match' : 'matches'}`}</b>
+                  </span>
+                )}
+              </p>
             </div>
             <div className="pane-actions">
               {selectedNoteIds.length > 0 && (
@@ -1190,130 +1327,151 @@ const Dashboard = () => {
                   </button>
                 </div>
               )}
-              <button className="ghost-btn btn-sm" onClick={handleOpenCreateNote} disabled={!selectedClassId}>
-                <FaPlus /> New note
-              </button>
               <button
-                className="ghost-btn btn-sm"
+                className="btn btn-soft"
                 onClick={handleQuickAddNote}
                 disabled={!selectedClassId || quickAddBusy}
                 title="Quick add with default template"
               >
-                <FaPen /> {quickAddBusy ? 'Adding...' : 'Quick add'}
+                <FaPen /> {quickAddBusy ? 'Adding…' : 'Quick add'}
+              </button>
+              <button className="btn btn-fill" onClick={handleOpenCreateNote} disabled={!selectedClassId}>
+                <FaPlus /> New note
               </button>
             </div>
           </div>
-          <div className="pane-body">
+          <div className="pane-body sheet-body">
             {classEmpty ? (
-              <div className="empty-inline">
-                <p>Choose a class to view notes.</p>
+              <div className="empty-state">
+                <p className="empty-big">Nothing here yet.</p>
+                <p className="empty-small">Create a class to start collecting notes.</p>
               </div>
             ) : filteredNotesEmpty ? (
-              <div className="empty-inline">
-                <p>
+              <div className="empty-state">
+                <p className="empty-big">
+                  {notesEmpty ? 'Nothing here yet.' : `No notes match “${search.trim()}”`}
+                </p>
+                <p className="empty-small">
                   {notesEmpty
-                    ? `No notes yet in ${selectedClass?.name || 'this class'}.`
-                    : 'No matching notes.'}
+                    ? 'Capture your first thought — Quick add is right up there.'
+                    : 'Try a different word, or clear the search.'}
                 </p>
               </div>
             ) : (
-              filteredNotes.map((note) => {
-                const selected = selectedNoteIds.includes(note.id);
-                const snippet = note.summary || (selected ? 'No summary yet.' : '');
-                const hasSnippet = Boolean(snippet);
-                const updatedAt = note.updatedAt?.toDate?.();
-                const menuOpen = noteMenuOpenId === note.id;
-                return (
-                  <div
-                    key={note.id}
-                    className={`note-row ${selected ? 'selected' : ''} ${
-                      noteDraggingId === note.id ? 'dragging' : ''
-                    } ${noteDragOverId === note.id ? 'drag-over' : ''} ${menuOpen ? 'menu-open' : ''}`}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      setNoteMenuOpenId('');
-                      navigate(`/class/${selectedClassId}/note/${note.id}`);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
+              <>
+                {noteGroups.map((group) => (
+                  <Fragment key={group.key}>
+                    <div className="day">
+                      <span className={`day-label${group.key === todayKey ? '' : ' past'}`}>
+                        {dayLabelOf(group.key)}
+                      </span>
+                      <span className="day-rule" />
+                    </div>
+                    {group.notes.map((note) => {
+                      const selected = selectedNoteIds.includes(note.id);
+                      const menuOpen = noteMenuOpenId === note.id;
+                      const kind = kindOf(note);
+                      const openNote = () => {
                         setNoteMenuOpenId('');
                         navigate(`/class/${selectedClassId}/note/${note.id}`);
-                      }
-                    }}
-                    onDragOver={(event) => handleNoteDragOver(event, note.id)}
-                    onDrop={(event) => handleNoteDrop(event, note.id)}
-                  >
-                    <button
-                      type="button"
-                      className="drag-handle-btn"
-                      title="Drag to reorder"
-                      draggable
-                      onDragStart={(event) => handleNoteDragStart(event, note.id)}
-                      onDragEnd={handleNoteDragEnd}
-                      onMouseDown={(event) => event.stopPropagation()}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <span className="drag-handle-dots" aria-hidden="true" />
-                    </button>
-                    <label className="note-row-select" onClick={(event) => event.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={() => toggleNoteSelection(note.id)}
-                      />
-                      <span aria-hidden="true" />
-                    </label>
-                    <div className="note-row-body">
-                      <div className="note-thumb">
-                        {note.coverUrl ? (
-                          <img src={note.coverUrl} alt="" />
-                        ) : (
-                          <span>{(note.title || 'N').slice(0, 1).toUpperCase()}</span>
-                        )}
-                      </div>
-                      <div className="note-row-content">
-                        <div className="note-row-top">
-                          <h4>{note.title || 'Untitled Note'}</h4>
-                          {note.pinned && <FaThumbtack />}
-                        </div>
-                        {hasSnippet && <p className="note-row-snippet">{snippet}</p>}
-                        <div className="note-row-meta">
-                          <span>{updatedAt ? updatedAt.toLocaleDateString() : 'Just now'}</span>
-                          <div className="note-row-tags">
-                            {(note.tags || []).slice(0, 2).map((tag) => (
-                              <span key={tag}>{tag}</span>
-                            ))}
+                      };
+                      return (
+                        <div
+                          key={note.id}
+                          className={`note-row ${selected ? 'selected' : ''} ${
+                            noteDraggingId === note.id ? 'dragging' : ''
+                          } ${menuOpen ? 'menu-open' : ''} ${flashNoteId === note.id ? 'flash' : ''}`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={openNote}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              openNote();
+                            }
+                          }}
+                          draggable={!trimmedSearch}
+                          onDragStart={(event) => handleNoteDragStart(event, note)}
+                          onDragEnter={() => handleNoteDragEnter(note)}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDragEnd={handleNoteDragEnd}
+                        >
+                          <Grip />
+                          <label
+                            className="note-check"
+                            onClick={(event) => event.stopPropagation()}
+                            title={selected ? 'Deselect note' : 'Select note'}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => toggleNoteSelection(note.id)}
+                            />
+                            <span className="check" aria-hidden="true">
+                              <FaCheck />
+                            </span>
+                          </label>
+                          <span className={`kind${kind.hot ? ' hot' : ''}`}>{kind.label}</span>
+                          {note.coverUrl && (
+                            <span className="note-thumb-sm">
+                              <img src={note.coverUrl} alt="" />
+                            </span>
+                          )}
+                          <div className="note-body-cell">
+                            <div className="note-title-line">
+                              <span className="note-title-text">{note.title || 'Untitled Note'}</span>
+                              {note.pinned && <FaThumbtack className="note-pin" />}
+                            </div>
+                            {note.summary && <div className="note-sub">{note.summary}</div>}
+                          </div>
+                          <span className="note-time">{noteTimeLabel(note)}</span>
+                          <div className="note-row-actions">
+                            <button
+                              className={`dots ${menuOpen ? 'menu-open' : ''}`}
+                              title="Note actions"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleNoteMenu(note.id);
+                              }}
+                            >
+                              <FaEllipsisH />
+                            </button>
+                            {menuOpen && (
+                              <div
+                                className="note-menu menu"
+                                role="menu"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <button type="button" onClick={() => handleOpenEditNote(note, 'title')}>
+                                  <FaPen /> Edit details
+                                </button>
+                                <button type="button" onClick={() => handleDuplicateNote(note)}>
+                                  <FaCopy /> Duplicate
+                                </button>
+                                <button
+                                  type="button"
+                                  className="danger"
+                                  onClick={() => requestNoteDelete(note)}
+                                >
+                                  <FaTrash /> Delete note
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    </div>
-                    <div className="note-row-actions">
-                      <button
-                        className="icon-btn ghost"
-                        title="Note actions"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleNoteMenu(note.id);
-                        }}
-                      >
-                        <FaEllipsisH />
-                      </button>
-                      {menuOpen && (
-                        <div className="note-menu" role="menu" onClick={(event) => event.stopPropagation()}>
-                          <button type="button" onClick={() => handleOpenEditNote(note, 'title')}>
-                            <FaPen /> Edit details
-                          </button>
-                          <button type="button" className="danger" onClick={() => requestNoteDelete(note)}>
-                            <FaTrash /> Delete note
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+                {!trimmedSearch && (
+                  <div className="caught-up">
+                    <p>
+                      That&apos;s everything in <b>{selectedClass?.name || 'this class'}</b> — your desk is
+                      clear.
+                    </p>
                   </div>
-                );
-              })
+                )}
+              </>
             )}
           </div>
         </section>
@@ -1598,6 +1756,12 @@ const Dashboard = () => {
             </div>
           </div>
         </>
+      )}
+
+      {toast && (
+        <div className="toast" role="status">
+          <FaCheck aria-hidden="true" /> {toast}
+        </div>
       )}
     </div>
   );
