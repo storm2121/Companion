@@ -12,7 +12,7 @@ export const THEME_PRESETS = {
   },
   stone: {
     attr: 'dark',
-    bg: 'oklch(0.218 0.012 60)',
+    bg: 'oklch(0.215 0.006 78)',
     accent: 'oklch(0.8 0.125 70)',
   },
 };

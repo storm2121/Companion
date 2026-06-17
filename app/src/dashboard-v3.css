@@ -877,6 +877,146 @@ html[data-theme='light'] .theme-knob {
   border-radius: 9px;
 }
 
+/* ---------- class list: scroll, never squeeze ---------- */
+/* The pane is height-constrained; without these, flex children compress
+   instead of overflowing — rows squeezed thinner with every class added. */
+.pane-classes .pane-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.pane-classes .pane-body .class-row {
+  flex-shrink: 0;
+}
+
+.side-foot {
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+/* The fixed topbar is taller than the legacy 64px assumption. */
+.app-shell {
+  padding-top: 96px;
+}
+
+.app-layout {
+  height: calc(100vh - 96px - (var(--page-padding) * 2));
+}
+
+/* ---------- class sheet (create + edit) ---------- */
+.class-sheet header h3 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.class-sheet-sub {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 14.5px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+}
+
+.class-sheet-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 9px;
+}
+
+.class-sheet-label em {
+  font-style: normal;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--accent-ink);
+}
+
+.swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.swatch-lg {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 14%, transparent) inset;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.swatch-lg:hover {
+  transform: scale(1.12);
+}
+
+.swatch-lg.active {
+  box-shadow: 0 0 0 2px var(--surface-2), 0 0 0 3.5px var(--accent-line);
+  transform: scale(1.06);
+}
+
+.swatch-lg svg {
+  width: 12px;
+  height: 12px;
+  color: oklch(0.99 0.005 90);
+  filter: drop-shadow(0 1px 1px oklch(0 0 0 / 0.35));
+}
+
+/* live preview of how the class will sit in the sidebar */
+.class-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+}
+
+.class-preview-row .class-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.class-preview-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.class-preview-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.class-sheet-error {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* a real scrim behind modals so content doesn't bleed through */
+.overlay.show {
+  backdrop-filter: blur(3px);
+}
+
 /* ---------- topbar responsiveness ---------- */
 @media (max-width: 900px) {
   .brand .hello,
@@ -895,5 +1035,10 @@ html[data-theme='light'] .theme-knob {
 
   .sheet-title h2 {
     font-size: 24px;
+  }
+
+  /* taller topbar + bottom mobile nav */
+  .app-layout {
+    height: calc(100vh - 96px - 64px - (var(--page-padding) * 2));
   }
 }

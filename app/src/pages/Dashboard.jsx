@@ -4,7 +4,6 @@ import {
   FaCopy,
   FaEllipsisH,
   FaMoon,
-  FaPalette,
   FaPen,
   FaPlus,
   FaSearch,
@@ -28,7 +27,6 @@ import {
   renameClass,
   reorderClasses,
   reorderNotes,
-  updateClassColor,
   updateNote,
 } from '../services/library';
 import { useAuth } from '../context/AuthContext';
@@ -38,8 +36,6 @@ import { storage } from '../firebase';
 import { THEME_DEFAULT_MODE, THEME_OPTIONS, THEME_PRESETS } from '../themePresets';
 import { DEFAULT_TEMPLATE_ID } from '../data/noteTemplates';
 import useNetworkStatus from '../hooks/useNetworkStatus';
-
-const CLASS_COLORS = ['#c8a46a', '#4a5a63', '#4b5b49', '#b49a62', '#3a3c42', '#586471', '#3e4c59'];
 
 const toNoteMeta = (docSnap) => {
   const data = docSnap.data() || {};
@@ -143,7 +139,7 @@ const Dashboard = () => {
   const [search, setSearch] = useState('');
   const [mobilePane, setMobilePane] = useState('classes');
   const [menuOpenId, setMenuOpenId] = useState('');
-  const [colorPickerId, setColorPickerId] = useState('');
+  const [classEditTarget, setClassEditTarget] = useState(null);
   const [noteMenuOpenId, setNoteMenuOpenId] = useState('');
   const [selectedNoteIds, setSelectedNoteIds] = useState([]);
   const [moveTargetId, setMoveTargetId] = useState('');
@@ -549,7 +545,6 @@ const Dashboard = () => {
     setSelectedClassId(classId);
     setMobilePane('notes');
     setMenuOpenId('');
-    setColorPickerId('');
     setNoteMenuOpenId('');
   };
 
@@ -837,13 +832,22 @@ const Dashboard = () => {
 
   const toggleMenu = (classId) => {
     setMenuOpenId((current) => (current === classId ? '' : classId));
-    setColorPickerId('');
   };
 
   const toggleNoteMenu = (noteId) => {
     setNoteMenuOpenId((current) => (current === noteId ? '' : noteId));
     setMenuOpenId('');
-    setColorPickerId('');
+  };
+
+  const openClassSheet = (target = null) => {
+    setClassEditTarget(target);
+    setMenuOpenId('');
+    setSheetOpen(true);
+  };
+
+  const closeClassSheet = () => {
+    setSheetOpen(false);
+    setClassEditTarget(null);
   };
 
   const toggleNoteSelection = (noteId) => {
@@ -899,28 +903,10 @@ const Dashboard = () => {
     }
   };
 
-  const toggleColorPicker = (classId) => {
-    setColorPickerId((current) => (current === classId ? '' : classId));
-  };
-
-  const handleColorPick = async (classId, color) => {
-    if (!firebaseUser) return;
-    try {
-      await updateClassColor(firebaseUser.uid, classId, color);
-      showToast('Color updated');
-    } catch (err) {
-      console.error('Failed to update class color', err);
-    } finally {
-      setMenuOpenId('');
-      setColorPickerId('');
-    }
-  };
-
   const startRenameClass = (item) => {
     setRenamingClassId(item.id);
     setRenameDraft(item.name || '');
     setMenuOpenId('');
-    setColorPickerId('');
   };
 
   const cancelRenameClass = () => {
@@ -948,7 +934,6 @@ const Dashboard = () => {
   const requestDelete = (item) => {
     setDeleteTarget(item);
     setMenuOpenId('');
-    setColorPickerId('');
   };
 
   const cancelDelete = () => {
@@ -1155,7 +1140,7 @@ const Dashboard = () => {
         <aside className="pane pane-classes">
           <div className="pane-header side-head">
             <h3>Classes</h3>
-            <button className="side-add" title="New class" onClick={() => setSheetOpen(true)}>
+            <button className="side-add" title="New class" onClick={() => openClassSheet()}>
               <FaPlus />
             </button>
           </div>
@@ -1164,14 +1149,13 @@ const Dashboard = () => {
               <div className="empty-side">
                 <p className="empty-big">A quiet start.</p>
                 <p className="empty-small">Create your first class to keep notes organized.</p>
-                <button className="btn btn-fill btn-sm" onClick={() => setSheetOpen(true)}>
+                <button className="btn btn-fill btn-sm" onClick={() => openClassSheet()}>
                   New class
                 </button>
               </div>
             ) : (
               classes.map((item) => {
                 const menuOpen = menuOpenId === item.id;
-                const colorOpen = colorPickerId === item.id;
                 const isSelected = item.id === selectedClassId;
                 const count = isSelected ? notes.length : item.noteCount || 0;
                 return (
@@ -1219,7 +1203,14 @@ const Dashboard = () => {
                         }}
                       />
                     ) : (
-                      <span className="class-name" title={item.name}>
+                      <span
+                        className="class-name"
+                        title={`${item.name} — double-click to rename`}
+                        onDoubleClick={(event) => {
+                          event.stopPropagation();
+                          startRenameClass(item);
+                        }}
+                      >
                         {item.name}
                       </span>
                     )}
@@ -1239,26 +1230,9 @@ const Dashboard = () => {
                       </button>
                       {menuOpen && (
                         <div className="class-menu menu" onClick={(event) => event.stopPropagation()} role="menu">
-                          <button type="button" onClick={() => startRenameClass(item)}>
-                            <FaPen /> Rename
+                          <button type="button" onClick={() => openClassSheet(item)}>
+                            <FaPen /> Edit class
                           </button>
-                          <button type="button" onClick={() => toggleColorPicker(item.id)}>
-                            <FaPalette /> Change color
-                          </button>
-                          {colorOpen && (
-                            <div className="color-swatches">
-                              {CLASS_COLORS.map((color) => (
-                                <button
-                                  key={color}
-                                  type="button"
-                                  className={`swatch ${item.color === color ? 'active' : ''}`}
-                                  style={{ background: color }}
-                                  onClick={() => handleColorPick(item.id, color)}
-                                  aria-label={`Set color ${color}`}
-                                />
-                              ))}
-                            </div>
-                          )}
                           <button type="button" className="danger" onClick={() => requestDelete(item)}>
                             <FaTrash /> Delete class
                           </button>
@@ -1489,7 +1463,12 @@ const Dashboard = () => {
         ))}
       </nav>
 
-      <AddClassSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
+      <AddClassSheet
+        open={sheetOpen}
+        onClose={closeClassSheet}
+        editTarget={classEditTarget}
+        onSaved={showToast}
+      />
 
       {noteModalOpen && (
         <>
