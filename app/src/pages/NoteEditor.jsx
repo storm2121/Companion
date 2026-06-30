@@ -12,12 +12,14 @@ import {
   FaCheckSquare,
   FaChevronDown,
   FaChevronUp,
+  FaCode,
   FaCopy,
   FaEllipsisH,
   FaFont,
   FaImage,
   FaIndent,
   FaItalic,
+  FaLink,
   FaLock,
   FaLockOpen,
   FaListOl,
@@ -508,6 +510,7 @@ const NoteEditor = () => {
   const [blockMenuOpenId, setBlockMenuOpenId] = useState('');
   const [activeBlockId, setActiveBlockId] = useState('');
   const [imageUploading, setImageUploading] = useState(false);
+  const [imageDropActive, setImageDropActive] = useState(false);
   const [toolbarFontSize, setToolbarFontSize] = useState(BLOCK_DEFAULTS.text.fontSize);
   const [toolbarFontFamily, setToolbarFontFamily] = useState(FONT_FAMILY_OPTIONS[0].value);
   const [toolbarColor, setToolbarColor] = useState('#ffffff');
@@ -519,6 +522,8 @@ const NoteEditor = () => {
   const [toolbarBullets, setToolbarBullets] = useState(false);
   const [toolbarNumbered, setToolbarNumbered] = useState(false);
   const [toolbarChecklist, setToolbarChecklist] = useState(false);
+  const [toolbarLink, setToolbarLink] = useState(false);
+  const [toolbarCodeBlock, setToolbarCodeBlock] = useState(false);
   const [toolbarAlign, setToolbarAlign] = useState('left');
   const [toolbarLineSpacing, setToolbarLineSpacing] = useState(1.4);
   const [fontSizeDraft, setFontSizeDraft] = useState(String(BLOCK_DEFAULTS.text.fontSize));
@@ -528,6 +533,10 @@ const NoteEditor = () => {
   const [toolbarSection, setToolbarSection] = useState('text');
   const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [linkDraft, setLinkDraft] = useState('');
+  const [linkEditing, setLinkEditing] = useState(false);
+  const [deleteBlockId, setDeleteBlockId] = useState('');
   const [heldSelectionRects, setHeldSelectionRects] = useState([]);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
   const [tablePickerHover, setTablePickerHover] = useState({ rows: 2, cols: 2 });
@@ -543,6 +552,8 @@ const NoteEditor = () => {
   const fileInputRef = useRef(null);
   const canvasScrollRef = useRef(null);
   const canvasRef = useRef(null);
+  const dragDepthRef = useRef(0);
+  const addImageBlockRef = useRef(null);
   const textRefs = useRef({});
   const activeEditorRef = useRef(null);
   const lastActiveBlockIdRef = useRef('');
@@ -1238,16 +1249,56 @@ const NoteEditor = () => {
     heldSelectionRangeRef.current = null;
   }, [activeTextBlock?.id]);
 
+  // Place a new block in the highest-then-leftmost free space that is *currently on
+  // screen*. The search is bounded to the visible viewport (scroll window), scans
+  // top -> bottom then left -> right, and skips anything that would overlap an existing
+  // block (collapsed blocks use their small live height). If the visible area is full,
+  // it drops at the top-left of the viewport anyway.
   const getNextPosition = (size) => {
     const gap = 20;
-    const width = canvasRef.current?.clientWidth || 720;
-    const columnWidth = size.w + gap;
-    const columns = Math.max(1, Math.floor((width + gap) / columnWidth));
-    const index = blocks.length;
-    return {
-      x: (index % columns) * columnWidth,
-      y: Math.floor(index / columns) * (size.h + gap),
-    };
+    const step = 20;
+    const blockW = Number.isFinite(size?.w) ? size.w : BLOCK_DEFAULTS.text.w;
+    const blockH = Number.isFinite(size?.h) ? size.h : BLOCK_DEFAULTS.text.h;
+    const scroller = canvasScrollRef.current;
+
+    // Visible window expressed in canvas coordinates (block x/y live in the same space).
+    const viewLeft = Math.max(0, scroller?.scrollLeft ?? 0);
+    const viewTop = Math.max(0, scroller?.scrollTop ?? 0);
+    const viewW = scroller?.clientWidth ?? canvasRef.current?.clientWidth ?? 720;
+    const viewH = scroller?.clientHeight ?? 560;
+    const fallback = { x: Math.round(viewLeft), y: Math.round(viewTop) };
+
+    const rects = blocksRef.current.map((block) => {
+      const defaults = BLOCK_DEFAULTS[block.type] || BLOCK_DEFAULTS.text;
+      return {
+        x: Number.isFinite(block.x) ? block.x : 0,
+        y: Number.isFinite(block.y) ? block.y : 0,
+        w: Number.isFinite(block.w) ? block.w : defaults.w,
+        h: Number.isFinite(block.h) ? block.h : defaults.h,
+      };
+    });
+
+    const collides = (x, y) =>
+      rects.some(
+        (r) =>
+          x < r.x + r.w + gap &&
+          x + blockW + gap > r.x &&
+          y < r.y + r.h + gap &&
+          y + blockH + gap > r.y,
+      );
+
+    const maxX = viewLeft + viewW - blockW;
+    const maxY = viewTop + viewH - blockH;
+    if (maxX < viewLeft || maxY < viewTop) return fallback; // block bigger than viewport
+
+    for (let y = viewTop; y <= maxY; y += step) {
+      for (let x = viewLeft; x <= maxX; x += step) {
+        if (!collides(x, y)) {
+          return { x: Math.round(x), y: Math.round(y) };
+        }
+      }
+    }
+    return fallback;
   };
 
   const selectBlock = (id, options = {}) => {
@@ -1379,6 +1430,63 @@ const NoteEditor = () => {
     }
   };
 
+  // Keep a stable reference for the document-level paste listener (avoids stale closures).
+  addImageBlockRef.current = addImageBlock;
+
+  const dropHasFiles = (event) =>
+    Array.from(event.dataTransfer?.types || []).includes('Files');
+
+  const handleCanvasDragEnter = (event) => {
+    if (isTemplateMode || !dropHasFiles(event)) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setImageDropActive(true);
+  };
+
+  const handleCanvasDragOver = (event) => {
+    if (isTemplateMode || !dropHasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleCanvasDragLeave = (event) => {
+    if (!dropHasFiles(event)) return;
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setImageDropActive(false);
+    }
+  };
+
+  const handleCanvasDrop = async (event) => {
+    if (isTemplateMode || !dropHasFiles(event)) return;
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setImageDropActive(false);
+    const files = Array.from(event.dataTransfer.files || []).filter((file) =>
+      (file.type || '').startsWith('image/'),
+    );
+    for (const file of files) {
+      await addImageBlock(file);
+    }
+  };
+
+  // Paste an image from the clipboard anywhere in the editor → drop it on the canvas.
+  useEffect(() => {
+    if (isTemplateMode) return undefined;
+    const onPaste = (event) => {
+      const items = Array.from(event.clipboardData?.items || []);
+      const imageItem = items.find((item) => item.type && item.type.startsWith('image/'));
+      if (!imageItem) return;
+      const file = imageItem.getAsFile();
+      if (!file) return;
+      event.preventDefault();
+      addImageBlockRef.current?.(file);
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [isTemplateMode]);
+
   // Open the OS file picker. Must run synchronously inside the click handler to keep
   // the user-activation the dialog requires (deferring via rAF/timeout drops it).
   const openImagePicker = () => {
@@ -1431,10 +1539,7 @@ const NoteEditor = () => {
   };
 
   const confirmDeleteBlock = (id) => {
-    if (typeof window !== 'undefined' && !window.confirm('Delete this block? You can undo with the ↺ button.')) {
-      return;
-    }
-    deleteBlock(id);
+    if (id) setDeleteBlockId(id);
   };
 
   const toggleCollapseBlock = (id) => {
@@ -2109,6 +2214,8 @@ const NoteEditor = () => {
     setToolbarBullets(editor.isActive('bulletList'));
     setToolbarNumbered(editor.isActive('orderedList'));
     setToolbarChecklist(editor.isActive('taskList'));
+    setToolbarLink(editor.isActive('link'));
+    setToolbarCodeBlock(editor.isActive('codeBlock'));
     if (editor.isActive({ textAlign: 'center' })) setToolbarAlign('center');
     else if (editor.isActive({ textAlign: 'right' })) setToolbarAlign('right');
     else if (editor.isActive({ textAlign: 'justify' })) setToolbarAlign('justify');
@@ -2222,8 +2329,47 @@ const NoteEditor = () => {
     if (updates.numbered) chain.toggleOrderedList();
     if (updates.checklist) chain.toggleTaskList();
     if (updates.quote) chain.toggleBlockquote();
+    if (updates.codeBlock) chain.toggleCodeBlock();
     if (updates.align) chain.setTextAlign(updates.align);
+    if (updates.link !== undefined) {
+      if (updates.link) chain.extendMarkRange('link').setLink({ href: updates.link });
+      else chain.extendMarkRange('link').unsetLink();
+    }
     chain.run();
+  };
+
+  // Link button → open the in-app link popout (prefilled when editing an existing link).
+  const handleLinkAction = () => {
+    const editor = resolveActiveEditor();
+    if (!editor) return;
+    rememberTiptapSelection();
+    const previous = editor.getAttributes('link')?.href || '';
+    setLinkDraft(previous);
+    setLinkEditing(Boolean(previous) || editor.isActive('link'));
+    setLinkModalOpen(true);
+  };
+
+  const closeLinkModal = () => {
+    setLinkModalOpen(false);
+    setLinkDraft('');
+    setLinkEditing(false);
+  };
+
+  const commitLink = () => {
+    const url = linkDraft.trim();
+    if (!url) {
+      applyToolbarAction({ link: '' });
+      closeLinkModal();
+      return;
+    }
+    const href = /^(https?:|mailto:|tel:|#|\/)/i.test(url) ? url : `https://${url}`;
+    applyToolbarAction({ link: href });
+    closeLinkModal();
+  };
+
+  const removeLink = () => {
+    applyToolbarAction({ link: '' });
+    closeLinkModal();
   };
 
   const hasRangeSelectionInActiveBlock = () => {
@@ -3192,6 +3338,26 @@ const NoteEditor = () => {
       >
         <FaQuoteRight />
       </button>
+      <button
+        type="button"
+        className={toolbarLink ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={handleLinkAction}
+        title="Link (Ctrl+K)"
+      >
+        <FaLink />
+      </button>
+      <button
+        type="button"
+        className={toolbarCodeBlock ? 'active' : ''}
+        disabled={textControlsDisabled}
+        onMouseDown={handleToolbarButtonMouseDown}
+        onClick={() => applyToolbarAction({ codeBlock: true })}
+        title="Code block (Ctrl+Alt+C)"
+      >
+        <FaCode />
+      </button>
     </div>
   );
 
@@ -3368,7 +3534,22 @@ const NoteEditor = () => {
         </div>
       </header>
       <section className="note-editor">
-        <div className="note-canvas-scroll" ref={canvasScrollRef}>
+        {imageDropActive && (
+          <div className="canvas-drop-overlay" aria-hidden="true">
+            <div className="canvas-drop-hint">
+              <FaImage />
+              <span>Drop image to add</span>
+            </div>
+          </div>
+        )}
+        <div
+          className="note-canvas-scroll"
+          ref={canvasScrollRef}
+          onDragEnter={handleCanvasDragEnter}
+          onDragOver={handleCanvasDragOver}
+          onDragLeave={handleCanvasDragLeave}
+          onDrop={handleCanvasDrop}
+        >
           <div
             className="note-canvas"
             ref={canvasRef}
@@ -3531,6 +3712,7 @@ const NoteEditor = () => {
                                 onActivate={(instance) => handleTiptapEditorActive(instance, block.id)}
                                 onFocusBlock={() => selectBlock(block.id, { raise: false })}
                                 onStepFontSize={stepFontSize}
+                                onLink={handleLinkAction}
                               />
                             </Suspense>
                             ) : (
@@ -3994,6 +4176,88 @@ const NoteEditor = () => {
             </>
           )}
         </div>
+      )}
+
+      {linkModalOpen && (
+        <>
+          <div className="overlay show" onClick={closeLinkModal} />
+          <div className="modal open" role="dialog" aria-modal="true">
+            <div className="modal-card">
+              <header>
+                <h3>{linkEditing ? 'Edit link' : 'Add link'}</h3>
+                <p className="status-text">Paste or type a URL — it opens in a new tab.</p>
+              </header>
+              <div className="sheet-fields">
+                <label>
+                  URL
+                  <input
+                    autoFocus
+                    value={linkDraft}
+                    placeholder="https://example.com"
+                    onChange={(event) => setLinkDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commitLink();
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeLinkModal();
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+              <footer className="modal-actions">
+                {linkEditing && (
+                  <button type="button" className="ghost-btn danger" onClick={removeLink}>
+                    Remove
+                  </button>
+                )}
+                <button type="button" className="ghost-btn" onClick={closeLinkModal}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-fill"
+                  onClick={commitLink}
+                  disabled={!linkDraft.trim()}
+                >
+                  {linkEditing ? 'Update' : 'Add link'}
+                </button>
+              </footer>
+            </div>
+          </div>
+        </>
+      )}
+
+      {deleteBlockId && (
+        <>
+          <div className="overlay show" onClick={() => setDeleteBlockId('')} />
+          <div className="modal open" role="dialog" aria-modal="true">
+            <div className="modal-card">
+              <header>
+                <h3>Delete block?</h3>
+                <p className="status-text">You can undo this with the ↺ button.</p>
+              </header>
+              <footer className="modal-actions">
+                <button type="button" className="ghost-btn" onClick={() => setDeleteBlockId('')}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="danger-btn"
+                  onClick={() => {
+                    const id = deleteBlockId;
+                    setDeleteBlockId('');
+                    deleteBlock(id);
+                  }}
+                >
+                  Delete block
+                </button>
+              </footer>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

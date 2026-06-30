@@ -12,6 +12,7 @@ import {
   FaTimes,
   FaTrash,
 } from 'react-icons/fa';
+import { FaCog, FaFilter, FaSignOutAlt } from 'react-icons/fa';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   createNote,
@@ -19,7 +20,9 @@ import {
   deleteNote,
   deleteNoteTemplate,
   deleteNotes,
+  fetchNotesForClasses,
   getNote,
+  getNoteText,
   listenToClasses,
   listenToNoteTemplates,
   listenToNotes,
@@ -27,6 +30,8 @@ import {
   renameClass,
   reorderClasses,
   reorderNotes,
+  setClassNoteCount,
+  setNotePinned,
   updateNote,
 } from '../services/library';
 import { useAuth } from '../context/AuthContext';
@@ -137,6 +142,15 @@ const Dashboard = () => {
   const [notes, setNotes] = useState([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [searchScope, setSearchScope] = useState('class'); // 'class' | 'all'
+  const [searchInContent, setSearchInContent] = useState(false);
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [allNotes, setAllNotes] = useState([]);
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [contentMatchIds, setContentMatchIds] = useState(() => new Set());
+  const [contentSearching, setContentSearching] = useState(false);
+  const noteTextCacheRef = useRef(new Map());
+  const filterMenuRef = useRef(null);
   const [mobilePane, setMobilePane] = useState('classes');
   const [menuOpenId, setMenuOpenId] = useState('');
   const [classEditTarget, setClassEditTarget] = useState(null);
@@ -329,6 +343,41 @@ const Dashboard = () => {
     setSearch('');
   }, [selectedClassId]);
 
+  // Self-heal: if a class's stored noteCount drifted from its real notes, correct it.
+  // Debounced so it ignores the brief mismatch while an add/delete's increment propagates.
+  useEffect(() => {
+    if (!firebaseUser || !selectedClassId) return undefined;
+    const cls = classes.find((item) => item.id === selectedClassId);
+    if (!cls || (cls.noteCount || 0) === notes.length) return undefined;
+    const timer = setTimeout(() => {
+      setClassNoteCount(firebaseUser.uid, selectedClassId, notes.length).catch((err) =>
+        console.error('Failed to reconcile note count', err),
+      );
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [firebaseUser, selectedClassId, notes.length, classes]);
+
+  // Global search: pull note metadata across every class when the scope is "all".
+  useEffect(() => {
+    if (searchScope !== 'all' || !firebaseUser || !classes.length) return undefined;
+    let cancelled = false;
+    setGlobalLoading(true);
+    fetchNotesForClasses(
+      firebaseUser.uid,
+      classes.map((c) => ({ id: c.id, name: c.name })),
+    )
+      .then((items) => {
+        if (!cancelled) setAllNotes(items);
+      })
+      .catch((err) => console.error('Global notes fetch failed', err))
+      .finally(() => {
+        if (!cancelled) setGlobalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchScope, firebaseUser, classes]);
+
   useEffect(() => {
     if (!selectedNoteIds.length) return;
     setSelectedNoteIds((prev) => prev.filter((id) => notes.some((note) => note.id === id)));
@@ -478,34 +527,121 @@ const Dashboard = () => {
     () => trimmedSearch.split(' ').map((token) => token.trim()).filter(Boolean),
     [trimmedSearch],
   );
-  // Day groups, newest day first; manual (drag) order is preserved within each day.
-  const noteGroups = useMemo(() => {
-    const source = !searchTokens.length
-      ? notes
-      : notes.filter((note) => {
-          const haystack = `${note.title || ''} ${note.summary || ''}`.toLowerCase();
-          return searchTokens.every((token) => haystack.includes(token));
-        });
-    const groups = [];
-    source.forEach((note) => {
-      const key = dayKeyOf(note);
-      const existing = groups.find((group) => group.key === key);
-      if (existing) existing.notes.push(note);
-      else groups.push({ key, notes: [note] });
-    });
-    return groups.sort((a, b) => (a.key === 'earlier' ? 1 : b.key === 'earlier' ? -1 : b.key.localeCompare(a.key)));
-  }, [notes, searchTokens]);
+  const searchActive = Boolean(trimmedSearch);
 
-  const filteredNotes = useMemo(() => {
-    if (!searchTokens.length) return notes;
-    return notes.filter((note) => {
-      const tagsText = (note.tags || []).join(' ');
-      const haystack = `${note.title || ''} ${note.summary || ''} ${tagsText}`
-        .toLowerCase()
-        .trim();
-      return searchTokens.every((token) => haystack.includes(token));
-    });
-  }, [notes, searchTokens]);
+  const matchesMeta = (note) => {
+    const tags = (note.tags || []).join(' ');
+    const haystack = `${note.title || ''} ${note.summary || ''} ${tags} ${note.className || ''}`.toLowerCase();
+    return searchTokens.every((token) => haystack.includes(token));
+  };
+
+  // "Search inside notes": fetch + match note content text (cache-first, debounced).
+  useEffect(() => {
+    if (!searchActive || !searchInContent || !firebaseUser) {
+      setContentMatchIds(new Set());
+      setContentSearching(false);
+      return undefined;
+    }
+    const source =
+      searchScope === 'all'
+        ? allNotes
+        : notes.map((note) => ({ ...note, classId: selectedClassId }));
+    let cancelled = false;
+    setContentSearching(true);
+    const handle = setTimeout(async () => {
+      const cache = noteTextCacheRef.current;
+      const matches = new Set();
+      for (const note of source) {
+        if (cancelled) return;
+        if (matchesMeta(note)) {
+          matches.add(note.id);
+          continue;
+        }
+        const stamp =
+          note.contentUpdatedAt?.toMillis?.() || note.updatedAt?.toMillis?.() || 0;
+        const cacheKey = `${note.classId}:${note.id}:${stamp}`;
+        let text = cache.get(cacheKey);
+        if (text === undefined) {
+          text = (await getNoteText(firebaseUser.uid, note.classId, note.id)).toLowerCase();
+          cache.set(cacheKey, text);
+        }
+        if (searchTokens.every((token) => text.includes(token))) matches.add(note.id);
+      }
+      if (!cancelled) {
+        setContentMatchIds(matches);
+        setContentSearching(false);
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+    // matchesMeta is derived from searchTokens (already a dep); intentionally omitted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchActive, searchInContent, searchScope, allNotes, notes, selectedClassId, searchTokens, firebaseUser]);
+
+  // Unified groups for the notes panel: pinned + day groups when browsing; class or
+  // day groups when searching (scoped to this class or all classes).
+  const displayGroups = useMemo(() => {
+    const sortDays = (groups) =>
+      groups.sort((a, b) =>
+        a.key === 'earlier' ? 1 : b.key === 'earlier' ? -1 : b.key.localeCompare(a.key),
+      );
+    const toDayGroups = (list) => {
+      const groups = [];
+      list.forEach((note) => {
+        const key = dayKeyOf(note);
+        const existing = groups.find((group) => group.key === key);
+        if (existing) existing.notes.push(note);
+        else groups.push({ key, label: dayLabelOf(key), kind: 'day', notes: [note] });
+      });
+      return sortDays(groups);
+    };
+
+    if (!searchActive) {
+      const pinned = notes.filter((note) => note.pinned);
+      const rest = notes.filter((note) => !note.pinned);
+      const groups = [];
+      if (pinned.length) groups.push({ key: '__pinned', label: 'Pinned', kind: 'pinned', notes: pinned });
+      return groups.concat(toDayGroups(rest));
+    }
+
+    const source =
+      searchScope === 'all'
+        ? allNotes
+        : notes.map((note) => ({ ...note, classId: selectedClassId, className: selectedClass?.name }));
+    const results = source.filter(
+      (note) => matchesMeta(note) || (searchInContent && contentMatchIds.has(note.id)),
+    );
+
+    if (searchScope === 'all') {
+      const byClass = [];
+      results.forEach((note) => {
+        const existing = byClass.find((group) => group.key === note.classId);
+        if (existing) existing.notes.push(note);
+        else byClass.push({ key: note.classId, label: note.className || 'Class', kind: 'class', notes: [note] });
+      });
+      return byClass.sort((a, b) => a.label.localeCompare(b.label));
+    }
+    return toDayGroups(results);
+    // matchesMeta derived from searchTokens; intentionally omitted from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    searchActive,
+    notes,
+    searchScope,
+    allNotes,
+    selectedClassId,
+    selectedClass,
+    searchInContent,
+    contentMatchIds,
+    searchTokens,
+  ]);
+
+  const resultCount = useMemo(
+    () => displayGroups.reduce((sum, group) => sum + group.notes.length, 0),
+    [displayGroups],
+  );
   const selectedNotes = useMemo(
     () => notes.filter((note) => selectedNoteIds.includes(note.id)),
     [notes, selectedNoteIds],
@@ -770,6 +906,17 @@ const Dashboard = () => {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [userMenuOpen]);
+
+  useEffect(() => {
+    if (!filterMenuOpen) return undefined;
+    const handlePointer = (event) => {
+      if (filterMenuRef.current && !filterMenuRef.current.contains(event.target)) {
+        setFilterMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointer);
+    return () => document.removeEventListener('mousedown', handlePointer);
+  }, [filterMenuOpen]);
 
   const uploadCover = async (noteId) => {
     if (!firebaseUser || !noteImageFile) return '';
@@ -1051,9 +1198,27 @@ const Dashboard = () => {
     }
   };
 
+  const handleTogglePin = async (note) => {
+    const classId = note.classId || selectedClassId;
+    if (!firebaseUser || !classId) return;
+    setNoteMenuOpenId('');
+    try {
+      await setNotePinned(firebaseUser.uid, classId, note.id, !note.pinned);
+      showToast(note.pinned ? 'Unpinned' : 'Pinned to top');
+    } catch (err) {
+      console.error('Failed to pin note', err);
+    }
+  };
+
+  const openNoteRoute = (note) => {
+    const classId = note.classId || selectedClassId;
+    if (!classId) return;
+    setNoteMenuOpenId('');
+    navigate(`/class/${classId}/note/${note.id}`);
+  };
+
   const classEmpty = classes.length === 0;
-  const notesEmpty = notes.length === 0;
-  const filteredNotesEmpty = filteredNotes.length === 0;
+  const resultsEmpty = resultCount === 0;
   const firstName = (profile?.displayName || '').trim().split(/\s+/)[0] || 'there';
   const isLightTheme = THEME_PRESETS[normalizeThemeMode(themeMode)]?.attr === 'light';
   const todayKey = keyForDate(new Date());
@@ -1081,12 +1246,66 @@ const Dashboard = () => {
             <FaSearch aria-hidden="true" />
             <input
               ref={searchInputRef}
-              placeholder={`Search in ${selectedClass?.name || 'your notes'}…`}
+              placeholder={
+                searchScope === 'all'
+                  ? 'Search all classes…'
+                  : `Search in ${selectedClass?.name || 'your notes'}…`
+              }
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               aria-label="Search notes"
             />
-            <kbd>Ctrl K</kbd>
+            {search ? (
+              <button
+                type="button"
+                className="search-clear"
+                title="Clear search"
+                onClick={() => setSearch('')}
+              >
+                <FaTimes />
+              </button>
+            ) : (
+              <kbd>Ctrl K</kbd>
+            )}
+            <div className="search-filter" ref={filterMenuRef}>
+              <button
+                type="button"
+                className={`search-filter-btn ${searchScope === 'all' || searchInContent ? 'on' : ''}`}
+                title="Search filters"
+                aria-haspopup="menu"
+                aria-expanded={filterMenuOpen}
+                onClick={() => setFilterMenuOpen((prev) => !prev)}
+              >
+                <FaFilter />
+              </button>
+              {filterMenuOpen && (
+                <div className="search-filter-panel menu" role="menu">
+                  <p className="search-filter-label">Search in</p>
+                  <button
+                    type="button"
+                    className={searchScope === 'class' ? 'active' : ''}
+                    onClick={() => setSearchScope('class')}
+                  >
+                    <FaCheck style={{ opacity: searchScope === 'class' ? 1 : 0 }} /> This class
+                  </button>
+                  <button
+                    type="button"
+                    className={searchScope === 'all' ? 'active' : ''}
+                    onClick={() => setSearchScope('all')}
+                  >
+                    <FaCheck style={{ opacity: searchScope === 'all' ? 1 : 0 }} /> All classes
+                  </button>
+                  <div className="search-filter-divider" />
+                  <button
+                    type="button"
+                    className={searchInContent ? 'active' : ''}
+                    onClick={() => setSearchInContent((prev) => !prev)}
+                  >
+                    <FaCheck style={{ opacity: searchInContent ? 1 : 0 }} /> Search inside note text
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <div className="app-actions top-right">
             {!isOnline && <span className="net-status offline">Offline</span>}
@@ -1121,13 +1340,23 @@ const Dashboard = () => {
                   <button
                     type="button"
                     role="menuitem"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      navigate('/settings');
+                    }}
+                  >
+                    <FaCog /> Settings
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
                     className="danger"
                     onClick={() => {
                       setUserMenuOpen(false);
                       logout();
                     }}
                   >
-                    Sign out
+                    <FaSignOutAlt /> Sign out
                   </button>
                 </div>
               )}
@@ -1250,15 +1479,26 @@ const Dashboard = () => {
         <section className="pane pane-notes sheet">
           <div className="pane-header sheet-head">
             <div className="sheet-title">
-              <h2>{selectedClass ? selectedClass.name : 'Notes'}</h2>
+              <h2>
+                {searchActive && searchScope === 'all'
+                  ? 'All classes'
+                  : selectedClass
+                    ? selectedClass.name
+                    : 'Notes'}
+              </h2>
               <p className="sheet-meta">
-                {selectedClass
-                  ? `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`
-                  : 'Select a class'}
-                {Boolean(trimmedSearch) && selectedClass && (
+                {!selectedClass && searchScope !== 'all'
+                  ? 'Select a class'
+                  : searchActive && searchScope === 'all'
+                    ? `${classes.length} ${classes.length === 1 ? 'class' : 'classes'}`
+                    : `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`}
+                {searchActive && (
                   <span>
                     {' · '}
-                    <b>{`${filteredNotes.length} ${filteredNotes.length === 1 ? 'match' : 'matches'}`}</b>
+                    <b>{`${resultCount} ${resultCount === 1 ? 'match' : 'matches'}`}</b>
+                    {(contentSearching || globalLoading) && (
+                      <em className="meta-searching"> · searching…</em>
+                    )}
                   </span>
                 )}
               </p>
@@ -1320,124 +1560,157 @@ const Dashboard = () => {
                 <p className="empty-big">Nothing here yet.</p>
                 <p className="empty-small">Create a class to start collecting notes.</p>
               </div>
-            ) : filteredNotesEmpty ? (
+            ) : searchActive && searchScope === 'all' && globalLoading && resultsEmpty ? (
+              <div className="empty-state">
+                <p className="empty-big">Searching all classes…</p>
+              </div>
+            ) : resultsEmpty ? (
               <div className="empty-state">
                 <p className="empty-big">
-                  {notesEmpty ? 'Nothing here yet.' : `No notes match “${search.trim()}”`}
+                  {searchActive ? `No notes match “${search.trim()}”` : 'Nothing here yet.'}
                 </p>
                 <p className="empty-small">
-                  {notesEmpty
-                    ? 'Capture your first thought — Quick add is right up there.'
-                    : 'Try a different word, or clear the search.'}
+                  {searchActive
+                    ? searchInContent
+                      ? 'Try a different word, or narrow the filter.'
+                      : 'Try a different word, or turn on “Search inside note text”.'
+                    : 'Capture your first thought — Quick add is right up there.'}
                 </p>
               </div>
             ) : (
               <>
-                {noteGroups.map((group) => (
-                  <Fragment key={group.key}>
-                    <div className="day">
-                      <span className={`day-label${group.key === todayKey ? '' : ' past'}`}>
-                        {dayLabelOf(group.key)}
-                      </span>
-                      <span className="day-rule" />
-                    </div>
-                    {group.notes.map((note) => {
-                      const selected = selectedNoteIds.includes(note.id);
-                      const menuOpen = noteMenuOpenId === note.id;
-                      const kind = kindOf(note);
-                      const openNote = () => {
-                        setNoteMenuOpenId('');
-                        navigate(`/class/${selectedClassId}/note/${note.id}`);
-                      };
-                      return (
-                        <div
-                          key={note.id}
-                          className={`note-row ${selected ? 'selected' : ''} ${
-                            noteDraggingId === note.id ? 'dragging' : ''
-                          } ${menuOpen ? 'menu-open' : ''} ${flashNoteId === note.id ? 'flash' : ''}`}
-                          role="button"
-                          tabIndex={0}
-                          onClick={openNote}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              openNote();
-                            }
-                          }}
-                          draggable={!trimmedSearch}
-                          onDragStart={(event) => handleNoteDragStart(event, note)}
-                          onDragEnter={() => handleNoteDragEnter(note)}
-                          onDragOver={(event) => event.preventDefault()}
-                          onDragEnd={handleNoteDragEnd}
+                {displayGroups.map((group) => {
+                  const isGlobal = group.kind === 'class';
+                  return (
+                    <Fragment key={group.key}>
+                      <div className="day">
+                        <span
+                          className={
+                            group.kind === 'pinned'
+                              ? 'day-label pinned'
+                              : group.kind === 'class'
+                                ? 'day-label class'
+                                : `day-label${group.key === todayKey ? '' : ' past'}`
+                          }
                         >
-                          <Grip />
-                          <label
-                            className="note-check"
-                            onClick={(event) => event.stopPropagation()}
-                            title={selected ? 'Deselect note' : 'Select note'}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              onChange={() => toggleNoteSelection(note.id)}
-                            />
-                            <span className="check" aria-hidden="true">
-                              <FaCheck />
-                            </span>
-                          </label>
-                          <span className={`kind${kind.hot ? ' hot' : ''}`}>{kind.label}</span>
-                          {note.coverUrl && (
-                            <span className="note-thumb-sm">
-                              <img src={note.coverUrl} alt="" />
-                            </span>
+                          {group.kind === 'pinned' ? (
+                            <>
+                              <FaThumbtack /> Pinned
+                            </>
+                          ) : (
+                            group.label
                           )}
-                          <div className="note-body-cell">
-                            <div className="note-title-line">
-                              <span className="note-title-text">{note.title || 'Untitled Note'}</span>
-                              {note.pinned && <FaThumbtack className="note-pin" />}
-                            </div>
-                            {note.summary && <div className="note-sub">{note.summary}</div>}
-                          </div>
-                          <span className="note-time">{noteTimeLabel(note)}</span>
-                          <div className="note-row-actions">
-                            <button
-                              className={`dots ${menuOpen ? 'menu-open' : ''}`}
-                              title="Note actions"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleNoteMenu(note.id);
-                              }}
-                            >
-                              <FaEllipsisH />
-                            </button>
-                            {menuOpen && (
-                              <div
-                                className="note-menu menu"
-                                role="menu"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <button type="button" onClick={() => handleOpenEditNote(note, 'title')}>
-                                  <FaPen /> Edit details
-                                </button>
-                                <button type="button" onClick={() => handleDuplicateNote(note)}>
-                                  <FaCopy /> Duplicate
-                                </button>
-                                <button
-                                  type="button"
-                                  className="danger"
-                                  onClick={() => requestNoteDelete(note)}
+                        </span>
+                        <span className="day-rule" />
+                      </div>
+                      {group.notes.map((note) => {
+                        const selected = selectedNoteIds.includes(note.id);
+                        const menuOpen = noteMenuOpenId === note.id;
+                        const kind = kindOf(note);
+                        const openNote = () => openNoteRoute(note);
+                        return (
+                          <div
+                            key={`${note.classId || selectedClassId}:${note.id}`}
+                            className={`note-row ${selected ? 'selected' : ''} ${
+                              noteDraggingId === note.id ? 'dragging' : ''
+                            } ${menuOpen ? 'menu-open' : ''} ${
+                              flashNoteId === note.id ? 'flash' : ''
+                            } ${isGlobal ? 'global-result' : ''}`}
+                            role="button"
+                            tabIndex={0}
+                            onClick={openNote}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                openNote();
+                              }
+                            }}
+                            draggable={!searchActive && !isGlobal}
+                            onDragStart={(event) => !isGlobal && handleNoteDragStart(event, note)}
+                            onDragEnter={() => !isGlobal && handleNoteDragEnter(note)}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDragEnd={handleNoteDragEnd}
+                          >
+                            {isGlobal ? (
+                              <span className="note-row-spacer" />
+                            ) : (
+                              <>
+                                <Grip />
+                                <label
+                                  className="note-check"
+                                  onClick={(event) => event.stopPropagation()}
+                                  title={selected ? 'Deselect note' : 'Select note'}
                                 >
-                                  <FaTrash /> Delete note
+                                  <input
+                                    type="checkbox"
+                                    checked={selected}
+                                    onChange={() => toggleNoteSelection(note.id)}
+                                  />
+                                  <span className="check" aria-hidden="true">
+                                    <FaCheck />
+                                  </span>
+                                </label>
+                              </>
+                            )}
+                            <span className={`kind${kind.hot ? ' hot' : ''}`}>{kind.label}</span>
+                            {note.coverUrl && (
+                              <span className="note-thumb-sm">
+                                <img src={note.coverUrl} alt="" />
+                              </span>
+                            )}
+                            <div className="note-body-cell">
+                              <div className="note-title-line">
+                                <span className="note-title-text">{note.title || 'Untitled Note'}</span>
+                                {note.pinned && <FaThumbtack className="note-pin" />}
+                              </div>
+                              {note.summary && <div className="note-sub">{note.summary}</div>}
+                            </div>
+                            <span className="note-time">{noteTimeLabel(note)}</span>
+                            {!isGlobal && (
+                              <div className="note-row-actions">
+                                <button
+                                  className={`dots ${menuOpen ? 'menu-open' : ''}`}
+                                  title="Note actions"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    toggleNoteMenu(note.id);
+                                  }}
+                                >
+                                  <FaEllipsisH />
                                 </button>
+                                {menuOpen && (
+                                  <div
+                                    className="note-menu menu"
+                                    role="menu"
+                                    onClick={(event) => event.stopPropagation()}
+                                  >
+                                    <button type="button" onClick={() => handleTogglePin(note)}>
+                                      <FaThumbtack /> {note.pinned ? 'Unpin' : 'Pin to top'}
+                                    </button>
+                                    <button type="button" onClick={() => handleOpenEditNote(note, 'title')}>
+                                      <FaPen /> Edit details
+                                    </button>
+                                    <button type="button" onClick={() => handleDuplicateNote(note)}>
+                                      <FaCopy /> Duplicate
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="danger"
+                                      onClick={() => requestNoteDelete(note)}
+                                    >
+                                      <FaTrash /> Delete note
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
-                        </div>
-                      );
-                    })}
-                  </Fragment>
-                ))}
-                {!trimmedSearch && (
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
+                {!searchActive && (
                   <div className="caught-up">
                     <p>
                       That&apos;s everything in <b>{selectedClass?.name || 'this class'}</b> — your desk is

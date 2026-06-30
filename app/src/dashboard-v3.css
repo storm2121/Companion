@@ -1042,3 +1042,317 @@ html[data-theme='light'] .theme-knob {
     height: calc(100vh - 96px - 64px - (var(--page-padding) * 2));
   }
 }
+
+/* ---------- search: clear button + filter menu ---------- */
+.app-search.search-pill .search-clear {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.app-search.search-pill .search-clear:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.app-search.search-pill .search-clear svg {
+  width: 11px;
+  height: 11px;
+}
+
+.search-filter {
+  position: relative;
+  flex: none;
+  display: flex;
+}
+.search-filter-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.search-filter-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.search-filter-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.search-filter-btn.on {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+}
+
+.search-filter-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 210px;
+  z-index: 60;
+  display: grid;
+  gap: 2px;
+}
+.search-filter-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 6px 10px 4px;
+  margin: 0;
+}
+.search-filter-panel button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+.search-filter-panel button svg {
+  width: 11px;
+  height: 11px;
+  color: var(--accent-ink);
+  flex: none;
+}
+.search-filter-panel button:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.search-filter-panel button.active {
+  color: var(--text);
+}
+.search-filter-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+.meta-searching {
+  font-style: italic;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* ---------- pinned + class (global-search) day headers ---------- */
+.day-label.pinned {
+  color: var(--accent-ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.day-label.pinned svg {
+  width: 10px;
+  height: 10px;
+}
+.day-label.class {
+  color: var(--text);
+  letter-spacing: -0.01em;
+  text-transform: none;
+  font-size: 13px;
+}
+
+/* ---------- global-search result rows (open-only) ---------- */
+.note-row.global-result {
+  padding-left: 12px;
+  cursor: pointer;
+}
+.note-row .note-row-spacer {
+  flex: none;
+  width: 2px;
+}
+
+/* ---------- avatar menu items now have icons ---------- */
+.user-menu-panel button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.user-menu-panel button svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+/* ---------- settings page ---------- */
+.settings-shell {
+  padding-bottom: 60px;
+}
+.app-bar-inner.settings-bar {
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+}
+.settings-bar .brand {
+  justify-self: center;
+}
+.settings-bar .brand h1 {
+  font-size: 19px;
+}
+.settings-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 8px var(--page-padding) 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.settings-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  padding: 22px 24px;
+}
+.settings-card h2 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 16px;
+}
+.settings-profile {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.settings-avatar {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 1px solid var(--line-2);
+  background-color: var(--surface-3);
+  background-size: cover;
+  background-position: center;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 24px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+}
+.settings-avatar:hover {
+  border-color: var(--accent-line);
+}
+.settings-avatar-edit {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 3px var(--surface-2);
+}
+.settings-avatar-edit svg {
+  width: 11px;
+  height: 11px;
+}
+.settings-field {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+.settings-field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.settings-row {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+.settings-row input {
+  flex: 1;
+  min-width: 0;
+}
+.settings-hint {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin: 2px 0 0;
+}
+.settings-themes {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.theme-card {
+  position: relative;
+  flex: 1;
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+.theme-card:hover {
+  border-color: var(--line-2);
+}
+.theme-card.active {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.theme-card-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  display: grid;
+  place-items: center;
+}
+.theme-card-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.theme-card-check {
+  margin-left: auto;
+  width: 13px;
+  height: 13px;
+  color: var(--accent-ink);
+}
+.settings-card .btn svg {
+  width: 13px;
+  height: 13px;
+}
+.danger-soft {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--danger);
+}
+.danger-soft:hover:not(:disabled) {
+  filter: brightness(1.05);
+}

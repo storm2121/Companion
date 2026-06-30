@@ -1,16 +1,277 @@
-# React + Vite
+# Companion
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A calm, ADHD-friendly note-taking app for AUI students. Organize notes by class, capture
+quickly, and write in a freeform, block-based canvas editor — with two warm themes
+(**Daylight** & **Lamplight**).
 
-Currently, two official plugins are available:
+**Live:** https://companion-c4a42.web.app · https://companion-c4a42.firebaseapp.com
+**Firebase project:** `companion-c4a42`
+**Repo:** https://github.com/storm2121/Companion (the app lives in the [`app/`](.) subfolder)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## Table of contents
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- [Tech stack](#tech-stack)
+- [Repository layout](#repository-layout)
+- [Prerequisites](#prerequisites)
+- [Local development](#local-development)
+- [Available scripts](#available-scripts)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Firebase backend](#firebase-backend)
+- [Build & deploy](#build--deploy)
+- [Troubleshooting](#troubleshooting)
+- [Current state & notes](#current-state--notes)
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Tech stack
+
+| Area | Choice |
+|---|---|
+| UI | **React 19**, **react-router-dom 7** |
+| Build | **Vite 7** (`@vitejs/plugin-react`) |
+| Backend | **Firebase 12** — Auth, Cloud Firestore (offline persistent multi-tab cache), Storage |
+| Editor | **TipTap 2** (ProseMirror) with a custom font-size mark + tables, task lists, etc. |
+| Canvas | **react-rnd** (drag/resize blocks) |
+| Icons / motion | **react-icons**, **framer-motion** |
+| Lint | ESLint 9 (flat config) |
+
+---
+
+## Repository layout
+
+```
+Companion/
+├─ app/                      ← the web app (run all commands from here)
+│  ├─ src/
+│  │  ├─ pages/              AuthHub, ProfileSetup, Dashboard, ClassNotes, NoteEditor…
+│  │  ├─ components/         auth/ classes/ editor/ profile/ ui/
+│  │  ├─ context/            AuthContext (auth + theme)
+│  │  ├─ services/           library.js (all Firestore reads/writes)
+│  │  ├─ hooks/              useNetworkStatus…
+│  │  ├─ data/               note templates
+│  │  ├─ firebase.js         Firebase init (config + Firestore cache)
+│  │  ├─ index.css           base + themes (Daylight/Lamplight, OKLCH)
+│  │  └─ dashboard-v3.css    dashboard redesign layer
+│  ├─ functions/             Cloud Functions (currently empty — see note)
+│  ├─ firebase.json          hosting + rules + functions config
+│  ├─ .firebaserc            default project = companion-c4a42
+│  ├─ firestore.rules        Firestore security rules
+│  ├─ storage.rules          Storage security rules
+│  ├─ database.rules.json    Realtime DB rules (locked; RTDB unused)
+│  └─ firestore.indexes.json (no custom indexes)
+└─ docs/                     design/plan docs (e.g. editor-phase3-plan.md)
+```
+
+---
+
+## Prerequisites
+
+- **Node.js 20.19+** (22 LTS or 24 recommended — Vite 7 requires ≥ 20.19/22.12; Cloud
+  Functions target Node 24)
+- **npm** (ships with Node)
+- **Firebase CLI** for deploys: `npm install -g firebase-tools`
+- A **verified `@aui.ma` account** to actually log in and use the app (the app is domain-restricted)
+
+---
+
+## Local development
+
+```bash
+git clone https://github.com/storm2121/Companion.git
+cd Companion/app          # IMPORTANT: everything runs from app/, not the repo root
+npm install
+npm run dev               # → http://localhost:5173
+```
+
+> The dev server talks to the **live cloud Firebase project** (there is no emulator setup),
+> so you need network access and an `@aui.ma` login. Note that Firestore/Storage access is
+> still governed by the **deployed** security rules — see [Build & deploy](#build--deploy).
+
+To preview a production build locally:
+
+```bash
+npm run build
+npm run preview
+```
+
+---
+
+## Available scripts
+
+Run from `app/`:
+
+| Script | What it does |
+|---|---|
+| `npm run dev` | Start Vite dev server with HMR |
+| `npm run build` | Production build → `dist/` (what Firebase Hosting serves) |
+| `npm run preview` | Serve the built `dist/` locally |
+| `npm run lint` | Run ESLint |
+
+---
+
+## Configuration
+
+Firebase web config is in [`src/firebase.js`](src/firebase.js) and is **committed on purpose**.
+A Firebase web `apiKey` is **not a secret** — it only identifies the project to the client.
+All access is enforced server-side by **Firebase Auth + Security Rules**, not by hiding the key.
+There are no `.env` files to set up.
+
+If you ever point this at a different Firebase project, replace the `firebaseConfig` object in
+`src/firebase.js` and the project id in `.firebaserc`.
+
+---
+
+## Architecture
+
+**Auth & routing.** `AuthContext` owns Firebase auth and the active theme. Routes
+([`src/App.jsx`](src/App.jsx)):
+
+| Path | Page | Guard |
+|---|---|---|
+| `/` | AuthHub (login / register) | public |
+| `/auth/complete` | email-link sign-in completion | public |
+| `/setup` | ProfileSetup | signed-in |
+| `/dashboard` | Dashboard (classes + notes) | signed-in + profile |
+| `/class/:classId` | ClassNotes | signed-in + profile |
+| `/class/:classId/note/:noteId` | NoteEditor | signed-in + profile |
+| `/template/new` | NoteEditor (template builder) | signed-in + profile |
+
+Sign-in is **email/password and email-link**, restricted to `@aui.ma` addresses.
+
+**The editor.** Each note is a freeform canvas of draggable/resizable blocks (text or image).
+Text blocks are **TipTap/ProseMirror** instances (bold/italic/underline/strike, font size &
+family, color, highlight, alignment, lists, **task lists**, **tables**, placeholder). New blocks
+auto-place into the highest-then-leftmost free space currently on screen.
+
+**Delta persistence.** Note content is stored as a **block map** (`{ [id]: block }` + an
+`order` array), so a single edit is saved as a small per-block delta rather than rewriting the
+whole note. Saves are debounced and also mirrored to `localStorage` as a recovery draft. See
+[`src/services/library.js`](src/services/library.js).
+
+**Themes.** Two OKLCH palettes — **Daylight** (light) and **Lamplight** (dark) — driven by a
+single `data-theme` attribute on `<html>`. The choice is saved to the user's profile.
+
+---
+
+## Firebase backend
+
+### Firestore data model
+
+```
+users/{uid}                                  ← profile (displayName, themeMode, …)
+users/{uid}/noteTemplates/{templateId}       ← saved custom templates
+users/{uid}/classes/{classId}                ← class meta (name, color, noteCount, order)
+users/{uid}/classes/{classId}/notes/{noteId} ← note meta (title, summary, coverUrl, order, …)
+users/{uid}/classes/{classId}/notes/{noteId}/content/main
+                                             ← note content (blocks map, order, canvasHeight)
+```
+
+Cloud Storage paths: `avatars/{uid}/…`, `notes/{uid}/{noteId}/…`, `templates/{uid}/…`.
+
+### Security rules
+
+- [`firestore.rules`](firestore.rules) and [`storage.rules`](storage.rules): a user can only
+  read/write their own `users/{uid}/…` subtree, and only with an `@aui.ma` account.
+- [`database.rules.json`](database.rules.json): Realtime Database is locked (`false`); RTDB is unused.
+- [`firestore.indexes.json`](firestore.indexes.json): no custom composite indexes.
+
+> **Rules are server-side and only take effect once deployed.** Editing the `.rules` files
+> locally changes nothing until you `firebase deploy` them.
+
+### Cloud Functions
+
+[`functions/`](functions) exists (Node 24) but currently exports **no functions** —
+`functions/index.js` only calls `admin.initializeApp()`. **Do not deploy `functions`** (a blanket
+`firebase deploy` may prompt to delete previously-deployed functions). The deploy commands below
+intentionally skip it.
+
+---
+
+## Build & deploy
+
+All deploy commands run from **`app/`** (where `firebase.json` lives).
+
+### One-time setup
+
+```powershell
+npm install -g firebase-tools     # if not installed
+cd D:\Companion\app
+firebase login                    # use 'firebase login --reauth' if it gets stuck
+firebase use companion-c4a42      # confirm the active project (it's the default)
+```
+
+### Full deploy (site + rules)
+
+**PowerShell** — quote the comma-separated target list, or it errors with "No targets match":
+
+```powershell
+cd D:\Companion\app
+npm run build
+firebase deploy --only "hosting,firestore:rules,storage"
+```
+
+> Note the targets: `firestore:rules` (Firestore supports `:rules`/`:indexes`), but plain
+> `storage` for Storage rules — there is **no** `storage:rules` target (it errors with
+> "Could not find rules for the following storage targets: rules").
+
+**bash / Git Bash** (quotes optional):
+
+```bash
+cd app
+npm run build
+firebase deploy --only hosting,firestore:rules,storage
+```
+
+This ships:
+
+- **Hosting** — the contents of `dist/` (built by `npm run build`), with an SPA rewrite so
+  client-side routes resolve to `index.html`.
+- **Firestore rules** and **Storage rules**.
+
+On success it prints the live URLs:
+
+- https://companion-c4a42.web.app
+- https://companion-c4a42.firebaseapp.com
+
+Then **hard-refresh** the site (Ctrl+Shift+R) to drop the old cached bundle.
+
+### Targeted deploys
+
+```powershell
+firebase deploy --only hosting                     # just the site (after npm run build)
+firebase deploy --only "firestore:rules,storage"   # just security rules (no rebuild needed)
+firebase deploy --only firestore:rules             # one ruleset
+```
+
+> Rules deploys are independent of the build — you can push a rules fix without rebuilding.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `Error: Not in a Firebase app directory` | You're in the repo root. `cd app` first. |
+| `No targets … match '--only hosting firestore …'` | PowerShell split the list. **Quote it**: `--only "hosting,firestore:rules,storage"`. |
+| `Could not find rules for the following storage targets: rules` | Wrong target — use `storage`, not `storage:rules` (only Firestore takes `:rules`). |
+| `npm error … could not read package.json` | Same thing — run npm/firebase from `app/`, not the repo root. |
+| App stuck on **"We couldn't load your profile"** / console `Missing or insufficient permissions` | The **deployed** rules are rejecting the read. Deploy rules (`--only "firestore:rules,storage"`) and confirm you're logged in with an `@aui.ma` account. |
+| Login won't complete | `firebase login --reauth`; ensure the account is `@aui.ma`. |
+| Old UI / white native scrollbar after deploy | Stale cache — hard-refresh (Ctrl+Shift+R). |
+| `firebase deploy` asks to **delete functions** | You deployed `functions`. Use the targeted commands above (they skip it). |
+
+---
+
+## Current state & notes
+
+- **Email verification is temporarily disabled** in the auth flow and security rules (the
+  `@aui.ma` domain restriction is still enforced). To restore it, re-add the
+  `request.auth.token.email_verified == true` check in `firestore.rules` / `storage.rules`,
+  re-enable the gate in `AuthContext`/`ProtectedRoute`, then redeploy the rules.
+- `npm run lint` currently reports some **pre-existing** warnings/errors (legacy unused vars,
+  a few hook-deps). They don't block the production build.
+- The note editor's longer-term plan lives in [`docs/editor-phase3-plan.md`](../docs/editor-phase3-plan.md).
+- This is a private project; no open-source license is attached.

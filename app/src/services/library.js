@@ -210,6 +210,72 @@ export const deleteNotes = async (uid, classId, noteIds = []) => {
   await batch.commit();
 };
 
+export const setNotePinned = async (uid, classId, noteId, pinned) => {
+  await updateDoc(getNoteRef(uid, classId, noteId), {
+    pinned: Boolean(pinned),
+    updatedAt: serverTimestamp(),
+  });
+};
+
+// Self-heal: overwrite a class's stored noteCount with the real count once we know it.
+export const setClassNoteCount = async (uid, classId, count) => {
+  if (!Number.isFinite(count)) return;
+  await updateDoc(doc(db, 'users', uid, 'classes', classId), { noteCount: count });
+};
+
+// Fetch note metadata across many classes (for global search). Returns each note
+// tagged with its classId/className.
+export const fetchNotesForClasses = async (uid, classes = []) => {
+  const groups = await Promise.all(
+    classes.map(async (cls) => {
+      try {
+        const snap = await getDocs(collection(db, 'users', uid, 'classes', cls.id, 'notes'));
+        return snap.docs.map((docSnap) => ({
+          ...toNoteMetaOnly(docSnap),
+          classId: cls.id,
+          className: cls.name || '',
+        }));
+      } catch {
+        return [];
+      }
+    }),
+  );
+  return groups.flat();
+};
+
+const toNoteMetaOnly = (docSnap) => {
+  const meta = { ...(docSnap.data() || {}) };
+  delete meta.blocks;
+  delete meta.canvasHeight;
+  return { id: docSnap.id, ...meta };
+};
+
+const stripHtmlToText = (html) => {
+  if (typeof html !== 'string' || !html) return '';
+  if (typeof DOMParser === 'undefined') return html.replace(/<[^>]*>/g, ' ');
+  try {
+    return new DOMParser().parseFromString(html, 'text/html').body.textContent || '';
+  } catch {
+    return html.replace(/<[^>]*>/g, ' ');
+  }
+};
+
+// Plain-text of a note's content (for "search inside notes"). Cache-first read.
+export const getNoteText = async (uid, classId, noteId) => {
+  try {
+    const data = await getNote(uid, classId, noteId);
+    if (!Array.isArray(data?.blocks)) return '';
+    return data.blocks
+      .filter((block) => block?.type === 'text')
+      .map((block) => stripHtmlToText(block.value || ''))
+      .join('  ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch {
+    return '';
+  }
+};
+
 export const getNote = async (uid, classId, noteId) => {
   const noteRef = getNoteRef(uid, classId, noteId);
   const contentRef = getNoteContentRef(uid, classId, noteId);
@@ -420,6 +486,41 @@ export const reorderNotes = async (uid, classId, orderedNotes) => {
 export const listenToNoteTemplates = (uid, onData, onError) => {
   const q = query(collection(db, 'users', uid, 'noteTemplates'), orderBy('updatedAt', 'desc'));
   return onSnapshot(q, onData, onError);
+};
+
+export const fetchNoteTemplates = async (uid) => {
+  try {
+    const snap = await getDocs(collection(db, 'users', uid, 'noteTemplates'));
+    return snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  } catch {
+    return [];
+  }
+};
+
+// Gather the user's entire workspace (profile, templates, classes, notes + content)
+// into one plain object for "export my data".
+export const exportUserData = async (uid) => {
+  const out = { exportedAt: new Date().toISOString(), profile: null, templates: [], classes: [] };
+  const profileSnap = await getDoc(doc(db, 'users', uid));
+  out.profile = profileSnap.exists() ? profileSnap.data() : null;
+  out.templates = await fetchNoteTemplates(uid);
+  const classesSnap = await getDocs(collection(db, 'users', uid, 'classes'));
+  for (const classDoc of classesSnap.docs) {
+    const cls = { id: classDoc.id, ...classDoc.data(), notes: [] };
+    const notesSnap = await getDocs(collection(db, 'users', uid, 'classes', classDoc.id, 'notes'));
+    for (const noteDoc of notesSnap.docs) {
+      const note = { id: noteDoc.id, ...noteDoc.data() };
+      try {
+        const contentSnap = await getDoc(getNoteContentRef(uid, classDoc.id, noteDoc.id));
+        note.content = contentSnap.exists() ? contentSnap.data() : null;
+      } catch {
+        note.content = null;
+      }
+      cls.notes.push(note);
+    }
+    out.classes.push(cls);
+  }
+  return out;
 };
 
 export const createNoteTemplate = async (uid, payload = {}) => {

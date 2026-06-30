@@ -7,6 +7,7 @@ import ProfileSetup from './pages/ProfileSetup';
 import Dashboard from './pages/Dashboard';
 import ClassNotes from './pages/ClassNotes';
 import NoteEditor from './pages/NoteEditor';
+import Settings from './pages/Settings';
 
 const App = () => {
   return (
@@ -28,6 +29,14 @@ const App = () => {
             element={
               <ProtectedRoute requireProfile>
                 <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute requireProfile>
+                <Settings />
               </ProtectedRoute>
             }
           />

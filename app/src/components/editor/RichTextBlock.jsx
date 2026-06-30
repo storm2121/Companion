@@ -6,7 +6,15 @@ import { buildEditorExtensions } from './extensions';
 // compatible with existing notes); editing happens on a structured ProseMirror
 // document, so spaces/sizes can't be corrupted and a caret font-size change applies
 // only to the next typed text (stored marks).
-const RichTextBlock = ({ block, onChange, onRegister, onActivate, onFocusBlock, onStepFontSize }) => {
+const RichTextBlock = ({
+  block,
+  onChange,
+  onRegister,
+  onActivate,
+  onFocusBlock,
+  onStepFontSize,
+  onLink,
+}) => {
   // Guards onChange from firing during teardown (prevented the collapse/unmount
   // data-loss where an empty doc overwrote block.value).
   const aliveRef = useRef(true);
@@ -34,7 +42,14 @@ const RichTextBlock = ({ block, onChange, onRegister, onActivate, onFocusBlock, 
       // keyboard-layout independent.
       handleKeyDown: (_view, event) => {
         const mod = event.ctrlKey || event.metaKey;
-        if (!mod || !event.shiftKey) return false;
+        if (!mod) return false;
+        // Ctrl/Cmd+K → add/edit link (no Shift).
+        if (!event.shiftKey && !event.altKey && event.code === 'KeyK') {
+          event.preventDefault();
+          onLink?.();
+          return true;
+        }
+        if (!event.shiftKey) return false;
         if (event.code === 'Period') {
           event.preventDefault();
           onStepFontSize?.(1);
