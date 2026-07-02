@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard';
 import ClassNotes from './pages/ClassNotes';
 import NoteEditor from './pages/NoteEditor';
 import Settings from './pages/Settings';
+import Calendar from './pages/Calendar';
 
 const App = () => {
   return (
@@ -37,6 +38,14 @@ const App = () => {
             element={
               <ProtectedRoute requireProfile>
                 <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/calendar"
+            element={
+              <ProtectedRoute requireProfile>
+                <Calendar />
               </ProtectedRoute>
             }
           />

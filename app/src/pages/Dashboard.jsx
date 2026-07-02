@@ -12,7 +12,7 @@ import {
   FaTimes,
   FaTrash,
 } from 'react-icons/fa';
-import { FaCog, FaFilter, FaSignOutAlt } from 'react-icons/fa';
+import { FaCog, FaFilter, FaRegCalendarAlt, FaSignOutAlt } from 'react-icons/fa';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   createNote,
@@ -39,7 +39,7 @@ import AddClassSheet from '../components/classes/AddClassSheet';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
 import { THEME_DEFAULT_MODE, THEME_OPTIONS, THEME_PRESETS } from '../themePresets';
-import { DEFAULT_TEMPLATE_ID } from '../data/noteTemplates';
+import { DEFAULT_TEMPLATE_ID, NOTE_TEMPLATES, buildTemplateBlocks } from '../data/noteTemplates';
 import useNetworkStatus from '../hooks/useNetworkStatus';
 
 const toNoteMeta = (docSnap) => {
@@ -69,6 +69,17 @@ const getNoteTimestamp = (note) => {
 };
 
 const normalizeThemeMode = (mode) => (THEME_PRESETS[mode] ? mode : THEME_DEFAULT_MODE);
+
+const eventDaysFromToday = (dateStr) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const [y, m, d] = (dateStr || '').split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1);
+  dt.setHours(0, 0, 0, 0);
+  return Math.round((dt - today) / 86400000);
+};
+
+const eventRelativeLabel = (n) => (n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`);
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -205,15 +216,17 @@ const Dashboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const isOnline = useNetworkStatus();
   const availableTemplates = useMemo(() => {
-    const blankTemplate = {
-      id: DEFAULT_TEMPLATE_ID,
-      label: 'Blank',
-      description: 'Start with an empty canvas.',
-      autoTitlePrefix: 'Quick Note',
+    const builtins = NOTE_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      description:
+        template.id === DEFAULT_TEMPLATE_ID ? 'One block, ready to type.' : template.description,
+      autoTitlePrefix: template.autoTitlePrefix,
+      layout: template.layout || null,
       kind: 'builtin',
       blocks: [],
       canvasHeight: 720,
-    };
+    }));
     const custom = customTemplates.map((template) => ({
       id: toCustomTemplateId(template.id),
       sourceId: template.id,
@@ -224,7 +237,7 @@ const Dashboard = () => {
       blocks: Array.isArray(template.blocks) ? template.blocks : [],
       canvasHeight: Number.isFinite(template.canvasHeight) ? template.canvasHeight : 720,
     }));
-    return [blankTemplate, ...custom];
+    return [...builtins, ...custom];
   }, [customTemplates]);
   const resolveTemplateById = useMemo(() => {
     const templateMap = new Map(availableTemplates.map((item) => [item.id, item]));
@@ -684,9 +697,19 @@ const Dashboard = () => {
     setNoteMenuOpenId('');
   };
 
+  // Blocks for a NEW note from a template. Existing notes never hit this — they load
+  // their own stored blocks — so this is safe to change.
   const getTemplateBlocks = (template) => {
-    if (!template || template.kind !== 'custom') return [];
-    return cloneTemplateBlocks(template.blocks || []);
+    if (template?.kind === 'custom') return cloneTemplateBlocks(template.blocks || []);
+    // Blank no longer means "empty void": seed one centered, ready-to-type text block.
+    if (!template || template.id === DEFAULT_TEMPLATE_ID || template.id === 'blank') {
+      return [{ type: 'text', title: '', x: 80, y: 48, w: 560, h: 320 }];
+    }
+    // Built-in layouts (single / double / two-over-one / triple-stack).
+    return buildTemplateBlocks(template.id, {
+      canvasWidth: 720,
+      canvasHeight: Number.isFinite(template.canvasHeight) ? template.canvasHeight : 720,
+    });
   };
 
   const findTemplateById = (id) => {
@@ -1222,6 +1245,14 @@ const Dashboard = () => {
   const firstName = (profile?.displayName || '').trim().split(/\s+/)[0] || 'there';
   const isLightTheme = THEME_PRESETS[normalizeThemeMode(themeMode)]?.attr === 'light';
   const todayKey = keyForDate(new Date());
+  const upcomingEvents = useMemo(() => {
+    const events = Object.values(profile?.events || {});
+    return events
+      .filter((ev) => ev?.date && eventDaysFromToday(ev.date) >= 0)
+      .map((ev) => ({ ...ev, delta: eventDaysFromToday(ev.date) }))
+      .sort((a, b) => a.delta - b.delta)
+      .slice(0, 3);
+  }, [profile?.events]);
   const toggleTheme = () => {
     const current = normalizeThemeMode(themeMode);
     const currentIndex = THEME_OPTIONS.findIndex((option) => option.id === current);
@@ -1310,6 +1341,16 @@ const Dashboard = () => {
           <div className="app-actions top-right">
             {!isOnline && <span className="net-status offline">Offline</span>}
             <span className="clock">{clock}</span>
+            <button
+              type="button"
+              className="cal-launch"
+              onClick={() => navigate('/calendar')}
+              title="Open calendar"
+              aria-label="Open calendar"
+            >
+              <FaRegCalendarAlt />
+              {upcomingEvents.length > 0 && <span className="cal-launch-badge">{upcomingEvents.length}</span>}
+            </button>
             <button
               type="button"
               className="theme-toggle"
@@ -1474,6 +1515,31 @@ const Dashboard = () => {
             )}
             <p className="side-foot">⠿ drag to reorder</p>
           </div>
+
+          {upcomingEvents.length > 0 && (
+            <div className="side-upcoming">
+              <div className="side-upcoming-head">
+                <span>Upcoming</span>
+                <button type="button" onClick={() => navigate('/calendar')} title="Open calendar">
+                  <FaRegCalendarAlt />
+                </button>
+              </div>
+              {upcomingEvents.map((ev) => (
+                <button
+                  key={ev.id}
+                  type="button"
+                  className="side-upcoming-item"
+                  onClick={() => navigate('/calendar')}
+                >
+                  <span className="side-upcoming-dot" style={{ background: ev.color || 'var(--accent)' }} />
+                  <span className="side-upcoming-title">{ev.title}</span>
+                  <span className={`side-upcoming-when ${ev.delta <= 3 ? 'soon' : ''}`}>
+                    {eventRelativeLabel(ev.delta)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </aside>
 
         <section className="pane pane-notes sheet">

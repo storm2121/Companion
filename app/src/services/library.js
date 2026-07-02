@@ -488,6 +488,28 @@ export const listenToNoteTemplates = (uid, onData, onError) => {
   return onSnapshot(q, onData, onError);
 };
 
+// Calendar events live as a map on the user's profile doc (events.{id}). Additive —
+// no rules change, no new collection, surfaced live through the profile listener.
+export const setCalendarEvent = async (uid, event) => {
+  const id =
+    event.id || globalThis.crypto?.randomUUID?.() || `evt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const payload = {
+    id,
+    date: event.date,
+    title: (event.title || '').trim() || 'Untitled',
+    color: event.color || '',
+    note: (event.note || '').trim(),
+    createdAt: event.createdAt || Date.now(),
+  };
+  await updateDoc(doc(db, 'users', uid), { [`events.${id}`]: payload });
+  return id;
+};
+
+export const deleteCalendarEvent = async (uid, id) => {
+  if (!uid || !id) return;
+  await updateDoc(doc(db, 'users', uid), { [`events.${id}`]: deleteField() });
+};
+
 export const fetchNoteTemplates = async (uid) => {
   try {
     const snap = await getDocs(collection(db, 'users', uid, 'noteTemplates'));
