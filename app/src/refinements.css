@@ -1,0 +1,295 @@
+/* ====================================================================
+   REFINEMENTS — template previews, create-note modal, class colors
+   Imported after dashboard-v3.css; wins the cascade.
+   ==================================================================== */
+
+/* ---------- editor: centered page canvas + magnet guides ---------- */
+/* The canvas is a large workspace, never narrower than the viewport (legacy
+   min-width: 100% intentionally kept); the editor auto-centers the viewport on the
+   note's content when it opens. */
+.note-canvas {
+  margin: 0 auto;
+}
+
+/* Symmetric gutters (the old right-side arrow rail reserved 3.3rem) so the centered
+   page is actually centered. */
+.note-editor {
+  padding: 0 1rem 1rem;
+}
+
+/* Hairline dashed guides — visible without shouting. */
+.snap-guide {
+  display: none;
+  position: absolute;
+  z-index: 999998;
+  pointer-events: none;
+}
+
+.snap-guide-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--accent) 45%, transparent) 0 5px,
+    transparent 5px 11px
+  );
+}
+
+.snap-guide-h {
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: repeating-linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent) 45%, transparent) 0 5px,
+    transparent 5px 11px
+  );
+}
+
+/* ---------- class color, actually visible (#4) ---------- */
+.class-row {
+  border-left: 3px solid transparent;
+}
+
+.class-row::before {
+  display: none;
+}
+
+.class-row:hover {
+  border-left-color: color-mix(in srgb, var(--class-color, var(--accent)) 55%, transparent);
+}
+
+.class-row.active {
+  border-left-color: var(--class-color, var(--accent));
+  background: color-mix(in srgb, var(--class-color, var(--accent)) 10%, var(--surface-2));
+}
+
+.class-row .class-dot {
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--class-color, var(--accent)) 22%, transparent);
+}
+
+.class-row.active .class-count {
+  color: color-mix(in srgb, var(--class-color, var(--accent)) 80%, var(--text));
+}
+
+/* ---------- template cards with mini layout previews (#3b) ---------- */
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.template-card-wrap {
+  position: relative;
+}
+
+.template-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.template-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-2);
+}
+
+.template-card.active {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent-line);
+}
+
+.template-card strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.template-card.active strong {
+  color: var(--text);
+}
+
+/* the mini wireframe */
+.tpl-preview {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+
+.tpl-preview i {
+  position: absolute;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 38%, var(--surface-3));
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.template-card.active .tpl-preview i {
+  background: color-mix(in srgb, var(--accent) 55%, var(--surface-3));
+}
+
+.tpl-default-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 2px 7px;
+  pointer-events: none;
+}
+
+/* one-click "make default" star — appears on hover */
+.tpl-set-default {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.template-card-wrap:hover .tpl-set-default {
+  opacity: 1;
+}
+
+.tpl-set-default:hover {
+  color: var(--accent-ink);
+  border-color: var(--accent-line);
+}
+
+.tpl-set-default svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* keep the delete button clear of the star */
+.template-card-wrap .template-card-delete {
+  top: 4px;
+  right: 32px;
+}
+
+.template-card-create {
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-style: dashed;
+  min-height: 108px;
+}
+
+.tpl-create-plus {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border: 1px dashed var(--accent-line);
+  color: var(--accent-ink);
+  display: grid;
+  place-items: center;
+}
+
+.tpl-create-plus svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ---------- "More options" disclosure + styled file input (#3b) ---------- */
+.note-more {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+
+.note-more summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  user-select: none;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-more summary::before {
+  content: '▸';
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.note-more[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.note-more summary:hover {
+  color: var(--text-secondary);
+}
+
+.note-more > label {
+  margin-top: 12px;
+}
+
+.file-tile {
+  display: grid;
+  gap: 7px;
+}
+
+.file-tile input[type='file'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.file-tile-face {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--line-2);
+  background: var(--control-bg);
+  color: var(--text-muted);
+  font-size: 13.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.file-tile:hover .file-tile-face {
+  border-color: var(--accent-line);
+  color: var(--text-secondary);
+}

@@ -1,19 +1,26 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import ScreenLoader from './components/ui/ScreenLoader';
 import AuthHub from './pages/AuthHub';
 import AuthComplete from './pages/AuthComplete';
 import ProfileSetup from './pages/ProfileSetup';
 import Dashboard from './pages/Dashboard';
 import ClassNotes from './pages/ClassNotes';
-import NoteEditor from './pages/NoteEditor';
-import Settings from './pages/Settings';
-import Calendar from './pages/Calendar';
+
+// Code-split the heavy editor (TipTap + canvas) and the secondary pages out of the
+// main bundle: the dashboard boots lighter and dashboard <-> calendar navigation
+// never re-downloads anything after the first visit.
+const NoteEditor = lazy(() => import('./pages/NoteEditor'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Calendar = lazy(() => import('./pages/Calendar'));
 
 const App = () => {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <Suspense fallback={<ScreenLoader note="Loading…" />}>
         <Routes>
           <Route path="/" element={<AuthHub />} />
           <Route path="/auth/complete" element={<AuthComplete />} />
@@ -75,6 +82,7 @@ const App = () => {
           />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

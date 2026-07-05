@@ -66,8 +66,21 @@ const Calendar = () => {
       events
         .filter((ev) => ev?.date && daysFromToday(ev.date) >= 0)
         .sort((a, b) => a.date.localeCompare(b.date))
-        .slice(0, 7),
+        .slice(0, 30),
     [events],
+  );
+
+  // Timeline spine: vertical gaps between items encode how far apart the events are
+  // in time (same-day cluster tight; a week away sits visibly further down).
+  const spineItems = useMemo(
+    () =>
+      upcoming.map((ev, index) => {
+        const delta = daysFromToday(ev.date);
+        const prevDelta = index === 0 ? 0 : daysFromToday(upcoming[index - 1].date);
+        const gap = Math.max(0, delta - prevDelta);
+        return { ...ev, delta, gapPx: 10 + Math.min(gap, 10) * 7 };
+      }),
+    [upcoming],
   );
 
   const cells = useMemo(() => {
@@ -136,6 +149,39 @@ const Calendar = () => {
       </header>
 
       <div className="calendar-page">
+        <aside className="cal-spine cal-card">
+          <h3 className="cal-card-title">Up next</h3>
+          {spineItems.length === 0 ? (
+            <p className="cal-empty cal-spine-empty">Nothing ahead — clear skies.</p>
+          ) : (
+            <div className="cal-spine-track">
+              <span className="cal-spine-now">
+                <i aria-hidden="true" />
+                Today
+              </span>
+              {spineItems.map((ev) => (
+                <button
+                  key={ev.id}
+                  type="button"
+                  className="cal-spine-item"
+                  style={{ marginTop: `${ev.gapPx}px` }}
+                  onClick={() => {
+                    const d = parseYmd(ev.date);
+                    setView({ year: d.getFullYear(), month: d.getMonth() });
+                    setSelected(ev.date);
+                  }}
+                >
+                  <span className="cal-spine-dot" style={{ background: ev.color || 'var(--accent)' }} />
+                  <span className="cal-spine-text">
+                    <strong>{ev.title}</strong>
+                    <em className={ev.delta <= 3 ? 'soon' : ''}>{relativeLabel(ev.delta)}</em>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </aside>
+
         <section className="calendar-main">
           <div className="calendar-toolbar">
             <h2>
@@ -258,37 +304,6 @@ const Calendar = () => {
             </div>
           </div>
 
-          {/* Upcoming */}
-          <div className="cal-card">
-            <h3 className="cal-card-title">Upcoming</h3>
-            {upcoming.length === 0 ? (
-              <p className="cal-empty">No upcoming events yet.</p>
-            ) : (
-              <div className="cal-upcoming">
-                {upcoming.map((ev) => {
-                  const delta = daysFromToday(ev.date);
-                  return (
-                    <button
-                      key={ev.id}
-                      type="button"
-                      className="cal-upcoming-item"
-                      onClick={() => {
-                        const d = parseYmd(ev.date);
-                        setView({ year: d.getFullYear(), month: d.getMonth() });
-                        setSelected(ev.date);
-                      }}
-                    >
-                      <span className="cal-event-dot" style={{ background: ev.color || 'var(--accent)' }} />
-                      <span className="cal-upcoming-title">{ev.title}</span>
-                      <span className={`cal-upcoming-when ${delta <= 3 ? 'soon' : ''}`}>
-                        {relativeLabel(delta)}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </aside>
       </div>
     </div>

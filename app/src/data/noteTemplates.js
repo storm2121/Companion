@@ -1,5 +1,10 @@
 export const DEFAULT_TEMPLATE_ID = 'blank';
 
+// The editor canvas is a large fixed workspace (always at least viewport-wide).
+// Template content is laid out around its center, and the editor auto-scrolls to
+// center the content on open — full working space and centered layouts on any screen.
+export const WORKSPACE_WIDTH = 2400;
+
 const DEFAULT_CANVAS_WIDTH = 720;
 const DEFAULT_CANVAS_HEIGHT = 720;
 

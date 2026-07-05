@@ -7,6 +7,7 @@ import {
   FaPen,
   FaPlus,
   FaSearch,
+  FaStar,
   FaSun,
   FaThumbtack,
   FaTimes,
@@ -39,13 +40,27 @@ import AddClassSheet from '../components/classes/AddClassSheet';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
 import { THEME_DEFAULT_MODE, THEME_OPTIONS, THEME_PRESETS } from '../themePresets';
-import { DEFAULT_TEMPLATE_ID, NOTE_TEMPLATES, buildTemplateBlocks } from '../data/noteTemplates';
+import {
+  DEFAULT_TEMPLATE_ID,
+  NOTE_TEMPLATES,
+  WORKSPACE_WIDTH,
+  buildTemplateBlocks,
+} from '../data/noteTemplates';
 import useNetworkStatus from '../hooks/useNetworkStatus';
 
 const toNoteMeta = (docSnap) => {
   const data = docSnap.data() || {};
   const { blocks, canvasHeight, ...meta } = data;
   return { id: docSnap.id, ...meta };
+};
+
+// Session-scoped snapshot cache: when you navigate back from the calendar/editor the
+// dashboard paints instantly from the last snapshot instead of flashing empty while
+// the Firestore listeners re-attach. Listeners then refresh it silently.
+const dashCache = {
+  classes: [],
+  selectedClassId: '',
+  notesByClass: new Map(),
 };
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -135,6 +150,49 @@ const Grip = () => (
     <i /><i /><i /><i /><i /><i />
   </span>
 );
+
+// Fixed design canvas for built-in templates — deterministic geometry on every machine,
+// tuned for the common 1280–1536px editor viewport.
+const TEMPLATE_DESIGN_W = 1080;
+const TEMPLATE_DESIGN_H = 720;
+
+// Mini wireframe of a template: each block drawn as a tiny rounded rect, positioned by
+// percentage of the template's design canvas.
+const TemplatePreview = ({ template }) => {
+  let rects;
+  let viewW = TEMPLATE_DESIGN_W;
+  let viewH = TEMPLATE_DESIGN_H;
+  if (template.kind === 'custom') {
+    rects = (template.blocks || []).filter((b) => Number.isFinite(b?.x) && Number.isFinite(b?.y));
+    rects.forEach((b) => {
+      viewW = Math.max(viewW, (b.x || 0) + (b.w || 200));
+      viewH = Math.max(viewH, (b.y || 0) + (b.h || 150));
+    });
+  } else if (template.id === DEFAULT_TEMPLATE_ID) {
+    rects = [{ x: (TEMPLATE_DESIGN_W - 640) / 2, y: 56, w: 640, h: 360 }];
+  } else {
+    rects = buildTemplateBlocks(template.id, {
+      canvasWidth: TEMPLATE_DESIGN_W,
+      canvasHeight: TEMPLATE_DESIGN_H,
+    });
+  }
+  return (
+    <span className="tpl-preview" aria-hidden="true">
+      {rects.slice(0, 8).map((b, i) => (
+        <i
+          key={i}
+          style={{
+            left: `${((b.x || 0) / viewW) * 100}%`,
+            top: `${((b.y || 0) / viewH) * 100}%`,
+            width: `${(Math.max(b.w || 200, 40) / viewW) * 100}%`,
+            height: `${(Math.max(b.h || 150, 30) / viewH) * 100}%`,
+          }}
+        />
+      ))}
+      {rects.length === 0 && <em className="tpl-preview-empty" />}
+    </span>
+  );
+};
 const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
 const TEMPLATE_DRAFT_STORAGE_KEY = 'companion:new-note-draft';
 const TEMPLATE_RESULT_STORAGE_KEY = 'companion:new-note-template-result';
@@ -146,11 +204,19 @@ const cloneTemplateBlocks = (blocks = []) => blocks.map((block) => ({ ...block }
 
 const Dashboard = () => {
   const { firebaseUser, profile, logout, updateThemeMode, applyThemeMode, updateNoteTemplateDefault } = useAuth();
-  const [classes, setClasses] = useState([]);
+  const [classes, setClasses] = useState(() => dashCache.classes);
   const [customTemplates, setCustomTemplates] = useState([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
-  const [selectedClassId, setSelectedClassId] = useState('');
-  const [notes, setNotes] = useState([]);
+  const [selectedClassId, setSelectedClassId] = useState(() => dashCache.selectedClassId);
+  const [notes, setNotes] = useState(
+    () => dashCache.notesByClass.get(dashCache.selectedClassId) || [],
+  );
+  // Which class the `notes` array actually belongs to. Until the listener for a newly
+  // selected class fires, `notes` still holds the previous class's docs — using it for
+  // counts/heals would briefly mimic the previous class.
+  const [notesClassId, setNotesClassId] = useState(() =>
+    dashCache.notesByClass.has(dashCache.selectedClassId) ? dashCache.selectedClassId : '',
+  );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [searchScope, setSearchScope] = useState('class'); // 'class' | 'all'
@@ -187,7 +253,6 @@ const Dashboard = () => {
   const [noteFocus, setNoteFocus] = useState('title');
   const [noteSaving, setNoteSaving] = useState(false);
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
-  const [templateDefault, setTemplateDefault] = useState(false);
   const [templatePromptOpen, setTemplatePromptOpen] = useState(false);
   const [templatePromptName, setTemplatePromptName] = useState('');
   const [templateDeleteTarget, setTemplateDeleteTarget] = useState(null);
@@ -278,6 +343,7 @@ const Dashboard = () => {
       (snapshot) => {
         const items = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
         setClasses(items);
+        dashCache.classes = items;
         setSelectedClassId((current) => {
           const preferredClassId = preferredClassIdRef.current;
           if (preferredClassId) {
@@ -327,11 +393,13 @@ const Dashboard = () => {
   useEffect(() => {
     if (!firebaseUser || !selectedClassId) {
       setNotes([]);
+      setNotesClassId('');
       return;
     }
+    const classId = selectedClassId;
     const unsub = listenToNotes(
       firebaseUser.uid,
-      selectedClassId,
+      classId,
       (snapshot) => {
         const items = snapshot.docs.map((docSnap) => toNoteMeta(docSnap));
         const ordered = [...items].sort((a, b) => {
@@ -343,11 +411,17 @@ const Dashboard = () => {
           return getNoteTimestamp(b) - getNoteTimestamp(a);
         });
         setNotes(ordered);
+        setNotesClassId(classId);
+        dashCache.notesByClass.set(classId, ordered);
       },
       (err) => console.error(err),
     );
     return () => unsub();
   }, [firebaseUser, selectedClassId]);
+
+  useEffect(() => {
+    dashCache.selectedClassId = selectedClassId;
+  }, [selectedClassId]);
 
   useEffect(() => {
     setSelectedNoteIds([]);
@@ -358,8 +432,9 @@ const Dashboard = () => {
 
   // Self-heal: if a class's stored noteCount drifted from its real notes, correct it.
   // Debounced so it ignores the brief mismatch while an add/delete's increment propagates.
+  // Gated on notesClassId so we never "heal" with the previous class's notes.
   useEffect(() => {
-    if (!firebaseUser || !selectedClassId) return undefined;
+    if (!firebaseUser || !selectedClassId || notesClassId !== selectedClassId) return undefined;
     const cls = classes.find((item) => item.id === selectedClassId);
     if (!cls || (cls.noteCount || 0) === notes.length) return undefined;
     const timer = setTimeout(() => {
@@ -368,7 +443,7 @@ const Dashboard = () => {
       );
     }, 1500);
     return () => clearTimeout(timer);
-  }, [firebaseUser, selectedClassId, notes.length, classes]);
+  }, [firebaseUser, selectedClassId, notesClassId, notes.length, classes]);
 
   // Global search: pull note metadata across every class when the scope is "all".
   useEffect(() => {
@@ -530,7 +605,6 @@ const Dashboard = () => {
     setNoteImagePreview('');
     setNoteFocus('title');
     setTemplateId(restoredTemplateId);
-    setTemplateDefault(Boolean(draft.templateDefault));
     setNoteModalOpen(true);
   }, [firebaseUser, availableTemplates, templatesLoaded]);
 
@@ -698,18 +772,29 @@ const Dashboard = () => {
   };
 
   // Blocks for a NEW note from a template. Existing notes never hit this — they load
-  // their own stored blocks — so this is safe to change.
+  // their own stored blocks — so this is safe to change. Layouts are built on the
+  // fixed design canvas, then shifted to the center of the big editor workspace; the
+  // editor auto-centers the viewport on the content when the note opens.
   const getTemplateBlocks = (template) => {
     if (template?.kind === 'custom') return cloneTemplateBlocks(template.blocks || []);
+    const centerShift = Math.round((WORKSPACE_WIDTH - TEMPLATE_DESIGN_W) / 2);
     // Blank no longer means "empty void": seed one centered, ready-to-type text block.
     if (!template || template.id === DEFAULT_TEMPLATE_ID || template.id === 'blank') {
-      return [{ type: 'text', title: '', x: 80, y: 48, w: 560, h: 320 }];
+      return [
+        {
+          type: 'text',
+          title: '',
+          x: Math.round((WORKSPACE_WIDTH - 640) / 2),
+          y: 56,
+          w: 640,
+          h: 360,
+        },
+      ];
     }
-    // Built-in layouts (single / double / two-over-one / triple-stack).
     return buildTemplateBlocks(template.id, {
-      canvasWidth: 720,
-      canvasHeight: Number.isFinite(template.canvasHeight) ? template.canvasHeight : 720,
-    });
+      canvasWidth: TEMPLATE_DESIGN_W,
+      canvasHeight: TEMPLATE_DESIGN_H,
+    }).map((block) => ({ ...block, x: (block.x || 0) + centerShift }));
   };
 
   const findTemplateById = (id) => {
@@ -729,7 +814,6 @@ const Dashboard = () => {
     setNoteImagePreview('');
     setNoteFocus('title');
     setTemplateId(defaultTemplate?.id || DEFAULT_TEMPLATE_ID);
-    setTemplateDefault(false);
     setNoteModalOpen(true);
   };
 
@@ -768,7 +852,6 @@ const Dashboard = () => {
       noteTitle,
       noteSummary,
       templateId,
-      templateDefault,
       savedAt: Date.now(),
     };
     try {
@@ -824,8 +907,7 @@ const Dashboard = () => {
       }
       if (profile?.noteTemplateDefault === templateDeleteTarget.id) {
         await updateNoteTemplateDefault(DEFAULT_TEMPLATE_ID);
-        setTemplateDefault(false);
-      }
+          }
       setTemplateDeleteTarget(null);
     } catch (err) {
       console.error('Failed to delete custom template', err);
@@ -854,7 +936,6 @@ const Dashboard = () => {
     setNoteSummary('');
     setNoteImageFile(null);
     setNoteImagePreview('');
-    setTemplateDefault(false);
     setTemplatePromptOpen(false);
     setTemplatePromptName('');
     setTemplateDeleteTarget(null);
@@ -975,9 +1056,6 @@ const Dashboard = () => {
         if (noteImageFile) {
           const url = await uploadCover(noteId);
           await updateNote(firebaseUser.uid, selectedClassId, noteId, { coverUrl: url });
-        }
-        if (templateDefault) {
-          await updateNoteTemplateDefault(template.id);
         }
         closeNoteModal();
         navigate(`/class/${selectedClassId}/note/${noteId}`);
@@ -1427,13 +1505,15 @@ const Dashboard = () => {
               classes.map((item) => {
                 const menuOpen = menuOpenId === item.id;
                 const isSelected = item.id === selectedClassId;
-                const count = isSelected ? notes.length : item.noteCount || 0;
+                const count =
+                  isSelected && notesClassId === item.id ? notes.length : item.noteCount || 0;
                 return (
                   <div
                     key={item.id}
                     className={`class-row ${isSelected ? 'active' : ''} ${
                       draggingId === item.id ? 'dragging' : ''
                     } ${menuOpen ? 'menu-open' : ''}`}
+                    style={{ '--class-color': item.color || 'var(--accent)' }}
                     role="button"
                     tabIndex={0}
                     onClick={() => handleSelectClass(item.id)}
@@ -1837,88 +1917,103 @@ const Dashboard = () => {
                     placeholder="Note title"
                   />
                 </label>
-                <label>
-                  Brief summary (optional)
-                  <textarea
-                    ref={summaryRef}
-                    value={noteSummary}
-                    onChange={(e) => setNoteSummary(e.target.value)}
-                    placeholder="Short summary for the dashboard"
-                    rows={2}
-                  />
-                </label>
-                <label>
-                  Cover image (optional)
-                  <input
-                    ref={imageRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => setNoteImageFile(e.target.files?.[0] || null)}
-                  />
-                </label>
-                {noteImagePreview && (
-                  <div className="note-cover-preview">
-                    <img src={noteImagePreview} alt="Note cover preview" />
-                  </div>
-                )}
                 {noteModalMode === 'create' && (
                   <div className="template-picker">
                     <div className="template-header">
-                      <span>Template</span>
-                      <label className="template-default-toggle">
-                        <input
-                          type="checkbox"
-                          checked={templateDefault}
-                          onChange={(event) => setTemplateDefault(event.target.checked)}
-                        />
-                        Set as default
-                      </label>
+                      <span>Layout</span>
                     </div>
                     <div className="template-grid">
-                      {availableTemplates.map((template) => (
-                        <div
-                          key={template.id}
-                          className={`template-card-wrap ${templateId === template.id ? 'active' : ''}`}
-                        >
-                          <button
-                            type="button"
-                            className={`template-card ${templateId === template.id ? 'active' : ''}`}
-                            onClick={() => setTemplateId(template.id)}
+                      {availableTemplates.map((template) => {
+                        const isDefault = template.id === defaultTemplateId;
+                        return (
+                          <div
+                            key={template.id}
+                            className={`template-card-wrap ${templateId === template.id ? 'active' : ''}`}
                           >
-                            <strong>{template.label}</strong>
-                            <span>{template.description}</span>
-                            {template.kind === 'custom' && <em>Custom</em>}
-                          </button>
-                          {template.kind === 'custom' && (
                             <button
                               type="button"
-                              className="template-card-delete"
-                              title="Delete custom template"
-                              aria-label={`Delete ${template.label}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                requestTemplateDelete(template);
-                              }}
+                              className={`template-card ${templateId === template.id ? 'active' : ''}`}
+                              onClick={() => setTemplateId(template.id)}
                             >
-                              <FaTimes />
+                              <TemplatePreview template={template} />
+                              <strong>{template.label}</strong>
+                              {isDefault && <span className="tpl-default-badge">Default</span>}
                             </button>
-                          )}
-                        </div>
-                      ))}
+                            {!isDefault && (
+                              <button
+                                type="button"
+                                className="tpl-set-default"
+                                title="Make this the default template"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  updateNoteTemplateDefault(template.id)
+                                    .then(() => showToast(`${template.label} is now the default`))
+                                    .catch((err) => console.error(err));
+                                }}
+                              >
+                                <FaStar />
+                              </button>
+                            )}
+                            {template.kind === 'custom' && (
+                              <button
+                                type="button"
+                                className="template-card-delete"
+                                title="Delete custom template"
+                                aria-label={`Delete ${template.label}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  requestTemplateDelete(template);
+                                }}
+                              >
+                                <FaTimes />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
                       <button
                         type="button"
                         className="template-card template-card-create"
                         onClick={handleOpenTemplatePrompt}
                       >
+                        <span className="tpl-create-plus">
+                          <FaPlus />
+                        </span>
                         <strong>Create your own</strong>
-                        <span>Design a layout and save it for future notes.</span>
                       </button>
                     </div>
-                    <p className="template-hint">
-                      Default template: {defaultTemplate?.label || 'Blank'}
-                    </p>
                   </div>
                 )}
+                <details className="note-more" open={noteModalMode === 'edit' ? true : undefined}>
+                  <summary>More options</summary>
+                  <label>
+                    Brief summary
+                    <textarea
+                      ref={summaryRef}
+                      value={noteSummary}
+                      onChange={(e) => setNoteSummary(e.target.value)}
+                      placeholder="Short summary for the dashboard"
+                      rows={2}
+                    />
+                  </label>
+                  <label className="file-tile">
+                    Cover image
+                    <input
+                      ref={imageRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setNoteImageFile(e.target.files?.[0] || null)}
+                    />
+                    <span className="file-tile-face">
+                      {noteImageFile?.name || 'Choose an image…'}
+                    </span>
+                  </label>
+                  {noteImagePreview && (
+                    <div className="note-cover-preview">
+                      <img src={noteImagePreview} alt="Note cover preview" />
+                    </div>
+                  )}
+                </details>
               </div>
               <footer className="modal-actions">
                 <button className="ghost-btn" onClick={closeNoteModal} disabled={noteSaving}>

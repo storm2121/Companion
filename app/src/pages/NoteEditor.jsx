@@ -1,9 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaArrowLeft,
-  FaArrowRight,
-  FaArrowUp,
-  FaArrowDown,
   FaAlignCenter,
   FaAlignJustify,
   FaAlignLeft,
@@ -37,7 +34,8 @@ import {
 } from 'react-icons/fa';
 import { Rnd } from 'react-rnd';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { createNoteTemplate, getNote, saveNoteContentDelta } from '../services/library';
+import { createNoteTemplate, getNote, saveNoteContentDelta, updateNote } from '../services/library';
+import { WORKSPACE_WIDTH } from '../data/noteTemplates';
 import { useAuth } from '../context/AuthContext';
 import ScreenLoader from '../components/ui/ScreenLoader';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
@@ -46,10 +44,6 @@ import useNetworkStatus from '../hooks/useNetworkStatus';
 // Lazy-loaded so TipTap is code-split into its own chunk and never weighs down the
 // main bundle while the cutover flag is off.
 const RichTextBlock = lazy(() => import('../components/editor/RichTextBlock'));
-
-// Phase 3 cutover flag. OFF until the TipTap editor reaches feature parity with the
-// legacy contentEditable block; flip to true to make it the live editor.
-const USE_TIPTAP_EDITOR = true;
 
 const PAGE_HEIGHT = 720;
 const MIN_FONT_SIZE = 8;
@@ -66,9 +60,6 @@ const TEMPLATE_RESULT_STORAGE_KEY = 'companion:new-note-template-result';
 const CUSTOM_TEMPLATE_PREFIX = 'custom:';
 const HISTORY_LIMIT = 20;
 const TEXT_HISTORY_IDLE_MS = 1200;
-const NUDGE_HOLD_DELAY_MS = 180;
-const NUDGE_CLICK_DISTANCE = 180;
-const NUDGE_HOLD_DISTANCE = 14;
 const TABLE_PICKER_ROWS = 8;
 const TABLE_PICKER_COLS = 10;
 const TABLE_ROW_RESIZE_STEP = 10;
@@ -76,7 +67,6 @@ const TABLE_COLUMN_RESIZE_STEP = 24;
 const MIN_TABLE_WIDTH = 140;
 const MIN_TABLE_HEIGHT = 96;
 const TABLE_HANDLE_DIRECTIONS = ['nw', 'ne', 'sw', 'se'];
-const HELD_SELECTION_HIGHLIGHT_KEY = 'companion-held-selection';
 const FONT_FAMILY_OPTIONS = [
   { value: '"Instrument Sans"', label: 'Instrument Sans' },
   { value: 'Manrope', label: 'Manrope' },
@@ -95,19 +85,16 @@ const LINE_SPACING_OPTIONS = [
 ];
 
 const BLOCK_DEFAULTS = {
-  text: { w: 260, h: 180, fontSize: 14 },
+  text: { w: 340, h: 240, fontSize: 14 },
   image: { w: 280, h: 200 },
 };
-
-const LEGACY_FONT_SIZE_MAP = {
-  '1': 10,
-  '2': 13,
-  '3': 16,
-  '4': 18,
-  '5': 24,
-  '6': 32,
-  '7': 48,
-};
+// The canvas is a large workspace (always at least viewport-wide); the viewport
+// auto-centers on the note's content when it opens.
+const PAGE_WIDTH = WORKSPACE_WIDTH;
+// Magnet snapping: when a dragged block's edge lands near another block's edge, its
+// center line, or a 20px-gutter neighbor slot, it clicks into alignment.
+const SNAP_THRESHOLD = 6;
+const SNAP_GAP = 20;
 
 const stripZeroWidth = (html) => (typeof html === 'string' ? html.replace(/\u200b/g, '') : '');
 
@@ -168,270 +155,21 @@ const toHexColor = (value) => {
   return rgbPartsToHex(looseParts);
 };
 
-const normalizeLegacyFontNodes = (root) => {
-  if (!root) return;
-  root.querySelectorAll('font').forEach((fontNode) => {
-    const span = document.createElement('span');
-    const existingStyle = fontNode.getAttribute('style');
-    if (existingStyle) span.setAttribute('style', existingStyle);
-    const declaredSize = fontNode.getAttribute('size');
-    const inlineSize = (fontNode.style?.fontSize || '').trim();
-    const pxMatch = inlineSize.match(/^([\d.]+)px$/i);
-    let resolvedPx = null;
-    if (pxMatch) {
-      resolvedPx = Number.parseFloat(pxMatch[1]);
-    } else if (declaredSize && LEGACY_FONT_SIZE_MAP[declaredSize]) {
-      resolvedPx = LEGACY_FONT_SIZE_MAP[declaredSize];
-    }
-    // Only pin a font-size when the legacy node actually declared one. Forcing a
-    // fallback here was overriding inherited sizes and snapping pasted text to the
-    // block's base size.
-    if (Number.isFinite(resolvedPx)) {
-      span.style.fontSize = `${Math.max(MIN_FONT_SIZE, Math.min(resolvedPx, MAX_FONT_SIZE))}px`;
-    }
-    const face = fontNode.getAttribute('face');
-    if (face && !span.style.fontFamily) span.style.fontFamily = face;
-    const color = fontNode.getAttribute('color');
-    if (color && !span.style.color) span.style.color = color;
-    while (fontNode.firstChild) span.appendChild(fontNode.firstChild);
-    fontNode.replaceWith(span);
-  });
-};
-
-const clearInlineFontSizeInFragment = (fragment) => {
-  if (!fragment) return;
-  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_ELEMENT);
-  const elements = [];
-  while (walker.nextNode()) {
-    elements.push(walker.currentNode);
-  }
-  elements.forEach((node) => {
-    if (!(node instanceof HTMLElement)) return;
-    node.style.removeProperty('font-size');
-    node.style.removeProperty('line-height');
-    node.style.removeProperty('margin-top');
-    node.style.removeProperty('margin-bottom');
-    node.style.removeProperty('padding-top');
-    node.style.removeProperty('padding-bottom');
-    if (node.tagName === 'FONT') {
-      node.removeAttribute('size');
-    }
-  });
-};
-
-const unwrapElementKeepChildren = (element) => {
-  if (!(element instanceof HTMLElement) || !element.parentNode) return;
-  const fragment = document.createDocumentFragment();
-  while (element.firstChild) {
-    fragment.appendChild(element.firstChild);
-  }
-  element.replaceWith(fragment);
-};
-
-const isWhitespaceLike = (value) => stripZeroWidth(value || '').replace(/\u00a0/g, ' ').trim() === '';
-
-const elementHasOnlyBreakLikeContent = (element) => {
-  if (!(element instanceof HTMLElement)) return false;
-  if (element.matches('[data-note-table-shell], [data-note-table], table')) return false;
-  const children = Array.from(element.childNodes);
-  if (!children.length) return true;
-  return children.every((child) => {
-    if (child.nodeType === Node.TEXT_NODE) {
-      return isWhitespaceLike(child.textContent || '');
-    }
-    if (child.nodeType !== Node.ELEMENT_NODE) return true;
-    const childElement = child;
-    if (childElement.tagName === 'BR') return true;
-    return elementHasOnlyBreakLikeContent(childElement);
-  });
-};
-
-const stripZeroWidthTextNodes = (root, options = {}) => {
-  const { skipWithin = null } = options;
-  if (!(root instanceof HTMLElement)) return;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const textNodes = [];
-  while (walker.nextNode()) {
-    textNodes.push(walker.currentNode);
-  }
-  textNodes.forEach((node) => {
-    if (!(node instanceof Text)) return;
-    if (skipWithin && skipWithin.contains(node)) return;
-    if (!node.nodeValue?.includes('\u200b')) return;
-    node.nodeValue = node.nodeValue.replace(/\u200b/g, '');
-    if ((node.nodeValue || '').length > 0) return;
-    if (node.parentNode) {
-      node.parentNode.removeChild(node);
-    }
-  });
-};
-
-const cleanupFontSizeArtifacts = (root, options = {}) => {
-  if (!(root instanceof HTMLElement)) return;
-  const { keepNode = null } = options;
-  normalizeLegacyFontNodes(root);
-  stripZeroWidthTextNodes(root, { skipWithin: keepNode });
-  const formattingNodes = Array.from(root.querySelectorAll('*'));
-  formattingNodes.forEach((node) => {
-    if (!(node instanceof HTMLElement)) return;
-    if (node === root) return;
-    if (node.matches('[data-note-table-shell], [data-note-table], table, tr, td, th')) return;
-    if (keepNode && (node === keepNode || keepNode.contains(node))) return;
-
-    const touchesKeepNode = Boolean(keepNode && node.contains(keepNode));
-    const breakOnly = elementHasOnlyBreakLikeContent(node);
-    const hadFontSizing =
-      Boolean(node.style.fontSize) ||
-      Boolean(node.style.lineHeight) ||
-      Boolean(node.style.marginTop) ||
-      Boolean(node.style.marginBottom) ||
-      Boolean(node.style.paddingTop) ||
-      Boolean(node.style.paddingBottom) ||
-      node.tagName === 'FONT' ||
-      node.hasAttribute('size');
-    if (touchesKeepNode || breakOnly) {
-      if (node.style.fontSize) node.style.removeProperty('font-size');
-      if (node.style.lineHeight) node.style.removeProperty('line-height');
-      if (node.tagName === 'FONT') node.removeAttribute('size');
-    }
-    if (breakOnly) {
-      node.style.removeProperty('font-size');
-      node.style.removeProperty('line-height');
-      node.style.removeProperty('margin-top');
-      node.style.removeProperty('margin-bottom');
-      node.style.removeProperty('padding-top');
-      node.style.removeProperty('padding-bottom');
-      if (node.tagName === 'FONT') {
-        node.removeAttribute('size');
-      }
-      const isInlineWrapper = node.tagName === 'SPAN' || node.tagName === 'FONT';
-      const containsBreak = Boolean(node.querySelector?.('br'));
-      const visibleTextLength = stripZeroWidth(node.textContent || '').length;
-      // Only drop genuinely-empty inline style wrappers (font-size artifacts).
-      // Never delete blank lines (<br>) or whitespace text — doing so was eating
-      // user spaces and collapsing intentional blank lines.
-      if (hadFontSizing && isInlineWrapper && !containsBreak && visibleTextLength === 0) {
-        node.remove();
-        return;
-      }
-    }
-    if ((node.tagName === 'SPAN' || node.tagName === 'FONT') && node.style.length === 0 && breakOnly) {
-      unwrapElementKeepChildren(node);
-    }
-  });
-
-  const emptySpans = Array.from(root.querySelectorAll('span'));
-  emptySpans.forEach((span) => {
-    if (!(span instanceof HTMLElement)) return;
-    if (keepNode && (span === keepNode || span.contains(keepNode))) return;
-    const hasTable = span.querySelector('[data-note-table-shell="true"]');
-    const hasBreak = span.querySelector('br');
-    // Truly empty wrappers only — a span holding a real space must survive so the
-    // space between words is preserved.
-    if (!hasTable && !hasBreak && stripZeroWidth(span.textContent || '').length === 0) {
-      span.remove();
-    }
-  });
-};
-
-const PASTE_ALLOWED_TAGS = new Set([
-  'P', 'DIV', 'BR', 'SPAN', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'SUB', 'SUP',
-  'BLOCKQUOTE', 'UL', 'OL', 'LI', 'A', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH',
-  'CODE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-]);
-
-const PASTE_REMOVE_TAGS = [
-  'script', 'style', 'meta', 'link', 'head', 'title', 'iframe', 'object', 'embed',
-  'noscript', 'form', 'input', 'textarea', 'button', 'select', 'option', 'svg', 'img',
-  'video', 'audio', 'canvas',
-];
-
-const PASTE_STYLE_BASE = new Set([
-  'color', 'background-color', 'background', 'font-size', 'font-family', 'font-weight',
-  'font-style', 'text-decoration', 'text-decoration-line', 'text-align', 'line-height',
-]);
-
-const PASTE_STYLE_TABLE = new Set([
-  'border', 'border-color', 'border-width', 'border-style', 'padding', 'width', 'height',
-  'min-width', 'vertical-align',
-]);
-
-const normalizePasteFontSize = (raw) => {
-  const trimmed = (raw || '').trim();
-  const pxMatch = trimmed.match(/^([\d.]+)px$/i);
-  const ptMatch = trimmed.match(/^([\d.]+)pt$/i);
-  let px = null;
-  if (pxMatch) px = Number.parseFloat(pxMatch[1]);
-  else if (ptMatch) px = Number.parseFloat(ptMatch[1]) * (96 / 72);
-  if (!Number.isFinite(px)) return '';
-  return `${Math.round(Math.max(MIN_FONT_SIZE, Math.min(px, MAX_FONT_SIZE)))}px`;
-};
-
-const sanitizePasteStyle = (element) => {
-  const style = element.style;
-  if (!style || style.length === 0) {
-    element.removeAttribute('style');
-    return;
-  }
-  const isTableCell = ['TABLE', 'TR', 'TD', 'TH'].includes(element.tagName);
-  const kept = [];
-  for (let index = 0; index < style.length; index += 1) {
-    const prop = style.item(index);
-    const allowed = PASTE_STYLE_BASE.has(prop) || (isTableCell && PASTE_STYLE_TABLE.has(prop));
-    if (!allowed) continue;
-    let value = style.getPropertyValue(prop);
-    if (prop === 'font-size') {
-      value = normalizePasteFontSize(value);
-      if (!value) continue;
-    }
-    kept.push([prop, value]);
-  }
-  element.removeAttribute('style');
-  kept.forEach(([prop, value]) => element.style.setProperty(prop, value));
-};
-
-// Sanitize pasted HTML in a detached container: drop dangerous/structural nodes,
-// unwrap unknown tags (keeping their text), and strip every attribute except a
-// safe inline-style allow-list. This is what lets us stop running destructive
-// cleanup on every render — junk is cleaned once, at the door.
-const sanitizePastedFragment = (container) => {
-  if (!(container instanceof HTMLElement)) return;
-  PASTE_REMOVE_TAGS.forEach((tag) => {
-    container.querySelectorAll(tag).forEach((node) => node.remove());
-  });
-  // Convert <font> → <span style> first so face/color/size survive the attr scrub.
-  normalizeLegacyFontNodes(container);
-  Array.from(container.querySelectorAll('*')).forEach((element) => {
-    if (!(element instanceof HTMLElement) || !element.isConnected) return;
-    if (!PASTE_ALLOWED_TAGS.has(element.tagName)) {
-      unwrapElementKeepChildren(element);
-      return;
-    }
-    Array.from(element.attributes).forEach((attr) => {
-      const name = attr.name.toLowerCase();
-      if (name === 'style') return;
-      if (element.tagName === 'A' && name === 'href') {
-        if (/^\s*javascript:/i.test(attr.value)) element.removeAttribute(attr.name);
-        return;
-      }
-      if ((element.tagName === 'TD' || element.tagName === 'TH') && (name === 'colspan' || name === 'rowspan')) {
-        return;
-      }
-      element.removeAttribute(attr.name);
-    });
-    sanitizePasteStyle(element);
-  });
-};
-
-const escapeHtmlForPaste = (value) =>
-  (value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .split(/\r?\n/)
-    .join('<br>');
-
 const cloneBlocks = (items = []) => items.map((block) => ({ ...block }));
+
+const stripHtmlToPlainText = (html) => {
+  if (typeof html !== 'string' || !html) return '';
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    // Paragraph/heading boundaries become newlines so "first line" means first block.
+    doc.body.querySelectorAll('p, h1, h2, h3, li, br, div').forEach((el) => {
+      el.appendChild(doc.createTextNode('\n'));
+    });
+    return (doc.body.textContent || '').replace(/\u200B/g, '');
+  } catch {
+    return html.replace(/<[^>]*>/g, ' ');
+  }
+};
 
 // Baseline of what is persisted, used to diff future saves. Mirrors getBlocksSnapshot so
 // the first diff after load doesn't falsely flag every block as changed.
@@ -537,7 +275,6 @@ const NoteEditor = () => {
   const [linkDraft, setLinkDraft] = useState('');
   const [linkEditing, setLinkEditing] = useState(false);
   const [deleteBlockId, setDeleteBlockId] = useState('');
-  const [heldSelectionRects, setHeldSelectionRects] = useState([]);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
   const [tablePickerHover, setTablePickerHover] = useState({ rows: 2, cols: 2 });
   const [tablePickerPos, setTablePickerPos] = useState({ left: 12, top: 72 });
@@ -554,13 +291,12 @@ const NoteEditor = () => {
   const canvasRef = useRef(null);
   const dragDepthRef = useRef(0);
   const addImageBlockRef = useRef(null);
-  const textRefs = useRef({});
+  const snapGuideVRef = useRef(null);
+  const snapGuideHRef = useRef(null);
   const activeEditorRef = useRef(null);
   const lastActiveBlockIdRef = useRef('');
   const editorsByBlockRef = useRef({});
   const tiptapSelectionRef = useRef(null);
-  const selectionRangeRef = useRef(null);
-  const heldSelectionRangeRef = useRef(null);
   const skipNextFontSizeBlurCommitRef = useRef(false);
   const blocksRef = useRef(blocks);
   const canvasHeightRef = useRef(canvasHeight);
@@ -584,13 +320,7 @@ const NoteEditor = () => {
   const lastSavedContentRef = useRef({ blocksJson: new Map(), order: [], canvasHeight: PAGE_HEIGHT });
   const blocksSchemaRef = useRef('array');
   const saveStatusRef = useRef(saveStatus);
-  const nudgeAnimationRef = useRef(null);
-  const nudgePressTimeoutRef = useRef(null);
-  const nudgeHoldActiveRef = useRef(false);
-  const nudgePressedRef = useRef(false);
-  const nudgeVectorRef = useRef({ x: 0, y: 0 });
   const blockDraggingRef = useRef(false);
-  const tableResizeRef = useRef(null);
   const navigate = useNavigate();
   const isOnline = useNetworkStatus();
   const returnToDashboardClass = useCallback(() => {
@@ -666,9 +396,7 @@ const NoteEditor = () => {
     return blocksRef.current.map((block) => {
       if (block.type !== 'text') return block;
       const draftValue = drafts[block.id];
-      const domValue = textRefs.current[block.id]?.innerHTML;
-      const nextValue =
-        typeof draftValue === 'string' ? stripZeroWidth(draftValue) : stripZeroWidth(domValue);
+      const nextValue = typeof draftValue === 'string' ? stripZeroWidth(draftValue) : block.value;
       if (typeof nextValue !== 'string' || nextValue === block.value) return block;
       return { ...block, value: nextValue };
     });
@@ -781,6 +509,24 @@ const NoteEditor = () => {
         order,
         canvasHeight: snapshotHeight,
       };
+      // Auto-title: while the note still carries a placeholder name ("Quick Note 3",
+      // "Untitled Note"), adopt the first line the user actually wrote.
+      if (/^(quick note( \d+)?|untitled( note)?)$/i.test((note?.title || '').trim())) {
+        const firstText = snapshot.find(
+          (block) => block.type === 'text' && stripHtmlToPlainText(block.value).trim(),
+        );
+        const derived = firstText
+          ? stripHtmlToPlainText(firstText.value).trim().split('\n')[0].slice(0, 60).trim()
+          : '';
+        if (derived && derived !== note.title) {
+          try {
+            await updateNote(firebaseUser.uid, classId, noteId, { title: derived });
+            setNote((prev) => (prev ? { ...prev, title: derived } : prev));
+          } catch (err) {
+            console.warn('Auto-title failed', err);
+          }
+        }
+      }
       settleClean();
     } catch (err) {
       console.error('Failed to save note', err);
@@ -863,8 +609,6 @@ const NoteEditor = () => {
       setActiveBlockId('');
       setBlockMenuOpenId('');
       setAddMenuOpen(false);
-      selectionRangeRef.current = null;
-      heldSelectionRangeRef.current = null;
       suppressHistoryRef.current = false;
       markDirty();
     },
@@ -999,9 +743,6 @@ const NoteEditor = () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       if (localDraftTimeoutRef.current) clearTimeout(localDraftTimeoutRef.current);
       if (historyTimeoutRef.current) clearTimeout(historyTimeoutRef.current);
-      if (tableResizeRef.current?.end) {
-        tableResizeRef.current.end();
-      }
       void flushSave('unmount');
     };
   }, [flushSave]);
@@ -1180,10 +921,10 @@ const NoteEditor = () => {
 
   useEffect(() => {
     if (!activeBlockId) return;
-    const element = textRefs.current[activeBlockId];
-    if (!element) return;
+    const editor = editorsByBlockRef.current[activeBlockId];
+    if (!editor) return;
     requestAnimationFrame(() => {
-      element.focus();
+      if (!editor.isDestroyed && !editor.isFocused) editor.commands.focus();
     });
   }, [activeBlockId]);
 
@@ -1215,9 +956,28 @@ const NoteEditor = () => {
       const width = Number.isFinite(block.w) ? block.w : defaultWidth;
       const x = Number.isFinite(block.x) ? block.x : 0;
       return Math.max(max, x + width);
-    }, 720);
-    return Math.max(720, Math.ceil(maxRightEdge + 40));
+    }, PAGE_WIDTH);
+    return Math.max(PAGE_WIDTH, Math.ceil(maxRightEdge + 40));
   }, [blocks]);
+
+  // On open, scroll the viewport so the note's content sits centered horizontally
+  // (workspace-center for empty notes). Runs once per mount, after first paint.
+  const initialCenterDoneRef = useRef(false);
+  useEffect(() => {
+    if (initialCenterDoneRef.current) return;
+    if (!note || note.missing) return;
+    const scroller = canvasScrollRef.current;
+    if (!scroller) return;
+    initialCenterDoneRef.current = true;
+    requestAnimationFrame(() => {
+      const target = blocks.length
+        ? (Math.min(...blocks.map((b) => b.x || 0)) +
+            Math.max(...blocks.map((b) => (b.x || 0) + (b.w || BLOCK_DEFAULTS.text.w)))) /
+          2
+        : canvasWidth / 2;
+      scroller.scrollLeft = Math.max(0, Math.round(target - scroller.clientWidth / 2));
+    });
+  }, [note, blocks, canvasWidth]);
 
   useEffect(() => {
     if (!blockMenuOpenId) return;
@@ -1245,8 +1005,6 @@ const NoteEditor = () => {
     setToolbarNumbered(false);
     setToolbarChecklist(false);
     setToolbarAlign('left');
-    selectionRangeRef.current = null;
-    heldSelectionRangeRef.current = null;
   }, [activeTextBlock?.id]);
 
   // Place a new block in the highest-then-leftmost free space that is *currently on
@@ -1260,12 +1018,20 @@ const NoteEditor = () => {
     const blockW = Number.isFinite(size?.w) ? size.w : BLOCK_DEFAULTS.text.w;
     const blockH = Number.isFinite(size?.h) ? size.h : BLOCK_DEFAULTS.text.h;
     const scroller = canvasScrollRef.current;
+    const canvasEl = canvasRef.current;
 
-    // Visible window expressed in canvas coordinates (block x/y live in the same space).
-    const viewLeft = Math.max(0, scroller?.scrollLeft ?? 0);
-    const viewTop = Math.max(0, scroller?.scrollTop ?? 0);
-    const viewW = scroller?.clientWidth ?? canvasRef.current?.clientWidth ?? 720;
+    // Visible window expressed in canvas coordinates. The canvas is a centered page,
+    // so its origin is offset from the scroll viewport — map via bounding rects.
+    let viewLeft = 0;
+    let viewTop = 0;
+    const viewW = scroller?.clientWidth ?? canvasEl?.clientWidth ?? PAGE_WIDTH;
     const viewH = scroller?.clientHeight ?? 560;
+    if (scroller && canvasEl) {
+      const scrollerRect = scroller.getBoundingClientRect();
+      const canvasRect = canvasEl.getBoundingClientRect();
+      viewLeft = Math.max(0, scrollerRect.left - canvasRect.left);
+      viewTop = Math.max(0, scrollerRect.top - canvasRect.top);
+    }
     const fallback = { x: Math.round(viewLeft), y: Math.round(viewTop) };
 
     const rects = blocksRef.current.map((block) => {
@@ -1287,8 +1053,11 @@ const NoteEditor = () => {
           y + blockH + gap > r.y,
       );
 
-    const maxX = viewLeft + viewW - blockW;
-    const maxY = viewTop + viewH - blockH;
+    // Stay inside both the visible window and the page bounds.
+    const canvasW = canvasEl?.clientWidth ?? PAGE_WIDTH;
+    const canvasH = canvasEl?.clientHeight ?? canvasHeightRef.current;
+    const maxX = Math.min(viewLeft + viewW, canvasW) - blockW;
+    const maxY = Math.min(viewTop + viewH, canvasH) - blockH;
     if (maxX < viewLeft || maxY < viewTop) return fallback; // block bigger than viewport
 
     for (let y = viewTop; y <= maxY; y += step) {
@@ -1299,6 +1068,87 @@ const NoteEditor = () => {
       }
     }
     return fallback;
+  };
+
+  // Magnet: when a dragged block is near another block's edges, its center lines, or a
+  // neighbor slot one 20px gutter away, it clicks into exact alignment. Returns the
+  // snapped position plus guide-line coordinates (canvas space) for live feedback.
+  const snapToNeighbors = (blockId, rawX, rawY, w, h) => {
+    let x = rawX;
+    let y = rawY;
+    let bestDx = SNAP_THRESHOLD + 1;
+    let bestDy = SNAP_THRESHOLD + 1;
+    let guideX = null;
+    let guideY = null;
+    blocksRef.current.forEach((other) => {
+      if (other.id === blockId || other.collapsed) return;
+      const ox = Number.isFinite(other.x) ? other.x : 0;
+      const oy = Number.isFinite(other.y) ? other.y : 0;
+      const ow = Number.isFinite(other.w) ? other.w : BLOCK_DEFAULTS.text.w;
+      const oh = Number.isFinite(other.h) ? other.h : BLOCK_DEFAULTS.text.h;
+      // [candidate x for the dragged block, guide line to draw]
+      const xCandidates = [
+        [ox, ox], // left edges align
+        [ox + ow - w, ox + ow], // right edges align
+        [ox + ow + SNAP_GAP, ox + ow + SNAP_GAP], // sit right of neighbor, one gutter
+        [ox - w - SNAP_GAP, ox - SNAP_GAP], // sit left of neighbor, one gutter
+        [ox + (ow - w) / 2, ox + ow / 2], // vertical centers align
+      ];
+      const yCandidates = [
+        [oy, oy],
+        [oy + oh - h, oy + oh],
+        [oy + oh + SNAP_GAP, oy + oh + SNAP_GAP],
+        [oy - h - SNAP_GAP, oy - SNAP_GAP],
+        [oy + (oh - h) / 2, oy + oh / 2],
+      ];
+      xCandidates.forEach(([cx, gx]) => {
+        const d = Math.abs(rawX - cx);
+        if (d < bestDx && cx >= 0) {
+          bestDx = d;
+          x = cx;
+          guideX = gx;
+        }
+      });
+      yCandidates.forEach(([cy, gy]) => {
+        const d = Math.abs(rawY - cy);
+        if (d < bestDy && cy >= 0) {
+          bestDy = d;
+          y = cy;
+          guideY = gy;
+        }
+      });
+    });
+    const xSnapped = bestDx <= SNAP_THRESHOLD;
+    const ySnapped = bestDy <= SNAP_THRESHOLD;
+    return {
+      x: Math.round(xSnapped ? x : rawX),
+      y: Math.round(ySnapped ? y : rawY),
+      guideX: xSnapped ? Math.round(guideX) : null,
+      guideY: ySnapped ? Math.round(guideY) : null,
+    };
+  };
+
+  // Live guide lines while dragging — drawn by mutating the ref'd elements directly so
+  // per-mousemove updates never re-render the (heavy) editor tree.
+  const updateSnapGuides = (guideX, guideY) => {
+    const v = snapGuideVRef.current;
+    const hEl = snapGuideHRef.current;
+    if (v) {
+      if (guideX === null) {
+        v.style.display = 'none';
+      } else {
+        v.style.display = 'block';
+        v.style.left = `${guideX}px`;
+      }
+    }
+    if (hEl) {
+      if (guideY === null) {
+        hEl.style.display = 'none';
+      } else {
+        hEl.style.display = 'block';
+        hEl.style.top = `${guideY}px`;
+      }
+    }
   };
 
   const selectBlock = (id, options = {}) => {
@@ -1561,64 +1411,6 @@ const NoteEditor = () => {
     markDirty();
   };
 
-  const normalizeTableShells = (root) => {
-    if (!(root instanceof HTMLElement)) return;
-
-    root.querySelectorAll('[data-table-resize-handle]').forEach((handle) => {
-      if (!(handle instanceof HTMLElement)) return;
-      const direction = handle.getAttribute('data-table-resize-handle');
-      const shell = handle.closest('.note-table-shell');
-      if (!shell || handle.parentElement !== shell || !TABLE_HANDLE_DIRECTIONS.includes(direction || '')) {
-        handle.remove();
-      }
-    });
-
-    root.querySelectorAll('.note-table-shell').forEach((shellNode) => {
-      if (!(shellNode instanceof HTMLElement)) return;
-      const table = shellNode.querySelector('table[data-note-table="true"], table');
-      if (!(table instanceof HTMLTableElement)) {
-        shellNode.remove();
-        return;
-      }
-      table.setAttribute('data-note-table', 'true');
-      table.style.width = '100%';
-      table.style.height = '100%';
-      table.style.tableLayout = 'fixed';
-      table.style.borderCollapse = 'collapse';
-
-      const existing = new Set();
-      Array.from(shellNode.children).forEach((child) => {
-        if (!(child instanceof HTMLElement)) return;
-        const direction = child.getAttribute('data-table-resize-handle');
-        if (direction && TABLE_HANDLE_DIRECTIONS.includes(direction)) {
-          existing.add(direction);
-        }
-      });
-      TABLE_HANDLE_DIRECTIONS.forEach((direction) => {
-        if (existing.has(direction)) return;
-        const handle = document.createElement('span');
-        handle.className = `note-table-resize-handle note-table-resize-${direction}`;
-        handle.setAttribute('data-table-resize-handle', direction);
-        handle.setAttribute('contenteditable', 'false');
-        shellNode.appendChild(handle);
-      });
-    });
-  };
-
-  const handleTextInput = (id, html, root) => {
-    if (!textTypingRef.current) {
-      pushHistory('text');
-      textTypingRef.current = true;
-    }
-    if (root instanceof HTMLElement) {
-      normalizeTableShells(root);
-      html = root.innerHTML;
-    }
-    textDraftsRef.current[id] = stripZeroWidth(html);
-    markDirty();
-    scheduleTextIdleReset();
-  };
-
   const handleRichTextChange = (id, html) => {
     if (!textTypingRef.current) {
       pushHistory('text');
@@ -1627,483 +1419,6 @@ const NoteEditor = () => {
     textDraftsRef.current[id] = stripZeroWidth(html);
     markDirty();
     scheduleTextIdleReset();
-  };
-
-  const handleEditorPaste = (event, blockId) => {
-    const clipboard = event.clipboardData;
-    if (!clipboard) return;
-    event.preventDefault();
-    const html = clipboard.getData('text/html');
-    const text = clipboard.getData('text/plain');
-    let payload = '';
-    if (html && html.trim()) {
-      const holder = document.createElement('div');
-      holder.innerHTML = html;
-      sanitizePastedFragment(holder);
-      cleanupFontSizeArtifacts(holder, { fallbackPx: BLOCK_DEFAULTS.text.fontSize });
-      payload = holder.innerHTML;
-    } else if (text) {
-      payload = escapeHtmlForPaste(text);
-    }
-    if (!payload) return;
-    if (!textTypingRef.current) {
-      pushHistory('paste');
-      textTypingRef.current = true;
-    }
-    document.execCommand('insertHTML', false, payload);
-    const root = textRefs.current[blockId];
-    if (root instanceof HTMLElement) {
-      normalizeTableShells(root);
-      textDraftsRef.current[blockId] = stripZeroWidth(root.innerHTML);
-    }
-    markDirty();
-    scheduleTextIdleReset();
-  };
-
-  const rememberSelection = useCallback(
-    (preferredBlockId) => {
-      const blockId = preferredBlockId || activeTextId;
-      if (!blockId) return;
-      const root = textRefs.current[blockId];
-      const selection = document.getSelection();
-      if (!root || !selection || selection.rangeCount === 0) return;
-      const range = selection.getRangeAt(0);
-      if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
-      selectionRangeRef.current = range.cloneRange();
-    },
-    [activeTextId],
-  );
-
-  const setSelectionRangeSafe = (root, range, options = {}) => {
-    const { fallbackToEnd = false } = options;
-    const selection = document.getSelection();
-    if (!root || !range || !selection) return false;
-
-    const assignRange = (nextRange) => {
-      try {
-        selection.removeAllRanges();
-        selection.addRange(nextRange);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-
-    const validRange =
-      range.startContainer &&
-      range.endContainer &&
-      Boolean(range.startContainer.isConnected) &&
-      Boolean(range.endContainer.isConnected) &&
-      root.contains(range.startContainer) &&
-      root.contains(range.endContainer);
-
-    if (validRange && assignRange(range)) {
-      return true;
-    }
-    if (!fallbackToEnd) return false;
-
-    try {
-      const fallbackRange = document.createRange();
-      fallbackRange.selectNodeContents(root);
-      fallbackRange.collapse(false);
-      if (assignRange(fallbackRange)) {
-        selectionRangeRef.current = fallbackRange.cloneRange();
-        return true;
-      }
-    } catch {
-      // Ignore fallback selection errors.
-    }
-    return false;
-  };
-
-  const placeCaretFromPoint = (root, x, y) => {
-    if (!root) return false;
-    const selection = document.getSelection();
-    if (!selection) return false;
-    let range = null;
-    if (document.caretRangeFromPoint) {
-      range = document.caretRangeFromPoint(x, y);
-    } else if (document.caretPositionFromPoint) {
-      const position = document.caretPositionFromPoint(x, y);
-      if (position) {
-        range = document.createRange();
-        range.setStart(position.offsetNode, position.offset);
-        range.setEnd(position.offsetNode, position.offset);
-      }
-    }
-    if (!range) return false;
-    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
-    if (!setSelectionRangeSafe(root, range)) return false;
-    const active = document.getSelection();
-    if (active && active.rangeCount > 0) {
-      selectionRangeRef.current = active.getRangeAt(0).cloneRange();
-    }
-    return Boolean(active && active.rangeCount > 0);
-  };
-
-  const clearHeldSelectionHighlight = useCallback(() => {
-    if (typeof CSS !== 'undefined' && CSS.highlights) {
-      CSS.highlights.delete(HELD_SELECTION_HIGHLIGHT_KEY);
-    }
-    setHeldSelectionRects([]);
-  }, []);
-
-  const showHeldSelectionHighlight = useCallback(() => {
-    const range = selectionRangeRef.current;
-    const root = activeTextId ? textRefs.current[activeTextId] : null;
-    if (!range || !root || range.collapsed) {
-      setHeldSelectionRects([]);
-      return;
-    }
-    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
-      setHeldSelectionRects([]);
-      return;
-    }
-    const nextRects = Array.from(range.getClientRects())
-      .filter((rect) => rect.width > 0 && rect.height > 0)
-      .map((rect) => ({
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-      }));
-    setHeldSelectionRects(nextRects);
-
-    const supportsCustomHighlights =
-      typeof CSS !== 'undefined' && Boolean(CSS.highlights) && typeof Highlight !== 'undefined';
-    if (!supportsCustomHighlights) return;
-    try {
-      const highlight = new Highlight(range.cloneRange());
-      CSS.highlights.set(HELD_SELECTION_HIGHLIGHT_KEY, highlight);
-    } catch {
-      // Ignore browser-specific range/highlight errors and keep overlay fallback.
-    }
-  }, [activeTextId]);
-
-  const syncToolbarFromSelection = useCallback(() => {
-    if (!activeTextId) return;
-    const root = textRefs.current[activeTextId];
-    const selection = document.getSelection();
-    if (!root || !selection || selection.rangeCount === 0) return;
-    if (!root.contains(selection.anchorNode)) return;
-    const range = selection.getRangeAt(0);
-    selectionRangeRef.current = range.cloneRange();
-    const anchorNode =
-      selection.anchorNode?.nodeType === Node.ELEMENT_NODE
-        ? selection.anchorNode
-        : selection.anchorNode?.parentElement;
-    if (anchorNode instanceof HTMLElement) {
-      const styles = window.getComputedStyle(anchorNode);
-      const size = Number.parseInt(styles.fontSize || '', 10);
-      if (Number.isFinite(size)) {
-        setToolbarFontSize(size);
-      }
-      const family = (styles.fontFamily || '')
-        .split(',')[0]
-        ?.replace(/["']/g, '')
-        .trim();
-      const matchedFamily = FONT_FAMILY_OPTIONS.find((option) =>
-        family?.toLowerCase()?.includes(option.value.replace(/["']/g, '').toLowerCase()),
-      );
-      setToolbarFontFamily(matchedFamily?.value || FONT_FAMILY_OPTIONS[0].value);
-      const hexColor = toHexColor(styles.color || '');
-      if (hexColor) {
-        setToolbarColor(hexColor);
-      }
-      const highlightHex = toHexColor(styles.backgroundColor || '');
-      if (highlightHex) {
-        setToolbarHighlightColor(highlightHex);
-      }
-      const checklistParent = anchorNode.closest('ul[data-checklist="true"]');
-      setToolbarChecklist(Boolean(checklistParent));
-    }
-    setToolbarBold(document.queryCommandState('bold'));
-    setToolbarItalic(document.queryCommandState('italic'));
-    setToolbarUnderline(document.queryCommandState('underline'));
-    setToolbarStrike(document.queryCommandState('strikeThrough'));
-    setToolbarBullets(document.queryCommandState('insertUnorderedList'));
-    setToolbarNumbered(document.queryCommandState('insertOrderedList'));
-    if (document.queryCommandState('justifyCenter')) {
-      setToolbarAlign('center');
-    } else if (document.queryCommandState('justifyRight')) {
-      setToolbarAlign('right');
-    } else if (document.queryCommandState('justifyFull')) {
-      setToolbarAlign('justify');
-    } else {
-      setToolbarAlign('left');
-    }
-  }, [activeTextId]);
-
-  useEffect(() => {
-    if (!activeTextId) return;
-    const handleSelectionChange = () => {
-      if (blockDraggingRef.current) return;
-      syncToolbarFromSelection();
-    };
-    document.addEventListener('selectionchange', handleSelectionChange);
-    return () => document.removeEventListener('selectionchange', handleSelectionChange);
-  }, [activeTextId, syncToolbarFromSelection]);
-
-  useEffect(() => {
-    if (!fontSizeEditing) {
-      clearHeldSelectionHighlight();
-    }
-  }, [fontSizeEditing, clearHeldSelectionHighlight]);
-
-  useEffect(() => () => clearHeldSelectionHighlight(), [clearHeldSelectionHighlight]);
-
-  useEffect(() => {
-    if (!fontSizeEditing) return;
-    const syncHeldHighlight = () => showHeldSelectionHighlight();
-    window.addEventListener('resize', syncHeldHighlight);
-    window.addEventListener('scroll', syncHeldHighlight, true);
-    return () => {
-      window.removeEventListener('resize', syncHeldHighlight);
-      window.removeEventListener('scroll', syncHeldHighlight, true);
-    };
-  }, [fontSizeEditing, showHeldSelectionHighlight]);
-
-  const restoreSelection = (root) => {
-    if (!root || !selectionRangeRef.current) return false;
-    const range = selectionRangeRef.current;
-    return setSelectionRangeSafe(root, range);
-  };
-
-  const applyFontSizeToSelection = (root, value) => {
-    const selection = document.getSelection();
-    if (!selection || selection.rangeCount === 0) return false;
-    const range = selection.getRangeAt(0);
-    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
-    const nextSize = `${Math.max(MIN_FONT_SIZE, Math.min(Number(value) || BLOCK_DEFAULTS.text.fontSize, MAX_FONT_SIZE))}px`;
-    normalizeLegacyFontNodes(root);
-    if (range.collapsed) {
-      const span = document.createElement('span');
-      span.style.fontSize = nextSize;
-      span.appendChild(document.createTextNode('\u200b'));
-      range.insertNode(span);
-      cleanupFontSizeArtifacts(root, { keepNode: span, fallbackPx: activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize });
-      const nextRange = document.createRange();
-      const targetNode = span.firstChild || span;
-      const targetOffset =
-        targetNode.nodeType === Node.TEXT_NODE
-          ? Math.min(1, targetNode.nodeValue?.length || 0)
-          : Math.min(1, targetNode.childNodes?.length || 0);
-      nextRange.setStart(targetNode, targetOffset);
-      nextRange.setEnd(targetNode, targetOffset);
-      if (!setSelectionRangeSafe(root, nextRange, { fallbackToEnd: true })) return false;
-      const active = document.getSelection();
-      if (active && active.rangeCount > 0) {
-        selectionRangeRef.current = active.getRangeAt(0).cloneRange();
-        return true;
-      }
-      return false;
-    }
-    const extracted = range.extractContents();
-    clearInlineFontSizeInFragment(extracted);
-    const span = document.createElement('span');
-    span.style.fontSize = nextSize;
-    span.appendChild(extracted);
-    range.insertNode(span);
-    cleanupFontSizeArtifacts(root, { keepNode: span, fallbackPx: activeTextBlock?.fontSize || BLOCK_DEFAULTS.text.fontSize });
-    stripZeroWidthTextNodes(root);
-    const nextRange = document.createRange();
-    nextRange.selectNodeContents(span);
-    if (!setSelectionRangeSafe(root, nextRange, { fallbackToEnd: true })) return false;
-    const active = document.getSelection();
-    if (active && active.rangeCount > 0) {
-      selectionRangeRef.current = active.getRangeAt(0).cloneRange();
-    }
-    root.normalize();
-    return true;
-  };
-
-  const applySelectionCommand = (id, command, value) => {
-    const element = textRefs.current[id];
-    if (!element) return false;
-    const ensureEditorSelection = () => {
-      const selection = document.getSelection();
-      const hasSelectionInside =
-        selection && selection.rangeCount > 0 && element.contains(selection.anchorNode);
-      if (!hasSelectionInside && !restoreSelection(element)) {
-        return false;
-      }
-      if (document.activeElement !== element) {
-        element.focus({ preventScroll: true });
-        if (!restoreSelection(element)) {
-          const active = document.getSelection();
-          const activeInside = active && active.rangeCount > 0 && element.contains(active.anchorNode);
-          if (!activeInside) return false;
-        }
-      }
-      return true;
-    };
-    if (!ensureEditorSelection()) {
-      return false;
-    }
-    const activeSelection = document.getSelection();
-    if (!activeSelection || activeSelection.rangeCount === 0 || !element.contains(activeSelection.anchorNode)) {
-      return false;
-    }
-    if (command === 'fontSize') {
-      const currentRange = activeSelection.getRangeAt(0);
-      if (currentRange.collapsed) {
-        const heldRange = heldSelectionRangeRef.current;
-        if (
-          heldRange &&
-          !heldRange.collapsed &&
-          element.contains(heldRange.startContainer) &&
-          element.contains(heldRange.endContainer)
-        ) {
-          setSelectionRangeSafe(element, heldRange.cloneRange(), { fallbackToEnd: true });
-        }
-      }
-    }
-
-    if (command === 'fontSize') {
-      applyFontSizeToSelection(element, value);
-    } else if (command === 'highlightColor') {
-      document.execCommand('styleWithCSS', false, true);
-      const applied = document.execCommand('hiliteColor', false, value);
-      if (!applied) {
-        document.execCommand('backColor', false, value);
-      }
-    } else if (command === 'checklist') {
-      const anchorElement =
-        activeSelection.anchorNode?.nodeType === Node.ELEMENT_NODE
-          ? activeSelection.anchorNode
-          : activeSelection.anchorNode?.parentElement;
-      const existingChecklist =
-        anchorElement instanceof HTMLElement ? anchorElement.closest('ul[data-checklist="true"]') : null;
-      if (existingChecklist instanceof HTMLElement) {
-        existingChecklist.removeAttribute('data-checklist');
-        existingChecklist.style.listStyle = '';
-        existingChecklist.style.paddingLeft = '';
-        existingChecklist.querySelectorAll('li').forEach((item) => {
-          item.textContent = item.textContent?.replace(/^\s*☐\s*/, '') || '';
-        });
-      } else {
-        const range = activeSelection.getRangeAt(0);
-        const selectedText = activeSelection.toString().trim();
-        const listHtml = `<ul data-checklist="true" style="list-style:none;padding-left:1.2em;"><li>☐ ${
-          selectedText || ''
-        }</li></ul>`;
-        document.execCommand('insertHTML', false, listHtml);
-      }
-    } else if (command === 'insertTable') {
-      const rows = Math.max(1, Number(value?.rows) || 2);
-      const cols = Math.max(1, Number(value?.cols) || 2);
-      const rowsHtml = Array.from({ length: rows })
-        .map(
-          () =>
-            `<tr>${Array.from({ length: cols })
-              .map(
-                () =>
-                  '<td style="border:1px solid rgba(255,255,255,0.24);padding:6px;min-width:80px;"><br></td>',
-              )
-              .join('')}</tr>`,
-        )
-        .join('');
-      const handlesHtml = ['nw', 'ne', 'sw', 'se']
-        .map(
-          (direction) =>
-            `<span class="note-table-resize-handle note-table-resize-${direction}" data-table-resize-handle="${direction}" contenteditable="false"></span>`,
-        )
-        .join('');
-      const tableHtml = `<div data-note-table-shell="true" class="note-table-shell" style="width:340px;max-width:100%;height:180px;"><table data-note-table="true" style="border-collapse:collapse;width:100%;height:100%;table-layout:fixed;">${rowsHtml}</table>${handlesHtml}</div><p><br></p>`;
-      document.execCommand('insertHTML', false, tableHtml);
-    } else if (
-      command === 'tableRow' ||
-      command === 'tableColumn' ||
-      command === 'tableDeleteRow' ||
-      command === 'tableDeleteColumn' ||
-      command === 'tableDeleteTable' ||
-      command === 'tableRowHeight' ||
-      command === 'tableColumnWidth'
-    ) {
-      const anchorElement =
-        activeSelection.anchorNode?.nodeType === Node.ELEMENT_NODE
-          ? activeSelection.anchorNode
-          : activeSelection.anchorNode?.parentElement;
-      const tableFromAnchor =
-        anchorElement instanceof HTMLElement ? anchorElement.closest('table[data-note-table="true"],table') : null;
-      const shellFromAnchor =
-        anchorElement instanceof HTMLElement ? anchorElement.closest('.note-table-shell') : null;
-      if (command === 'tableDeleteTable') {
-        if (shellFromAnchor instanceof HTMLElement) {
-          shellFromAnchor.remove();
-        } else if (tableFromAnchor instanceof HTMLTableElement) {
-          tableFromAnchor.remove();
-        }
-        textDraftsRef.current[id] = stripZeroWidth(element.innerHTML);
-        markDirty();
-        syncToolbarFromSelection();
-        return true;
-      }
-      const cell = anchorElement instanceof HTMLElement ? anchorElement.closest('td,th') : null;
-      if (!(cell instanceof HTMLTableCellElement)) return false;
-      const row = cell.parentElement;
-      const table = cell.closest('table');
-      if (!(row instanceof HTMLTableRowElement) || !(table instanceof HTMLTableElement)) return false;
-      const cellIndex = cell.cellIndex;
-
-      if (command === 'tableRow') {
-        const newRow = row.cloneNode(true);
-        Array.from(newRow.cells).forEach((item) => {
-          item.innerHTML = '<br>';
-        });
-        row.insertAdjacentElement('afterend', newRow);
-      } else if (command === 'tableColumn') {
-        Array.from(table.rows).forEach((rowItem) => {
-          const refCell = rowItem.cells[cellIndex];
-          const newCell = rowItem.insertCell(cellIndex + 1);
-          newCell.innerHTML = '<br>';
-          newCell.style.cssText = refCell?.style?.cssText || newCell.style.cssText;
-        });
-      } else if (command === 'tableDeleteRow') {
-        if (table.rows.length <= 1) {
-          table.remove();
-        } else {
-          row.remove();
-        }
-      } else if (command === 'tableDeleteColumn') {
-        const isSingleColumn = Array.from(table.rows).every((rowItem) => rowItem.cells.length <= 1);
-        if (isSingleColumn) {
-          table.remove();
-        } else {
-          Array.from(table.rows).forEach((rowItem) => {
-            if (rowItem.cells[cellIndex]) {
-              rowItem.deleteCell(cellIndex);
-            }
-          });
-        }
-      } else if (command === 'tableRowHeight') {
-        const delta = Number(value?.delta) || 0;
-        const baseHeight = Number.parseFloat(row.style.height || '') || Math.round(row.getBoundingClientRect().height);
-        const nextHeight = Math.max(24, baseHeight + delta);
-        row.style.height = `${nextHeight}px`;
-        Array.from(row.cells).forEach((rowCell) => {
-          rowCell.style.height = `${nextHeight}px`;
-        });
-      } else if (command === 'tableColumnWidth') {
-        const delta = Number(value?.delta) || 0;
-        Array.from(table.rows).forEach((rowItem) => {
-          const colCell = rowItem.cells[cellIndex];
-          if (!(colCell instanceof HTMLTableCellElement)) return;
-          const baseWidth =
-            Number.parseFloat(colCell.style.width || '') || Math.round(colCell.getBoundingClientRect().width);
-          const nextWidth = Math.max(56, baseWidth + delta);
-          colCell.style.width = `${nextWidth}px`;
-          colCell.style.minWidth = `${nextWidth}px`;
-        });
-      }
-    } else {
-      document.execCommand('styleWithCSS', false, true);
-      document.execCommand(command, false, value);
-    }
-    textDraftsRef.current[id] = stripZeroWidth(element.innerHTML);
-    markDirty();
-    syncToolbarFromSelection();
-    return true;
   };
 
   const canUndo = useMemo(() => historyRef.current.length > 1, [historyVersion]);
@@ -2121,72 +1436,6 @@ const NoteEditor = () => {
     futureRef.current = [currentSnapshot, ...futureRef.current].slice(0, HISTORY_LIMIT);
     setHistoryVersion((prev) => prev + 1);
     applyHistorySnapshot(previousSnapshot);
-  };
-
-  const updateTextStyle = (id, updates) => {
-    if (!id) return;
-    pushHistory('format');
-    if (updates.fontSize !== undefined) {
-      applySelectionCommand(id, 'fontSize', updates.fontSize);
-    }
-    if (updates.textColor) {
-      applySelectionCommand(id, 'foreColor', updates.textColor);
-    }
-    if (updates.highlightColor) {
-      applySelectionCommand(id, 'highlightColor', updates.highlightColor);
-    }
-    if (updates.fontFamily) {
-      applySelectionCommand(id, 'fontName', updates.fontFamily);
-    }
-    if (updates.bold !== undefined) {
-      applySelectionCommand(id, 'bold');
-    }
-    if (updates.italic !== undefined) {
-      applySelectionCommand(id, 'italic');
-    }
-    if (updates.underline !== undefined) {
-      applySelectionCommand(id, 'underline');
-    }
-    if (updates.strike !== undefined) {
-      applySelectionCommand(id, 'strikeThrough');
-    }
-    if (updates.bullets) {
-      applySelectionCommand(id, 'insertUnorderedList');
-    }
-    if (updates.numbered) {
-      applySelectionCommand(id, 'insertOrderedList');
-    }
-    if (updates.checklist) {
-      applySelectionCommand(id, 'checklist');
-    }
-    if (updates.quote) {
-      applySelectionCommand(id, 'formatBlock', '<blockquote>');
-    }
-    if (updates.indent) {
-      applySelectionCommand(id, 'indent');
-    }
-    if (updates.outdent) {
-      applySelectionCommand(id, 'outdent');
-    }
-    if (updates.align) {
-      const alignCommandMap = {
-        left: 'justifyLeft',
-        center: 'justifyCenter',
-        right: 'justifyRight',
-        justify: 'justifyFull',
-      };
-      const command = alignCommandMap[updates.align];
-      if (command) {
-        applySelectionCommand(id, command);
-      }
-    }
-    if (updates.lineSpacing !== undefined) {
-      updateBlock(id, { lineHeight: updates.lineSpacing }, { skipDirty: true });
-      markDirty();
-    }
-    if (updates.tableAction) {
-      applySelectionCommand(id, updates.tableAction, updates.tableOptions || null);
-    }
   };
 
   // --- TipTap bridge (Phase 3) -------------------------------------------------
@@ -2372,16 +1621,6 @@ const NoteEditor = () => {
     closeLinkModal();
   };
 
-  const hasRangeSelectionInActiveBlock = () => {
-    const root = textRefs.current[activeTextId];
-    if (!root) return false;
-    const selection = document.getSelection();
-    if (!selection || selection.rangeCount === 0) return false;
-    const range = selection.getRangeAt(0);
-    if (range.collapsed) return false;
-    return root.contains(range.startContainer) && root.contains(range.endContainer);
-  };
-
   const clampFontSize = (value) => Math.max(MIN_FONT_SIZE, Math.min(Math.round(value), MAX_FONT_SIZE));
 
   const readFontSizeAtCursor = (editor) => {
@@ -2398,19 +1637,9 @@ const NoteEditor = () => {
   const applyFontSize = (size) => {
     const nextSize = clampFontSize(size);
     setToolbarFontSize(nextSize);
-    if (USE_TIPTAP_EDITOR) {
-      const editor = resolveActiveEditor();
-      if (!editor) return;
-      applyTiptapAction({ fontSize: nextSize });
-      return;
-    }
-    const blockId = resolveActiveBlockId();
-    if (!blockId) return;
-    if (hasRangeSelectionInActiveBlock()) {
-      updateTextStyle(activeTextId, { fontSize: nextSize });
-    } else {
-      updateBlock(activeTextId, { fontSize: nextSize }, { recordHistory: true, reason: 'font-size' });
-    }
+    const editor = resolveActiveEditor();
+    if (!editor) return;
+    applyTiptapAction({ fontSize: nextSize });
   };
 
   // Increment/decrement. On a selection, bumps EACH text run by delta so mixed sizes
@@ -2454,28 +1683,11 @@ const NoteEditor = () => {
     if (anchorSize !== null) setToolbarFontSize(anchorSize);
   };
 
-  const restoreHeldSelectionForFontSize = () => {
-    if (!activeTextId) return;
-    const root = textRefs.current[activeTextId];
-    const heldRange = heldSelectionRangeRef.current || selectionRangeRef.current;
-    if (!root || !heldRange) return;
-    try {
-      if (!root.contains(heldRange.startContainer) || !root.contains(heldRange.endContainer)) return;
-      const nextRange = heldRange.cloneRange();
-      selectionRangeRef.current = nextRange.cloneRange();
-      root.focus({ preventScroll: true });
-      setSelectionRangeSafe(root, nextRange, { fallbackToEnd: true });
-    } catch {
-      // Ignore detached-range errors and let regular selection flow continue.
-    }
-  };
-
   const commitFontSizeInput = (rawValue) => {
     const candidate = typeof rawValue === 'string' ? rawValue : fontSizeDraft;
     const parsed = Number.parseInt(candidate, 10);
     const fallback = fontSizeValue || BLOCK_DEFAULTS.text.fontSize;
     if (Number.isFinite(parsed)) {
-      restoreHeldSelectionForFontSize();
       applyFontSize(parsed);
       setFontSizeDraft(String(Math.max(MIN_FONT_SIZE, Math.min(parsed, MAX_FONT_SIZE))));
       return;
@@ -2484,28 +1696,20 @@ const NoteEditor = () => {
   };
 
   const stepFontSize = (delta) => {
-    if (USE_TIPTAP_EDITOR) {
-      stepFontSizeTiptap(delta);
-      return;
-    }
-    applyFontSize((fontSizeValue || BLOCK_DEFAULTS.text.fontSize) + delta);
+    stepFontSizeTiptap(delta);
   };
 
   const applyToolbarAction = (updates) => {
     const blockId = resolveActiveBlockId();
     if (!blockId) return;
-    if (USE_TIPTAP_EDITOR) {
-      // Line spacing is a block-level property (applied on the editor shell) and must
-      // not require an active editor/selection.
-      if (updates.lineSpacing !== undefined) {
-        updateBlock(blockId, { lineHeight: updates.lineSpacing }, { recordHistory: true, reason: 'line-spacing' });
-      }
-      const editorUpdates = { ...updates };
-      delete editorUpdates.lineSpacing;
-      if (Object.keys(editorUpdates).length) applyTiptapAction(editorUpdates);
-      return;
+    // Line spacing is a block-level property (applied on the editor shell) and must
+    // not require an active editor/selection.
+    if (updates.lineSpacing !== undefined) {
+      updateBlock(blockId, { lineHeight: updates.lineSpacing }, { recordHistory: true, reason: 'line-spacing' });
     }
-    updateTextStyle(activeTextId, updates);
+    const editorUpdates = { ...updates };
+    delete editorUpdates.lineSpacing;
+    if (Object.keys(editorUpdates).length) applyTiptapAction(editorUpdates);
   };
 
   const handleFontSizeInputChange = (event) => {
@@ -2514,9 +1718,8 @@ const NoteEditor = () => {
   };
 
   const copyCurrentStyle = () => {
-    if (USE_TIPTAP_EDITOR) {
-      const editor = resolveActiveEditor();
-      if (!editor) return;
+    const editor = resolveActiveEditor();
+    if (!editor) return;
       const ts = editor.getAttributes('textStyle');
       const hl = editor.getAttributes('highlight');
       const sizePx = Number.parseInt(ts.fontSize || '', 10);
@@ -2541,47 +1744,13 @@ const NoteEditor = () => {
         align,
         lineSpacing: activeTextBlock?.lineHeight || 1.4,
       });
-      return;
-    }
-    if (!activeTextId) return;
-    const root = textRefs.current[activeTextId];
-    const selection = document.getSelection();
-    if (!root || !selection || selection.rangeCount === 0 || !root.contains(selection.anchorNode)) {
-      return;
-    }
-    const node =
-      selection.anchorNode?.nodeType === Node.ELEMENT_NODE
-        ? selection.anchorNode
-        : selection.anchorNode?.parentElement;
-    if (!(node instanceof HTMLElement)) return;
-    const styles = window.getComputedStyle(node);
-    const copied = {
-      fontSize: Number.parseInt(styles.fontSize || '', 10) || BLOCK_DEFAULTS.text.fontSize,
-      fontFamily: (styles.fontFamily || '').split(',')[0]?.replace(/["']/g, '').trim() || 'Instrument Sans',
-      textColor: toHexColor(styles.color || '') || '#ffffff',
-      highlightColor: toHexColor(styles.backgroundColor || ''),
-      bold: document.queryCommandState('bold'),
-      italic: document.queryCommandState('italic'),
-      underline: document.queryCommandState('underline'),
-      strike: document.queryCommandState('strikeThrough'),
-      align: document.queryCommandState('justifyCenter')
-        ? 'center'
-        : document.queryCommandState('justifyRight')
-          ? 'right'
-          : document.queryCommandState('justifyFull')
-            ? 'justify'
-            : 'left',
-      lineSpacing: activeTextBlock?.lineHeight || 1.4,
-    };
-    setCopiedTextStyle(copied);
   };
 
   const pasteCopiedStyle = () => {
     if (!copiedTextStyle) return;
-    if (USE_TIPTAP_EDITOR) {
-      const editor = resolveActiveEditor();
-      const blockId = resolveActiveBlockId();
-      if (!editor || !blockId) return;
+    const editor = resolveActiveEditor();
+    const blockId = resolveActiveBlockId();
+    if (!editor || !blockId) return;
       pushHistory('paste-style');
       const chain = editor.chain().focus();
       if (copiedTextStyle.fontSize) chain.setFontSize(`${copiedTextStyle.fontSize}px`);
@@ -2596,50 +1765,14 @@ const NoteEditor = () => {
       if (editor.isActive('underline') !== copiedTextStyle.underline) editor.chain().focus().toggleUnderline().run();
       if (editor.isActive('strike') !== copiedTextStyle.strike) editor.chain().focus().toggleStrike().run();
       updateBlock(blockId, { lineHeight: copiedTextStyle.lineSpacing || 1.4 });
-      return;
-    }
-    if (!activeTextId) return;
-    pushHistory('paste-style');
-    applySelectionCommand(activeTextId, 'fontSize', copiedTextStyle.fontSize);
-    applySelectionCommand(activeTextId, 'fontName', copiedTextStyle.fontFamily);
-    applySelectionCommand(activeTextId, 'foreColor', copiedTextStyle.textColor);
-    if (copiedTextStyle.highlightColor) {
-      applySelectionCommand(activeTextId, 'highlightColor', copiedTextStyle.highlightColor);
-    }
-    if (document.queryCommandState('bold') !== copiedTextStyle.bold) {
-      applySelectionCommand(activeTextId, 'bold');
-    }
-    if (document.queryCommandState('italic') !== copiedTextStyle.italic) {
-      applySelectionCommand(activeTextId, 'italic');
-    }
-    if (document.queryCommandState('underline') !== copiedTextStyle.underline) {
-      applySelectionCommand(activeTextId, 'underline');
-    }
-    if (document.queryCommandState('strikeThrough') !== copiedTextStyle.strike) {
-      applySelectionCommand(activeTextId, 'strikeThrough');
-    }
-    const alignCommandMap = {
-      left: 'justifyLeft',
-      center: 'justifyCenter',
-      right: 'justifyRight',
-      justify: 'justifyFull',
-    };
-    const alignCommand = alignCommandMap[copiedTextStyle.align];
-    if (alignCommand) {
-      applySelectionCommand(activeTextId, alignCommand);
-    }
-    updateBlock(activeTextId, { lineHeight: copiedTextStyle.lineSpacing || 1.4 }, { skipDirty: true });
-    markDirty();
   };
 
   const handleToolbarButtonMouseDown = (event) => {
-    rememberSelection();
     rememberTiptapSelection();
     event.preventDefault();
   };
 
   const handleToolbarFieldMouseDown = () => {
-    rememberSelection();
     rememberTiptapSelection();
   };
 
@@ -2682,7 +1815,6 @@ const NoteEditor = () => {
 
     if (!blockId) return;
     selectBlock(blockId);
-    rememberSelection(blockId);
 
     if (action === 'delete-block') {
       setContextMenu(null);
@@ -2718,11 +1850,7 @@ const NoteEditor = () => {
     const tableCommand = tableCommandMap[action];
     if (tableCommand) {
       pushHistory('table-context');
-      if (USE_TIPTAP_EDITOR) {
-        applyTiptapTableAction(tableCommand.command, tableCommand.value || null);
-      } else {
-        applySelectionCommand(blockId, tableCommand.command, tableCommand.value || null);
-      }
+      applyTiptapTableAction(tableCommand.command, tableCommand.value || null);
       setContextMenu(null);
       return;
     }
@@ -2733,24 +1861,14 @@ const NoteEditor = () => {
       'fmt-underline': { underline: true },
       'fmt-strike': { strike: true },
     };
-    const formatLegacyMap = {
-      'fmt-bold': 'bold',
-      'fmt-italic': 'italic',
-      'fmt-underline': 'underline',
-      'fmt-strike': 'strikeThrough',
-    };
     if (formatTiptapMap[action]) {
       pushHistory('format-context');
-      if (USE_TIPTAP_EDITOR) {
-        const editor = editorsByBlockRef.current[blockId];
-        if (editor) {
-          activeEditorRef.current = editor;
-          lastActiveBlockIdRef.current = blockId;
-          tiptapSelectionRef.current = null;
-          applyTiptapAction(formatTiptapMap[action]);
-        }
-      } else {
-        applySelectionCommand(blockId, formatLegacyMap[action]);
+      const editor = editorsByBlockRef.current[blockId];
+      if (editor) {
+        activeEditorRef.current = editor;
+        lastActiveBlockIdRef.current = blockId;
+        tiptapSelectionRef.current = null;
+        applyTiptapAction(formatTiptapMap[action]);
       }
       setContextMenu(null);
     }
@@ -2782,186 +1900,14 @@ const NoteEditor = () => {
     selectBlock(blockId);
 
     if (block.type === 'text') {
-      const root = textRefs.current[blockId];
-      if (root) {
-        root.focus();
-        placeCaretFromPoint(root, event.clientX, event.clientY);
-      }
-      const inTable = Boolean(
-        target.closest('td,th,table,.note-table-shell,[data-table-resize-handle]'),
-      );
-      syncToolbarFromSelection();
+      editorsByBlockRef.current[blockId]?.commands.focus();
+      const inTable = Boolean(target.closest('td,th,table'));
       setContextMenu({ type: inTable ? 'table' : 'text', x: nextX, y: nextY, blockId });
       return;
     }
 
     setContextMenu({ type: 'block', x: nextX, y: nextY, blockId });
   };
-
-  const handleTableResizeHandleMouseDown = (event, blockId) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    const direction = target.getAttribute('data-table-resize-handle');
-    if (!direction) return;
-
-    const editorRoot = textRefs.current[blockId];
-    const shell = target.closest('.note-table-shell');
-    const table = shell instanceof HTMLElement ? shell.querySelector('table[data-note-table="true"]') : null;
-    if (!(editorRoot instanceof HTMLElement) || !(shell instanceof HTMLElement) || !(table instanceof HTMLTableElement)) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    setContextMenu(null);
-    setTablePickerOpen(false);
-    selectBlock(blockId, { raise: false });
-    pushHistory('table-resize');
-
-    const startRect = shell.getBoundingClientRect();
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startWidth = Number.parseFloat(shell.style.width || '') || startRect.width;
-    const startHeight = Number.parseFloat(shell.style.height || '') || startRect.height;
-    const startMarginLeft = Number.parseFloat(shell.style.marginLeft || '') || 0;
-    const startMarginTop = Number.parseFloat(shell.style.marginTop || '') || 0;
-
-    shell.style.width = `${Math.max(MIN_TABLE_WIDTH, Math.round(startWidth))}px`;
-    shell.style.height = `${Math.max(MIN_TABLE_HEIGHT, Math.round(startHeight))}px`;
-    table.style.width = '100%';
-    table.style.height = '100%';
-
-    let finished = false;
-    blockDraggingRef.current = true;
-
-    const handleMove = (moveEvent) => {
-      const dx = moveEvent.clientX - startX;
-      const dy = moveEvent.clientY - startY;
-      const resizeWest = direction.includes('w');
-      const resizeNorth = direction.includes('n');
-
-      let nextWidth = resizeWest ? startWidth - dx : startWidth + dx;
-      let nextHeight = resizeNorth ? startHeight - dy : startHeight + dy;
-      let nextMarginLeft = startMarginLeft;
-      let nextMarginTop = startMarginTop;
-
-      if (resizeWest) {
-        nextMarginLeft = startMarginLeft + dx;
-      }
-      if (resizeNorth) {
-        nextMarginTop = startMarginTop + dy;
-      }
-
-      if (nextWidth < MIN_TABLE_WIDTH) {
-        if (resizeWest) {
-          nextMarginLeft += nextWidth - MIN_TABLE_WIDTH;
-        }
-        nextWidth = MIN_TABLE_WIDTH;
-      }
-      if (nextHeight < MIN_TABLE_HEIGHT) {
-        if (resizeNorth) {
-          nextMarginTop += nextHeight - MIN_TABLE_HEIGHT;
-        }
-        nextHeight = MIN_TABLE_HEIGHT;
-      }
-
-      shell.style.width = `${Math.round(nextWidth)}px`;
-      shell.style.height = `${Math.round(nextHeight)}px`;
-      shell.style.marginLeft = `${Math.round(nextMarginLeft)}px`;
-      shell.style.marginTop = `${Math.round(nextMarginTop)}px`;
-    };
-
-    const finishResize = () => {
-      if (finished) return;
-      finished = true;
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', finishResize);
-      blockDraggingRef.current = false;
-      textDraftsRef.current[blockId] = stripZeroWidth(editorRoot.innerHTML);
-      markDirty();
-      tableResizeRef.current = null;
-    };
-
-    tableResizeRef.current = { end: finishResize };
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', finishResize);
-  };
-
-  const stopNudge = useCallback(() => {
-    if (nudgeAnimationRef.current) {
-      cancelAnimationFrame(nudgeAnimationRef.current);
-      nudgeAnimationRef.current = null;
-    }
-    nudgeHoldActiveRef.current = false;
-  }, []);
-
-  const clearNudgePressTimer = useCallback(() => {
-    if (nudgePressTimeoutRef.current) {
-      clearTimeout(nudgePressTimeoutRef.current);
-      nudgePressTimeoutRef.current = null;
-    }
-  }, []);
-
-  const runNudgeFrame = useCallback(() => {
-    if (!nudgeHoldActiveRef.current) return;
-    const scroller = canvasScrollRef.current;
-    if (!scroller) return;
-    const { x, y } = nudgeVectorRef.current;
-    scroller.scrollBy({
-      left: x * NUDGE_HOLD_DISTANCE,
-      top: y * NUDGE_HOLD_DISTANCE,
-      behavior: 'auto',
-    });
-    nudgeAnimationRef.current = requestAnimationFrame(runNudgeFrame);
-  }, []);
-
-  const startNudgeHold = useCallback(
-    (x, y) => {
-      nudgeVectorRef.current = { x, y };
-      if (nudgeHoldActiveRef.current) return;
-      nudgeHoldActiveRef.current = true;
-      nudgeAnimationRef.current = requestAnimationFrame(runNudgeFrame);
-    },
-    [runNudgeFrame],
-  );
-
-  const nudgeOnce = useCallback((x, y) => {
-    const scroller = canvasScrollRef.current;
-    if (!scroller) return;
-    scroller.scrollBy({
-      left: x * NUDGE_CLICK_DISTANCE,
-      top: y * NUDGE_CLICK_DISTANCE,
-      behavior: 'smooth',
-    });
-  }, []);
-
-  const handleNudgePressStart = useCallback(
-    (x, y) => (event) => {
-      event.preventDefault();
-      nudgePressedRef.current = true;
-      clearNudgePressTimer();
-      stopNudge();
-      nudgePressTimeoutRef.current = setTimeout(() => {
-        startNudgeHold(x, y);
-      }, NUDGE_HOLD_DELAY_MS);
-    },
-    [clearNudgePressTimer, startNudgeHold, stopNudge],
-  );
-
-  const handleNudgePressEnd = useCallback(
-    (x, y) => (event) => {
-      event.preventDefault();
-      if (!nudgePressedRef.current) return;
-      nudgePressedRef.current = false;
-      const wasHolding = nudgeHoldActiveRef.current;
-      clearNudgePressTimer();
-      stopNudge();
-      if (!wasHolding) {
-        nudgeOnce(x, y);
-      }
-    },
-    [clearNudgePressTimer, nudgeOnce, stopNudge],
-  );
 
   const increaseCanvas = () => {
     pushHistory('canvas');
@@ -3020,22 +1966,6 @@ const NoteEditor = () => {
     }
   };
 
-  useEffect(() => {
-    const handleGlobalRelease = () => {
-      nudgePressedRef.current = false;
-      clearNudgePressTimer();
-      stopNudge();
-    };
-    window.addEventListener('mouseup', handleGlobalRelease);
-    window.addEventListener('touchend', handleGlobalRelease);
-    window.addEventListener('touchcancel', handleGlobalRelease);
-    return () => {
-      window.removeEventListener('mouseup', handleGlobalRelease);
-      window.removeEventListener('touchend', handleGlobalRelease);
-      window.removeEventListener('touchcancel', handleGlobalRelease);
-    };
-  }, [clearNudgePressTimer, stopNudge]);
-
   const toolbarFontGroup = (
     <div className="text-command-group">
       <select
@@ -3073,17 +2003,6 @@ const NoteEditor = () => {
           disabled={textControlsDisabled}
           onMouseDown={handleToolbarFieldMouseDown}
           onFocus={(event) => {
-            rememberSelection();
-            if (selectionRangeRef.current) {
-              try {
-                heldSelectionRangeRef.current = selectionRangeRef.current.cloneRange();
-              } catch {
-                heldSelectionRangeRef.current = null;
-              }
-            } else {
-              heldSelectionRangeRef.current = null;
-            }
-            showHeldSelectionHighlight();
             setFontSizeEditing(true);
             setFontSizeDraft(String(fontSizeValue || BLOCK_DEFAULTS.text.fontSize));
             event.currentTarget.select();
@@ -3095,8 +2014,6 @@ const NoteEditor = () => {
             if (!skipCommit) {
               commitFontSizeInput(event.currentTarget.value);
             }
-            clearHeldSelectionHighlight();
-            heldSelectionRangeRef.current = null;
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
@@ -3104,20 +2021,15 @@ const NoteEditor = () => {
               skipNextFontSizeBlurCommitRef.current = true;
               commitFontSizeInput(event.currentTarget.value);
               setFontSizeEditing(false);
-              clearHeldSelectionHighlight();
-              heldSelectionRangeRef.current = null;
               event.currentTarget.blur();
               requestAnimationFrame(() => {
-                const root = activeTextId ? textRefs.current[activeTextId] : null;
-                root?.focus();
+                resolveActiveEditor()?.commands.focus();
               });
             } else if (event.key === 'Escape') {
               event.preventDefault();
               skipNextFontSizeBlurCommitRef.current = true;
               setFontSizeEditing(false);
               setFontSizeDraft(String(fontSizeValue || BLOCK_DEFAULTS.text.fontSize));
-              clearHeldSelectionHighlight();
-              heldSelectionRangeRef.current = null;
               event.currentTarget.blur();
             }
           }}
@@ -3416,7 +2328,6 @@ const NoteEditor = () => {
         <div
           className="toolbar-more-panel"
           onMouseDown={(event) => {
-            rememberSelection();
             event.preventDefault();
           }}
         >
@@ -3553,7 +2464,7 @@ const NoteEditor = () => {
           <div
             className="note-canvas"
             ref={canvasRef}
-            style={{ height: `${canvasHeight}px`, width: `max(100%, ${canvasWidth}px)` }}
+            style={{ height: `${canvasHeight}px`, width: `${canvasWidth}px` }}
             onContextMenu={handleCanvasContextMenu}
             onMouseDown={(event) => {
               const target = event.target;
@@ -3573,6 +2484,8 @@ const NoteEditor = () => {
               setContextMenu(null);
             }}
           >
+            <span ref={snapGuideVRef} className="snap-guide snap-guide-v" aria-hidden="true" />
+            <span ref={snapGuideHRef} className="snap-guide snap-guide-h" aria-hidden="true" />
             {blocks.map((block) => {
               const isActive = block.id === activeBlockId;
               const layer = block.priority ? PRIORITY_Z_OFFSET + block.zIndex : block.zIndex;
@@ -3587,9 +2500,15 @@ const NoteEditor = () => {
                     blockDraggingRef.current = true;
                     selectBlock(block.id, { raise: false });
                   }}
+                  onDrag={(event, data) => {
+                    const preview = snapToNeighbors(block.id, data.x, data.y, block.w, block.h);
+                    updateSnapGuides(preview.guideX, preview.guideY);
+                  }}
                   onDragStop={(event, data) => {
                     blockDraggingRef.current = false;
+                    updateSnapGuides(null, null);
                     if (data.x === block.x && data.y === block.y) return;
+                    const snapped = snapToNeighbors(block.id, data.x, data.y, block.w, block.h);
                     pushHistory('move');
                     setBlocks((prev) => {
                       const target = prev.find((item) => item.id === block.id);
@@ -3597,7 +2516,9 @@ const NoteEditor = () => {
                       const maxZ = getMaxZIndex(prev, (item) => item.priority === target.priority);
                       const nextZ = Math.max(maxZ + 1, target.zIndex || 0);
                       return prev.map((item) =>
-                        item.id === block.id ? { ...item, x: data.x, y: data.y, zIndex: nextZ } : item,
+                        item.id === block.id
+                          ? { ...item, x: snapped.x, y: snapped.y, zIndex: nextZ }
+                          : item,
                       );
                     });
                     markDirty();
@@ -3647,7 +2568,7 @@ const NoteEditor = () => {
                       block.collapsed ? 'collapsed' : ''
                     } ${block.priority ? 'priority' : ''}`}
                   >
-                    <div className="note-block-shell" style={blockBackground ? { background: blockBackground } : undefined}>
+                    <div className="note-block-shell" data-block-id={block.id} style={blockBackground ? { background: blockBackground } : undefined}>
                       <div
                         className="note-block-header"
                         style={blockBackground ? { background: blockBackground } : undefined}
@@ -3703,7 +2624,6 @@ const NoteEditor = () => {
                           className={`note-block-body${block.collapsed ? ' note-block-body-collapsed' : ''}`}
                         >
                           {block.type === 'text' ? (
-                            USE_TIPTAP_EDITOR ? (
                             <Suspense fallback={null}>
                               <RichTextBlock
                                 block={block}
@@ -3715,46 +2635,6 @@ const NoteEditor = () => {
                                 onLink={handleLinkAction}
                               />
                             </Suspense>
-                            ) : (
-                            <div
-                              ref={(el) => {
-                                if (!el) return;
-                                textRefs.current[block.id] = el;
-                                if (document.activeElement === el) return;
-                                const desired = textDraftsRef.current[block.id] ?? block.value ?? '';
-                                if (el.innerHTML !== desired) {
-                                  el.innerHTML = desired;
-                                  // Normalize/clean only when we (re)hydrate from a trusted
-                                  // source (load, undo/redo). Running the destructive cleanup
-                                  // on every render is what deleted spaces and reset sizes.
-                                  normalizeLegacyFontNodes(el);
-                                  cleanupFontSizeArtifacts(el, {
-                                    fallbackPx: block.fontSize || BLOCK_DEFAULTS.text.fontSize,
-                                  });
-                                  textDraftsRef.current[block.id] = stripZeroWidth(el.innerHTML);
-                                }
-                              }}
-                              className="note-textarea"
-                              data-block-id={block.id}
-                              contentEditable
-                              suppressContentEditableWarning
-                              onMouseDown={(event) => handleTableResizeHandleMouseDown(event, block.id)}
-                              onPaste={(event) => handleEditorPaste(event, block.id)}
-                              onInput={(event) =>
-                                handleTextInput(block.id, event.currentTarget.innerHTML, event.currentTarget)
-                              }
-                              onFocus={() => selectBlock(block.id, { raise: false })}
-                              onMouseUp={syncToolbarFromSelection}
-                              onKeyUp={syncToolbarFromSelection}
-                              style={{
-                                fontSize: `${block.fontSize || BLOCK_DEFAULTS.text.fontSize}px`,
-                                lineHeight: block.lineHeight || 1.4,
-                                color: block.textColor || 'var(--text)',
-                                fontWeight: block.bold ? 700 : 400,
-                                textDecoration: block.underline ? 'underline' : 'none',
-                              }}
-                            />
-                            )
                           ) : (
                             <img className="note-image" src={block.value} alt="Note asset" />
                           )}
@@ -3766,52 +2646,6 @@ const NoteEditor = () => {
               );
             })}
           </div>
-        </div>
-        <div className="canvas-nudge canvas-nudge-side" aria-label="Scroll canvas controls">
-          <button
-            type="button"
-            className="canvas-nudge-btn"
-            title="Scroll down"
-            onMouseDown={handleNudgePressStart(0, 1)}
-            onMouseUp={handleNudgePressEnd(0, 1)}
-            onTouchStart={handleNudgePressStart(0, 1)}
-            onTouchEnd={handleNudgePressEnd(0, 1)}
-          >
-            <FaArrowDown />
-          </button>
-          <button
-            type="button"
-            className="canvas-nudge-btn"
-            title="Scroll up"
-            onMouseDown={handleNudgePressStart(0, -1)}
-            onMouseUp={handleNudgePressEnd(0, -1)}
-            onTouchStart={handleNudgePressStart(0, -1)}
-            onTouchEnd={handleNudgePressEnd(0, -1)}
-          >
-            <FaArrowUp />
-          </button>
-          <button
-            type="button"
-            className="canvas-nudge-btn"
-            title="Scroll left"
-            onMouseDown={handleNudgePressStart(-1, 0)}
-            onMouseUp={handleNudgePressEnd(-1, 0)}
-            onTouchStart={handleNudgePressStart(-1, 0)}
-            onTouchEnd={handleNudgePressEnd(-1, 0)}
-          >
-            <FaArrowLeft />
-          </button>
-          <button
-            type="button"
-            className="canvas-nudge-btn"
-            title="Scroll right"
-            onMouseDown={handleNudgePressStart(1, 0)}
-            onMouseUp={handleNudgePressEnd(1, 0)}
-            onTouchStart={handleNudgePressStart(1, 0)}
-            onTouchEnd={handleNudgePressEnd(1, 0)}
-          >
-            <FaArrowRight />
-          </button>
         </div>
       </section>
       <div className="note-fab" ref={addMenuRef}>
@@ -3952,7 +2786,6 @@ const NoteEditor = () => {
           className="table-picker-popover floating"
           style={{ left: `${tablePickerPos.left}px`, top: `${tablePickerPos.top}px` }}
           onMouseDown={(event) => {
-            rememberSelection();
             event.preventDefault();
           }}
         >
@@ -3989,22 +2822,6 @@ const NoteEditor = () => {
             )}
           </div>
           <p>{`${tablePickerHover.rows} x ${tablePickerHover.cols}`}</p>
-        </div>
-      )}
-      {heldSelectionRects.length > 0 && (
-        <div className="held-selection-overlay" aria-hidden>
-          {heldSelectionRects.map((rect, index) => (
-            <span
-              key={`${rect.left}-${rect.top}-${rect.width}-${rect.height}-${index}`}
-              className="held-selection-rect"
-              style={{
-                left: `${rect.left}px`,
-                top: `${rect.top}px`,
-                width: `${rect.width}px`,
-                height: `${rect.height}px`,
-              }}
-            />
-          ))}
         </div>
       )}
       {contextMenu && (

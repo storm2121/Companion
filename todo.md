@@ -43,7 +43,9 @@ listed here.
 
 ## Engineering health
 - [ ] **Tests for the persistence layer** (delta save + legacy→map migration is the riskiest code).
-- [ ] **Remove dormant legacy contentEditable editor** (~1500 lines behind the now-permanent TipTap flag).
-- [ ] **CI** (GitHub Actions: build + lint on push) and clear the ~20 pre-existing lint errors.
+- [x] **Remove dormant legacy contentEditable editor** — done 2026-07: ~16 KB of legacy
+      source excised; TipTap is the only editor path.
+- [ ] **CI** (GitHub Actions: build + lint on push) and clear the ~19 pre-existing lint errors.
 - [ ] **Error monitoring** (Sentry).
-- [ ] **Route-level code-splitting** (main bundle ~980 KB; lazy-load the editor route).
+- [x] **Route-level code-splitting** — done 2026-07: NoteEditor/Settings/Calendar lazy;
+      main bundle 981 KB → 882 KB, editor in its own chunk.

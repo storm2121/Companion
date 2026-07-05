@@ -30,13 +30,19 @@ const sanitizeCanvasHeight = (value) => (Number.isFinite(value) ? value : DEFAUL
 // Storage model: blocks are kept as a map { [id]: block } plus an `order` array so
 // a single edit can be persisted as a delta (one field path) instead of rewriting the
 // whole array. These helpers convert between the on-disk map and the array the app uses.
+const newBlockId = () =>
+  globalThis.crypto?.randomUUID?.() || `block-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
 const blocksArrayToMap = (blocks) => {
   const map = {};
   const order = [];
   (Array.isArray(blocks) ? blocks : []).forEach((block) => {
-    if (!block || typeof block !== 'object' || !block.id) return;
-    map[block.id] = block;
-    order.push(block.id);
+    if (!block || typeof block !== 'object') return;
+    // Template blocks arrive without ids — assign one instead of dropping the block
+    // (dropping was why notes created from templates came out empty).
+    const id = block.id || newBlockId();
+    map[id] = block.id ? block : { ...block, id };
+    order.push(id);
   });
   return { map, order };
 };
