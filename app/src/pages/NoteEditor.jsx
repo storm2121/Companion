@@ -279,6 +279,8 @@ const NoteEditor = () => {
   const [tablePickerHover, setTablePickerHover] = useState({ rows: 2, cols: 2 });
   const [tablePickerPos, setTablePickerPos] = useState({ left: 12, top: 72 });
   const [blockMenuPos, setBlockMenuPos] = useState({ left: 12, top: 72 });
+  const [renamingBlockId, setRenamingBlockId] = useState('');
+  const [blockTitleDraft, setBlockTitleDraft] = useState('');
   const [historyVersion, setHistoryVersion] = useState(0);
   const addMenuRef = useRef(null);
   const toolbarMoreRef = useRef(null);
@@ -286,6 +288,7 @@ const NoteEditor = () => {
   const tablePickerPopoverRef = useRef(null);
   const blockMenuPanelRef = useRef(null);
   const blockMenuTriggerRefs = useRef({});
+  const contextMenuRef = useRef(null);
   const fileInputRef = useRef(null);
   const canvasScrollRef = useRef(null);
   const canvasRef = useRef(null);
@@ -979,6 +982,117 @@ const NoteEditor = () => {
     });
   }, [note, blocks, canvasWidth]);
 
+  // ---- In-note find (armed by the dashboard search when opening a note) ----
+  // Highlights use the CSS Custom Highlight API: zero DOM/document mutation, so the
+  // note content is never touched and vanishes cleanly on dismiss.
+  const [findInfo, setFindInfo] = useState(null); // { query, count, index }
+  const findRangesRef = useRef([]);
+  const findArmedRef = useRef(false);
+
+  const clearFind = useCallback(() => {
+    if (typeof CSS !== 'undefined' && CSS.highlights) {
+      CSS.highlights.delete('companion-find');
+      CSS.highlights.delete('companion-find-current');
+    }
+    findRangesRef.current = [];
+    setFindInfo(null);
+  }, []);
+
+  const scrollToFindIndex = useCallback((idx) => {
+    const item = findRangesRef.current[idx];
+    if (!item) return;
+    try {
+      const rect = item.range.getBoundingClientRect();
+      const scroller = canvasScrollRef.current;
+      if (scroller) {
+        const sRect = scroller.getBoundingClientRect();
+        scroller.scrollTop += rect.top - sRect.top - sRect.height / 2 + 40;
+        scroller.scrollLeft += rect.left - sRect.left - sRect.width / 2;
+      }
+      if (typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined') {
+        CSS.highlights.set('companion-find-current', new Highlight(item.range));
+      }
+    } catch {
+      // Range detached (content changed) — dismiss quietly.
+      clearFind();
+    }
+  }, [clearFind]);
+
+  const gotoFind = (delta) => {
+    setFindInfo((prev) => {
+      if (!prev || !prev.count) return prev;
+      const next = (prev.index + delta + prev.count) % prev.count;
+      scrollToFindIndex(next);
+      return { ...prev, index: next };
+    });
+  };
+
+  const runFind = useCallback(
+    (query) => {
+      const q = (query || '').toLowerCase();
+      if (!q) return;
+      const ranges = [];
+      blocksRef.current
+        .filter((block) => block.type === 'text' && !block.collapsed)
+        .forEach((block) => {
+          const rootEl = editorsByBlockRef.current[block.id]?.view?.dom;
+          if (!rootEl) return;
+          const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
+          let node;
+          while ((node = walker.nextNode())) {
+            const text = node.nodeValue || '';
+            const lower = text.toLowerCase();
+            let at = lower.indexOf(q);
+            while (at !== -1) {
+              const range = document.createRange();
+              range.setStart(node, at);
+              range.setEnd(node, at + q.length);
+              ranges.push({ range });
+              at = lower.indexOf(q, at + q.length);
+            }
+          }
+        });
+      findRangesRef.current = ranges;
+      if (ranges.length && typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined') {
+        CSS.highlights.set('companion-find', new Highlight(...ranges.map((r) => r.range)));
+      }
+      setFindInfo({ query, count: ranges.length, index: 0 });
+      if (ranges.length) scrollToFindIndex(0);
+    },
+    [scrollToFindIndex],
+  );
+
+  // Arm once: wait (poll briefly) for the lazy TipTap editors to mount, then find.
+  useEffect(() => {
+    const q = location.state?.searchQuery;
+    if (!q || findArmedRef.current || !note || note.missing) return undefined;
+    findArmedRef.current = true;
+    let tries = 0;
+    const timer = setInterval(() => {
+      tries += 1;
+      const textBlocks = blocksRef.current.filter((b) => b.type === 'text' && !b.collapsed);
+      const ready = textBlocks.length > 0 && textBlocks.every((b) => editorsByBlockRef.current[b.id]);
+      if (ready || tries > 16) {
+        clearInterval(timer);
+        if (ready) setTimeout(() => runFind(q), 120);
+      }
+    }, 250);
+    return () => clearInterval(timer);
+  }, [note, location.state, runFind]);
+
+  // Esc dismisses the find pill (before anything else handles it).
+  useEffect(() => {
+    if (!findInfo) return undefined;
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        clearFind();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [findInfo, clearFind]);
+
   useEffect(() => {
     if (!blockMenuOpenId) return;
     if (blockMenuBlock) return;
@@ -1364,6 +1478,37 @@ const NoteEditor = () => {
     selectBlock(id);
   };
 
+  // After the context menu renders, measure it and keep it beside the cursor:
+  // clamp horizontally, flip upward when it would overflow the bottom edge.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const el = contextMenuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    let left = contextMenu.x;
+    let top = contextMenu.y;
+    if (left + rect.width > window.innerWidth - 8) left = window.innerWidth - rect.width - 8;
+    if (top + rect.height > window.innerHeight - 8) top = Math.max(8, contextMenu.y - rect.height);
+    el.style.left = `${Math.max(8, left)}px`;
+    el.style.top = `${top}px`;
+  }, [contextMenu]);
+
+  const startBlockRename = (block) => {
+    setRenamingBlockId(block.id);
+    setBlockTitleDraft(block.title || '');
+    setBlockMenuOpenId('');
+  };
+
+  const commitBlockRename = (id) => {
+    const next = blockTitleDraft.trim();
+    const target = blocksRef.current.find((item) => item.id === id);
+    if (target && next !== (target.title || '')) {
+      updateBlock(id, { title: next }, { recordHistory: true, reason: 'rename-block' });
+    }
+    setRenamingBlockId('');
+    setBlockTitleDraft('');
+  };
+
   const togglePriority = (id) => {
     pushHistory('priority');
     setBlocks((prev) => {
@@ -1412,6 +1557,7 @@ const NoteEditor = () => {
   };
 
   const handleRichTextChange = (id, html) => {
+    if (findRangesRef.current.length) clearFind();
     if (!textTypingRef.current) {
       pushHistory('text');
       textTypingRef.current = true;
@@ -1877,10 +2023,10 @@ const NoteEditor = () => {
   const handleCanvasContextMenu = (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    const menuWidth = 240;
-    const menuHeight = 320;
-    const nextX = Math.min(event.clientX, window.innerWidth - menuWidth);
-    const nextY = Math.min(event.clientY, window.innerHeight - menuHeight);
+    // Raw cursor position; the post-render effect measures the real menu and
+    // clamps/flips it, so short menus stay glued to the mouse.
+    const nextX = event.clientX;
+    const nextY = event.clientY;
 
     setTablePickerOpen(false);
     setBlockMenuOpenId('');
@@ -2577,13 +2723,49 @@ const NoteEditor = () => {
                           event.stopPropagation();
                           toggleCollapseBlock(block.id);
                         }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setContextMenu(null);
+                          toggleBlockMenu(block.id);
+                        }}
                       >
-                        <span className={`note-block-title ${block.title ? '' : 'muted'}`}>
-                          {block.priority && (
-                            <FaStar className="note-block-priority-star" aria-label="Priority" />
-                          )}
-                          {block.title || (block.type === 'text' ? 'Text block' : 'Image block')}
-                        </span>
+                        {renamingBlockId === block.id ? (
+                          <input
+                            className="block-title-input"
+                            value={blockTitleDraft}
+                            autoFocus
+                            placeholder={block.type === 'text' ? 'Text block' : 'Image block'}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onDoubleClick={(event) => event.stopPropagation()}
+                            onChange={(event) => setBlockTitleDraft(event.target.value)}
+                            onBlur={() => commitBlockRename(block.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                commitBlockRename(block.id);
+                              } else if (event.key === 'Escape') {
+                                event.preventDefault();
+                                setRenamingBlockId('');
+                                setBlockTitleDraft('');
+                              }
+                            }}
+                          />
+                        ) : (
+                          <span
+                            className={`note-block-title ${block.title ? '' : 'muted'}`}
+                            title="Double-click to rename"
+                            onDoubleClick={(event) => {
+                              event.stopPropagation();
+                              startBlockRename(block);
+                            }}
+                          >
+                            {block.priority && (
+                              <FaStar className="note-block-priority-star" aria-label="Priority" />
+                            )}
+                            {block.title || (block.type === 'text' ? 'Text block' : 'Image block')}
+                          </span>
+                        )}
                         <div className="note-block-actions">
                           <button
                             type="button"
@@ -2827,6 +3009,7 @@ const NoteEditor = () => {
       {contextMenu && (
         <div
           className="note-context-menu"
+          ref={contextMenuRef}
           style={{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }}
           onContextMenu={(event) => event.preventDefault()}
         >
@@ -2995,6 +3178,29 @@ const NoteEditor = () => {
         </div>
       )}
 
+      {findInfo && (
+        <div className="find-pill" role="status">
+          {findInfo.count > 0 ? (
+            <>
+              <span className="find-pill-q">“{findInfo.query}”</span>
+              <span className="find-pill-count">
+                {findInfo.index + 1} of {findInfo.count}
+              </span>
+              <button type="button" onClick={() => gotoFind(-1)} title="Previous match">
+                <FaChevronUp />
+              </button>
+              <button type="button" onClick={() => gotoFind(1)} title="Next match">
+                <FaChevronDown />
+              </button>
+            </>
+          ) : (
+            <span className="find-pill-count">No matches for “{findInfo.query}”</span>
+          )}
+          <button type="button" className="find-pill-close" onClick={clearFind} title="Dismiss (Esc)">
+            ✕
+          </button>
+        </div>
+      )}
       {linkModalOpen && (
         <>
           <div className="overlay show" onClick={closeLinkModal} />

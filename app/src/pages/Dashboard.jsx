@@ -13,7 +13,7 @@ import {
   FaTimes,
   FaTrash,
 } from 'react-icons/fa';
-import { FaCog, FaFilter, FaRegCalendarAlt, FaSignOutAlt } from 'react-icons/fa';
+import { FaCog, FaFilePdf, FaFilter, FaRegCalendarAlt, FaSignOutAlt } from 'react-icons/fa';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   createNote,
@@ -47,6 +47,8 @@ import {
   buildTemplateBlocks,
 } from '../data/noteTemplates';
 import useNetworkStatus from '../hooks/useNetworkStatus';
+import { eventCountdownLabel, eventDaysFromToday } from '../utils/eventTime';
+import { exportNotePdf } from '../utils/exportPdf';
 
 const toNoteMeta = (docSnap) => {
   const data = docSnap.data() || {};
@@ -84,17 +86,6 @@ const getNoteTimestamp = (note) => {
 };
 
 const normalizeThemeMode = (mode) => (THEME_PRESETS[mode] ? mode : THEME_DEFAULT_MODE);
-
-const eventDaysFromToday = (dateStr) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const [y, m, d] = (dateStr || '').split('-').map(Number);
-  const dt = new Date(y, (m || 1) - 1, d || 1);
-  dt.setHours(0, 0, 0, 0);
-  return Math.round((dt - today) / 86400000);
-};
-
-const eventRelativeLabel = (n) => (n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`);
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -225,6 +216,7 @@ const Dashboard = () => {
   const [allNotes, setAllNotes] = useState([]);
   const [globalLoading, setGlobalLoading] = useState(false);
   const [contentMatchIds, setContentMatchIds] = useState(() => new Set());
+  const [contentSnippets, setContentSnippets] = useState(() => new Map());
   const [contentSearching, setContentSearching] = useState(false);
   const noteTextCacheRef = useRef(new Map());
   const filterMenuRef = useRef(null);
@@ -232,6 +224,7 @@ const Dashboard = () => {
   const [menuOpenId, setMenuOpenId] = useState('');
   const [classEditTarget, setClassEditTarget] = useState(null);
   const [noteMenuOpenId, setNoteMenuOpenId] = useState('');
+  const [noteMenuUp, setNoteMenuUp] = useState(false);
   const [selectedNoteIds, setSelectedNoteIds] = useState([]);
   const [moveTargetId, setMoveTargetId] = useState('');
   const [moveBusy, setMoveBusy] = useState(false);
@@ -626,6 +619,7 @@ const Dashboard = () => {
   useEffect(() => {
     if (!searchActive || !searchInContent || !firebaseUser) {
       setContentMatchIds(new Set());
+      setContentSnippets(new Map());
       setContentSearching(false);
       return undefined;
     }
@@ -638,6 +632,7 @@ const Dashboard = () => {
     const handle = setTimeout(async () => {
       const cache = noteTextCacheRef.current;
       const matches = new Set();
+      const snippets = new Map();
       for (const note of source) {
         if (cancelled) return;
         if (matchesMeta(note)) {
@@ -649,13 +644,29 @@ const Dashboard = () => {
         const cacheKey = `${note.classId}:${note.id}:${stamp}`;
         let text = cache.get(cacheKey);
         if (text === undefined) {
-          text = (await getNoteText(firebaseUser.uid, note.classId, note.id)).toLowerCase();
+          text = await getNoteText(firebaseUser.uid, note.classId, note.id);
           cache.set(cacheKey, text);
         }
-        if (searchTokens.every((token) => text.includes(token))) matches.add(note.id);
+        const lower = text.toLowerCase();
+        if (searchTokens.every((token) => lower.includes(token))) {
+          matches.add(note.id);
+          // Excerpt around the first hit, original casing preserved.
+          const token = searchTokens[0];
+          const at = lower.indexOf(token);
+          if (at >= 0) {
+            const start = Math.max(0, at - 44);
+            const end = Math.min(text.length, at + token.length + 64);
+            snippets.set(note.id, {
+              before: (start > 0 ? '…' : '') + text.slice(start, at),
+              hit: text.slice(at, at + token.length),
+              after: text.slice(at + token.length, end) + (end < text.length ? '…' : ''),
+            });
+          }
+        }
       }
       if (!cancelled) {
         setContentMatchIds(matches);
+        setContentSnippets(snippets);
         setContentSearching(false);
       }
     }, 350);
@@ -1082,7 +1093,13 @@ const Dashboard = () => {
     setMenuOpenId((current) => (current === classId ? '' : classId));
   };
 
-  const toggleNoteMenu = (noteId) => {
+  const toggleNoteMenu = (noteId, event) => {
+    // If the trigger sits in the bottom stretch of the screen, open the menu upward
+    // so it never extends the scrollable list.
+    if (event?.currentTarget) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      setNoteMenuUp(window.innerHeight - rect.bottom < 250);
+    }
     setNoteMenuOpenId((current) => (current === noteId ? '' : noteId));
     setMenuOpenId('');
   };
@@ -1315,7 +1332,28 @@ const Dashboard = () => {
     const classId = note.classId || selectedClassId;
     if (!classId) return;
     setNoteMenuOpenId('');
-    navigate(`/class/${classId}/note/${note.id}`);
+    navigate(
+      `/class/${classId}/note/${note.id}`,
+      searchActive ? { state: { searchQuery: search.trim() } } : undefined,
+    );
+  };
+
+  const handleExportPdf = async (note) => {
+    const classId = note.classId || selectedClassId;
+    if (!firebaseUser || !classId) return;
+    setNoteMenuOpenId('');
+    showToast('Preparing PDF…');
+    try {
+      const full = await getNote(firebaseUser.uid, classId, note.id);
+      exportNotePdf({
+        title: note.title,
+        className: note.className || selectedClass?.name || '',
+        blocks: Array.isArray(full?.blocks) ? full.blocks : [],
+      });
+    } catch (err) {
+      console.error('Failed to export PDF', err);
+      showToast('Export failed');
+    }
   };
 
   const classEmpty = classes.length === 0;
@@ -1374,7 +1412,15 @@ const Dashboard = () => {
                 <FaTimes />
               </button>
             ) : (
-              <kbd>Ctrl K</kbd>
+              <kbd
+                title="Keyboard shortcut: press Ctrl+K to jump to search"
+                onClick={() => {
+                  searchInputRef.current?.focus();
+                  searchInputRef.current?.select();
+                }}
+              >
+                Ctrl K
+              </kbd>
             )}
             <div className="search-filter" ref={filterMenuRef}>
               <button
@@ -1596,7 +1642,7 @@ const Dashboard = () => {
             <p className="side-foot">⠿ drag to reorder</p>
           </div>
 
-          {upcomingEvents.length > 0 && (
+          {profile?.showUpcomingOnDashboard !== false && upcomingEvents.length > 0 && (
             <div className="side-upcoming">
               <div className="side-upcoming-head">
                 <span>Upcoming</span>
@@ -1614,7 +1660,7 @@ const Dashboard = () => {
                   <span className="side-upcoming-dot" style={{ background: ev.color || 'var(--accent)' }} />
                   <span className="side-upcoming-title">{ev.title}</span>
                   <span className={`side-upcoming-when ${ev.delta <= 3 ? 'soon' : ''}`}>
-                    {eventRelativeLabel(ev.delta)}
+                    {eventCountdownLabel(ev)}
                   </span>
                 </button>
               ))}
@@ -1701,6 +1747,28 @@ const Dashboard = () => {
             </div>
           </div>
           <div className="pane-body sheet-body">
+            {searchActive && searchInContent && (
+              <div className="search-news" aria-live="polite">
+                {contentSearching ? (
+                  <p className="search-looking">
+                    Leafing through your notes for <b>“{search.trim()}”</b>
+                    <span className="search-dots" aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  </p>
+                ) : (
+                  <p className="search-found">
+                    {contentMatchIds.size > 0
+                      ? `Found inside ${contentMatchIds.size} ${
+                          contentMatchIds.size === 1 ? 'note' : 'notes'
+                        }.`
+                      : 'Nothing in the text — matches below are titles and summaries only.'}
+                  </p>
+                )}
+              </div>
+            )}
             {classEmpty ? (
               <div className="empty-state">
                 <p className="empty-big">Nothing here yet.</p>
@@ -1809,7 +1877,15 @@ const Dashboard = () => {
                                 <span className="note-title-text">{note.title || 'Untitled Note'}</span>
                                 {note.pinned && <FaThumbtack className="note-pin" />}
                               </div>
-                              {note.summary && <div className="note-sub">{note.summary}</div>}
+                              {searchInContent && contentSnippets.has(note.id) ? (
+                              <div className="note-sub note-snippet">
+                                {contentSnippets.get(note.id).before}
+                                <mark>{contentSnippets.get(note.id).hit}</mark>
+                                {contentSnippets.get(note.id).after}
+                              </div>
+                            ) : (
+                              note.summary && <div className="note-sub">{note.summary}</div>
+                            )}
                             </div>
                             <span className="note-time">{noteTimeLabel(note)}</span>
                             {!isGlobal && (
@@ -1819,14 +1895,14 @@ const Dashboard = () => {
                                   title="Note actions"
                                   onClick={(event) => {
                                     event.stopPropagation();
-                                    toggleNoteMenu(note.id);
+                                    toggleNoteMenu(note.id, event);
                                   }}
                                 >
                                   <FaEllipsisH />
                                 </button>
                                 {menuOpen && (
                                   <div
-                                    className="note-menu menu"
+                                    className={`note-menu menu ${noteMenuUp ? 'menu-up' : ''}`}
                                     role="menu"
                                     onClick={(event) => event.stopPropagation()}
                                   >
@@ -1838,6 +1914,9 @@ const Dashboard = () => {
                                     </button>
                                     <button type="button" onClick={() => handleDuplicateNote(note)}>
                                       <FaCopy /> Duplicate
+                                    </button>
+                                    <button type="button" onClick={() => handleExportPdf(note)}>
+                                      <FaFilePdf /> Export as PDF
                                     </button>
                                     <button
                                       type="button"
@@ -1887,6 +1966,11 @@ const Dashboard = () => {
         onClose={closeClassSheet}
         editTarget={classEditTarget}
         onSaved={showToast}
+        onCreated={(id) => {
+          preferredClassIdRef.current = id;
+          setSelectedClassId(id);
+          setMobilePane('notes');
+        }}
       />
 
       {noteModalOpen && (

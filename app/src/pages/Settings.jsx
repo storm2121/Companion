@@ -34,6 +34,21 @@ const Settings = () => {
     fetchNoteTemplates(firebaseUser.uid).then(setTemplates).catch(() => setTemplates([]));
   }, [firebaseUser]);
 
+  // Esc → back to the dashboard (blur first if typing in a field).
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+        el.blur();
+        return;
+      }
+      navigate('/dashboard');
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [navigate]);
+
   const flash = (msg) => {
     setStatus(msg);
     setTimeout(() => setStatus(''), 2200);

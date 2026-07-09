@@ -502,6 +502,7 @@ export const setCalendarEvent = async (uid, event) => {
   const payload = {
     id,
     date: event.date,
+    time: event.time || '',
     title: (event.title || '').trim() || 'Untitled',
     color: event.color || '',
     note: (event.note || '').trim(),
@@ -514,6 +515,11 @@ export const setCalendarEvent = async (uid, event) => {
 export const deleteCalendarEvent = async (uid, id) => {
   if (!uid || !id) return;
   await updateDoc(doc(db, 'users', uid), { [`events.${id}`]: deleteField() });
+};
+
+// Preference: whether the "Upcoming" widget also appears on the dashboard sidebar.
+export const setDashboardUpcomingVisible = async (uid, visible) => {
+  await updateDoc(doc(db, 'users', uid), { showUpcomingOnDashboard: Boolean(visible) });
 };
 
 export const fetchNoteTemplates = async (uid) => {

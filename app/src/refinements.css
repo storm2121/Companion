@@ -293,3 +293,236 @@
   border-color: var(--accent-line);
   color: var(--text-secondary);
 }
+
+/* ---------- block header: centered title + inline rename ---------- */
+.note-block-header {
+  position: relative;
+}
+
+.note-block-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 52%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.block-title-input {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(60%, 260px);
+  min-height: 0;
+  padding: 0.12rem 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: center;
+  border-radius: 7px;
+  border: 1px solid var(--accent-line);
+  background: var(--surface-1);
+  color: var(--text);
+}
+
+/* ---------- calendar: time input ---------- */
+.cal-time-input {
+  min-height: 0;
+  height: 30px;
+  padding: 0 6px;
+  font-size: 12.5px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  width: 92px;
+}
+
+.cal-event-time {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- content-search status + snippets ---------- */
+.search-news {
+  padding: 10px 4px 0;
+}
+
+.search-looking,
+.search-found {
+  margin: 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 14.5px;
+  color: var(--text-muted);
+}
+
+.search-looking b {
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.search-dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+
+.search-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+  animation: searchDot 1.1s ease-in-out infinite;
+}
+
+.search-dots i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.search-dots i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes searchDot {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.search-found {
+  animation: newsIn 0.3s ease;
+}
+
+@keyframes newsIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.note-snippet mark {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-radius: 4px;
+  padding: 0 3px;
+  font-weight: 600;
+}
+
+/* ---------- in-note find: highlights + floating pill ---------- */
+::highlight(companion-find) {
+  background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: inherit;
+}
+
+::highlight(companion-find-current) {
+  background-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.find-pill {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 16px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--accent-line);
+  box-shadow: var(--shadow-2);
+  animation: toastIn 0.3s cubic-bezier(0.3, 1.4, 0.4, 1);
+}
+
+.find-pill-q {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 13.5px;
+  color: var(--accent-ink);
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.find-pill-count {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.find-pill button {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.find-pill button:hover {
+  border-color: var(--accent-line);
+  color: var(--accent-ink);
+}
+
+.find-pill button svg {
+  width: 10px;
+  height: 10px;
+}
+
+.find-pill-close {
+  font-size: 11px;
+}
+
+/* ---------- menus that open upward near the bottom of the screen ---------- */
+.menu.menu-up {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
+/* ---------- calendar: "show on dashboard" preference ---------- */
+.cal-spine-pref {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: -6px 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.cal-spine-pref input {
+  width: 13px;
+  height: 13px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.cal-spine-pref:hover {
+  color: var(--text-secondary);
+}

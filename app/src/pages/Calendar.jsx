@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FaArrowLeft, FaChevronLeft, FaChevronRight, FaPlus, FaTrash } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { setCalendarEvent, deleteCalendarEvent } from '../services/library';
+import { setCalendarEvent, deleteCalendarEvent, setDashboardUpcomingVisible } from '../services/library';
+import { eventCountdownLabel, formatEventTime } from '../utils/eventTime';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = [
@@ -46,9 +47,25 @@ const Calendar = () => {
   const [view, setView] = useState({ year: today.getFullYear(), month: today.getMonth() });
   const [selected, setSelected] = useState(todayKey);
   const [draftTitle, setDraftTitle] = useState('');
+  const [draftTime, setDraftTime] = useState('');
   const [draftColor, setDraftColor] = useState(EVENT_COLORS[0]);
   const [slide, setSlide] = useState('');
   const titleRef = useRef(null);
+
+  // Esc → back to the dashboard (unless typing in a field — then it just blurs).
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      const el = document.activeElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+        el.blur();
+        return;
+      }
+      navigate('/dashboard');
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [navigate]);
 
   const events = useMemo(() => Object.values(profile?.events || {}), [profile?.events]);
   const eventsByDay = useMemo(() => {
@@ -65,7 +82,10 @@ const Calendar = () => {
     () =>
       events
         .filter((ev) => ev?.date && daysFromToday(ev.date) >= 0)
-        .sort((a, b) => a.date.localeCompare(b.date))
+        .sort(
+          (a, b) =>
+            a.date.localeCompare(b.date) || (a.time || '99:99').localeCompare(b.time || '99:99'),
+        )
         .slice(0, 30),
     [events],
   );
@@ -107,15 +127,23 @@ const Calendar = () => {
     setSelected(todayKey);
   };
 
-  const selectedEvents = eventsByDay.get(selected) || [];
+  const selectedEvents = [...(eventsByDay.get(selected) || [])].sort((a, b) =>
+    (a.time || '99:99').localeCompare(b.time || '99:99'),
+  );
   const selectedDelta = daysFromToday(selected);
 
   const handleAddEvent = async () => {
     const title = draftTitle.trim();
     if (!title || !firebaseUser) return;
     setDraftTitle('');
+    setDraftTime('');
     try {
-      await setCalendarEvent(firebaseUser.uid, { date: selected, title, color: draftColor });
+      await setCalendarEvent(firebaseUser.uid, {
+        date: selected,
+        time: draftTime,
+        title,
+        color: draftColor,
+      });
       titleRef.current?.focus();
     } catch (err) {
       console.error('Failed to add event', err);
@@ -151,6 +179,19 @@ const Calendar = () => {
       <div className="calendar-page">
         <aside className="cal-spine cal-card">
           <h3 className="cal-card-title">Up next</h3>
+          <label className="cal-spine-pref" title="Also show these reminders on the dashboard sidebar">
+            <input
+              type="checkbox"
+              checked={profile?.showUpcomingOnDashboard !== false}
+              onChange={(e) =>
+                firebaseUser &&
+                setDashboardUpcomingVisible(firebaseUser.uid, e.target.checked).catch((err) =>
+                  console.error('Failed to save preference', err),
+                )
+              }
+            />
+            <span>Show on dashboard</span>
+          </label>
           {spineItems.length === 0 ? (
             <p className="cal-empty cal-spine-empty">Nothing ahead — clear skies.</p>
           ) : (
@@ -174,7 +215,10 @@ const Calendar = () => {
                   <span className="cal-spine-dot" style={{ background: ev.color || 'var(--accent)' }} />
                   <span className="cal-spine-text">
                     <strong>{ev.title}</strong>
-                    <em className={ev.delta <= 3 ? 'soon' : ''}>{relativeLabel(ev.delta)}</em>
+                    <em className={ev.delta <= 3 ? 'soon' : ''}>
+                      {eventCountdownLabel(ev)}
+                      {ev.time ? ` · ${formatEventTime(ev.time)}` : ''}
+                    </em>
                   </span>
                 </button>
               ))}
@@ -270,6 +314,13 @@ const Calendar = () => {
                     aria-label="Event color"
                   />
                 ))}
+                <input
+                  type="time"
+                  className="cal-time-input"
+                  value={draftTime}
+                  onChange={(e) => setDraftTime(e.target.value)}
+                  title="Time (optional)"
+                />
                 <button
                   type="button"
                   className="cal-add-btn"
@@ -290,6 +341,7 @@ const Calendar = () => {
                   <div key={ev.id} className="cal-event">
                     <span className="cal-event-dot" style={{ background: ev.color || 'var(--accent)' }} />
                     <span className="cal-event-title">{ev.title}</span>
+                    {ev.time && <span className="cal-event-time">{formatEventTime(ev.time)}</span>}
                     <button
                       type="button"
                       className="cal-event-del"

@@ -17,7 +17,7 @@ const CLASS_PALETTE = [
 ];
 
 // Create + edit sheet for a class: name, visible color palette, live preview.
-const AddClassSheet = ({ open, onClose, editTarget = null, onSaved }) => {
+const AddClassSheet = ({ open, onClose, editTarget = null, onSaved, onCreated }) => {
   const { firebaseUser } = useAuth();
   const [name, setName] = useState('');
   const [color, setColor] = useState(CLASS_PALETTE[0].color);
@@ -62,8 +62,9 @@ const AddClassSheet = ({ open, onClose, editTarget = null, onSaved }) => {
         }
         onSaved?.('Class updated');
       } else {
-        await createClass(firebaseUser.uid, { name: cleanName, color });
+        const createdId = await createClass(firebaseUser.uid, { name: cleanName, color });
         onSaved?.('Class added');
+        onCreated?.(createdId);
       }
       onClose();
     } catch (err) {
