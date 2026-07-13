@@ -1,23 +1,38 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    function isVerified() {
-      // Email verification temporarily disabled. To restore it, re-add:
-      //   && request.auth.token.email_verified == true
+    function isAuiUser() {
+      // Email verification remains optional while the app is in testing.
       return request.auth != null
         && request.auth.token.email.matches('.*@aui\\.ma');
     }
 
+    function isOwner(userId) {
+      return isAuiUser() && request.auth.uid == userId;
+    }
+
+    function isAllowedImage(maxBytes) {
+      return request.resource != null
+        && request.resource.size <= maxBytes
+        && request.resource.contentType.matches('image/(jpeg|png|webp|gif|avif)');
+    }
+
     match /avatars/{userId}/{fileName} {
-      allow read, write: if isVerified() && request.auth.uid == userId;
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && isAllowedImage(5 * 1024 * 1024);
     }
 
     match /notes/{userId}/{noteId}/{fileName} {
-      allow read, write: if isVerified() && request.auth.uid == userId;
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && isAllowedImage(10 * 1024 * 1024);
     }
 
     match /templates/{userId}/{fileName} {
-      allow read, write: if isVerified() && request.auth.uid == userId;
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && isAllowedImage(10 * 1024 * 1024);
     }
 
     match /{allPaths=**} {

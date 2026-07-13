@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/authState';
 import { storage } from '../firebase';
 import ScreenLoader from '../components/ui/ScreenLoader';
+import {
+  AVATAR_MAX_BYTES,
+  createImageObjectName,
+  IMAGE_ACCEPT,
+  validateImageFile,
+} from '../utils/imageUpload';
 
 const MAJORS = [
   'Computer Science',
@@ -48,7 +54,11 @@ const ProfileSetup = () => {
     setUploading(true);
     setError('');
     try {
-      const ref = storageRef(storage, `avatars/${firebaseUser.uid}/${Date.now()}-${file.name}`);
+      validateImageFile(file, { maxBytes: AVATAR_MAX_BYTES, label: 'Profile photo' });
+      const ref = storageRef(
+        storage,
+        `avatars/${firebaseUser.uid}/${createImageObjectName(file, 'avatar')}`,
+      );
       await uploadBytes(ref, file, {
         contentType: file.type || undefined,
         cacheControl: 'public,max-age=31536000,immutable',
@@ -84,7 +94,7 @@ const ProfileSetup = () => {
         <div className="centered">
           <label className="avatar-picker" style={{ backgroundImage: `url(${photoUrl})` }}>
             {!photoUrl && <span>PFP</span>}
-            <input type="file" accept="image/*" onChange={(e) => handleUpload(e.target.files[0])} hidden />
+            <input type="file" accept={IMAGE_ACCEPT} onChange={(e) => handleUpload(e.target.files[0])} hidden />
           </label>
           <p className="status-text">{uploading ? 'Uploading portrait…' : 'Tap to upload PFP'}</p>
         </div>
@@ -105,7 +115,7 @@ const ProfileSetup = () => {
             setError('');
           }}
         />
-        <p className="status-text">Your major configures the future University Hub.</p>
+        <p className="status-text">Your major helps personalize your profile.</p>
         <datalist id="major-options">
           {filteredMajors.map((item) => (
             <option key={item} value={item} />

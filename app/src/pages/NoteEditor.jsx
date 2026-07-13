@@ -16,8 +16,12 @@ import {
   FaImage,
   FaIndent,
   FaItalic,
+  FaFeatherAlt,
+  FaLightbulb,
   FaLink,
   FaLock,
+  FaMagic,
+  FaHistory,
   FaLockOpen,
   FaListOl,
   FaListUl,
@@ -25,27 +29,62 @@ import {
   FaPaste,
   FaPlus,
   FaQuoteRight,
+  FaRegStar,
+  FaSlidersH,
+  FaSpellCheck,
   FaStar,
   FaStrikethrough,
   FaTable,
+  FaThLarge,
+  FaTimes,
   FaTrash,
   FaUnderline,
   FaUndo,
 } from 'react-icons/fa';
 import { Rnd } from 'react-rnd';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { createNoteTemplate, getNote, saveNoteContentDelta, updateNote } from '../services/library';
+import {
+  createNoteTemplate,
+  getNote,
+  saveNoteContentDelta,
+  updateNote,
+  saveNoteVersion,
+  getNoteVersion,
+  saveSagePreset,
+  deleteSagePreset,
+  setDefaultSagePreset,
+} from '../services/library';
+import { callSageImprove, sanitizeSageLayout, SAGE_STYLES, SAGE_PHRASES, SAGE_ADDONS } from '../services/sage';
 import { WORKSPACE_WIDTH } from '../data/noteTemplates';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/authState';
+import {
+  DASHBOARD_RETURN_CLASS_KEY,
+  NOTE_DRAFT_STORAGE_PREFIX,
+  TEMPLATE_DRAFT_STORAGE_KEY,
+  TEMPLATE_RESULT_STORAGE_KEY,
+} from '../utils/offlineData';
 import ScreenLoader from '../components/ui/ScreenLoader';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
 import useNetworkStatus from '../hooks/useNetworkStatus';
+import {
+  createImageObjectName,
+  IMAGE_ACCEPT,
+  NOTE_IMAGE_MAX_BYTES,
+  validateImageFile,
+} from '../utils/imageUpload';
 // Lazy-loaded so TipTap is code-split into its own chunk and never weighs down the
 // main bundle while the cutover flag is off.
 const RichTextBlock = lazy(() => import('../components/editor/RichTextBlock'));
 
 const PAGE_HEIGHT = 720;
+// Row icons for the mini Sage menu (ids match SAGE_STYLES in services/sage.js).
+const SAGE_STYLE_ICONS = {
+  polish: <FaSpellCheck />,
+  restructure: <FaThLarge />,
+  examples: <FaLightbulb />,
+  simplify: <FaFeatherAlt />,
+};
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 72;
 const PRIORITY_Z_OFFSET = 100000;
@@ -53,10 +92,6 @@ const COLLAPSED_HEIGHT = 34;
 const AUTO_SAVE_IDLE_MS = 22000;
 const LOCAL_DRAFT_IDLE_MS = 1000;
 const META_TOUCH_INTERVAL_MS = 120000;
-const DRAFT_STORAGE_PREFIX = 'companion-note-draft';
-const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
-const TEMPLATE_DRAFT_STORAGE_KEY = 'companion:new-note-draft';
-const TEMPLATE_RESULT_STORAGE_KEY = 'companion:new-note-template-result';
 const CUSTOM_TEMPLATE_PREFIX = 'custom:';
 const HISTORY_LIMIT = 20;
 const TEXT_HISTORY_IDLE_MS = 1200;
@@ -236,7 +271,7 @@ const NoteEditor = () => {
     typeof location.state?.templateName === 'string' && location.state.templateName.trim()
       ? location.state.templateName.trim()
       : 'Custom template';
-  const { firebaseUser } = useAuth();
+  const { firebaseUser, profile } = useAuth();
   const [note, setNote] = useState(() =>
     isTemplateMode ? { title: templateBuilderName, templateBuilder: true } : null,
   );
@@ -281,7 +316,21 @@ const NoteEditor = () => {
   const [blockMenuPos, setBlockMenuPos] = useState({ left: 12, top: 72 });
   const [renamingBlockId, setRenamingBlockId] = useState('');
   const [blockTitleDraft, setBlockTitleDraft] = useState('');
-  const [historyVersion, setHistoryVersion] = useState(0);
+  const [sageMenuOpen, setSageMenuOpen] = useState(false);
+  const [sageBusy, setSageBusy] = useState('');
+  const [sagePhrase, setSagePhrase] = useState('');
+  const [sageError, setSageError] = useState('');
+  const [sageView, setSageView] = useState('improved');
+  const sageMenuRef = useRef(null);
+  const sagePhraseTimerRef = useRef(null);
+  // Customize popout: compose a base style + add-ons, optionally saved as a named preset.
+  const [sageCustomizeOpen, setSageCustomizeOpen] = useState(false);
+  const [custBase, setCustBase] = useState('restructure');
+  const [custAddons, setCustAddons] = useState([]);
+  const [custTopic, setCustTopic] = useState('');
+  const [custName, setCustName] = useState('');
+  const [custMakeDefault, setCustMakeDefault] = useState(false);
+  const [, setHistoryVersion] = useState(0);
   const addMenuRef = useRef(null);
   const toolbarMoreRef = useRef(null);
   const tablePickerTriggerRef = useRef(null);
@@ -375,7 +424,7 @@ const NoteEditor = () => {
 
   const draftKey = useMemo(() => {
     if (!firebaseUser || isTemplateMode) return '';
-    return `${DRAFT_STORAGE_PREFIX}:${firebaseUser.uid}:${classId}:${noteId}`;
+    return `${NOTE_DRAFT_STORAGE_PREFIX}:${firebaseUser.uid}:${classId}:${noteId}`;
   }, [firebaseUser, classId, noteId, isTemplateMode]);
 
   const updateSaveStatus = useCallback((next) => {
@@ -570,13 +619,13 @@ const NoteEditor = () => {
     }, LOCAL_DRAFT_IDLE_MS);
   }, [draftKey, getBlocksSnapshot]);
 
-  const markDirty = () => {
+  const markDirty = useCallback(() => {
     dirtyRef.current = true;
     changeVersionRef.current += 1;
     updateSaveStatus('Unsaved changes');
     scheduleLocalDraft();
     scheduleSave();
-  };
+  }, [scheduleLocalDraft, scheduleSave, updateSaveStatus]);
 
   const pushHistory = useCallback(
     (reason) => {
@@ -615,7 +664,7 @@ const NoteEditor = () => {
       suppressHistoryRef.current = false;
       markDirty();
     },
-    [seedTextDrafts],
+    [markDirty, seedTextDrafts],
   );
 
   useEffect(() => {
@@ -1105,10 +1154,11 @@ const NoteEditor = () => {
   }, [fontSizeValue, fontSizeEditing]);
 
   useEffect(() => {
-    if (!activeTextBlock) return;
-    setToolbarFontSize(activeTextBlock.fontSize || BLOCK_DEFAULTS.text.fontSize);
-    setToolbarLineSpacing(activeTextBlock.lineHeight || 1.4);
-    setToolbarColor(activeTextBlock.textColor || '#ffffff');
+    const block = blocksRef.current.find((item) => item.id === activeTextBlock?.id && item.type === 'text');
+    if (!block) return;
+    setToolbarFontSize(block.fontSize || BLOCK_DEFAULTS.text.fontSize);
+    setToolbarLineSpacing(block.lineHeight || 1.4);
+    setToolbarColor(block.textColor || '#ffffff');
     setToolbarHighlightColor('#fff2a8');
     setToolbarFontFamily(FONT_FAMILY_OPTIONS[0].value);
     setToolbarBold(false);
@@ -1348,11 +1398,12 @@ const NoteEditor = () => {
     }
     setImageUploading(true);
     try {
+      validateImageFile(file, { maxBytes: NOTE_IMAGE_MAX_BYTES, label: 'Note image' });
       const { width, height } = await loadImageDimensions(file);
       const size = fitImageSize(width, height);
       const assetPath = isTemplateMode
-        ? `templates/${firebaseUser.uid}/${Date.now()}-${file.name}`
-        : `notes/${firebaseUser.uid}/${noteId}/${Date.now()}-${file.name}`;
+        ? `templates/${firebaseUser.uid}/${createImageObjectName(file, 'template')}`
+        : `notes/${firebaseUser.uid}/${noteId}/${createImageObjectName(file, 'note')}`;
       const ref = storageRef(storage, assetPath);
       await uploadBytes(ref, file, {
         contentType: file.type || undefined,
@@ -1509,6 +1560,187 @@ const NoteEditor = () => {
     setBlockTitleDraft('');
   };
 
+  useEffect(() => {
+    if (note?.sageView) setSageView(note.sageView);
+  }, [note?.sageView]);
+
+  useEffect(() => {
+    if (!sageMenuOpen) return undefined;
+    const onDown = (event) => {
+      if (sageMenuRef.current && !sageMenuRef.current.contains(event.target)) setSageMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [sageMenuOpen]);
+
+  const startSagePhrases = (styleId) => {
+    const phrases = SAGE_PHRASES[styleId] || SAGE_PHRASES.polish;
+    let i = 0;
+    setSagePhrase(phrases[0]);
+    sagePhraseTimerRef.current = setInterval(() => {
+      i = (i + 1) % phrases.length;
+      setSagePhrase(phrases[i]);
+    }, 2400);
+  };
+
+  const stopSagePhrases = () => {
+    clearInterval(sagePhraseTimerRef.current);
+    sagePhraseTimerRef.current = null;
+  };
+
+  // Bring the camera to the result: after Sage lands a new layout the viewport glides to
+  // the top-center of the content, so the reveal happens in front of the user even if
+  // they were scrolled far away.
+  const centerViewportOnBlocks = (list) => {
+    const scroller = canvasScrollRef.current;
+    if (!scroller || !list?.length) return;
+    requestAnimationFrame(() => {
+      const minX = Math.min(...list.map((b) => b.x || 0));
+      const maxX = Math.max(...list.map((b) => (b.x || 0) + (b.w || BLOCK_DEFAULTS.text.w)));
+      const minY = Math.min(...list.map((b) => b.y || 0));
+      scroller.scrollTo({
+        left: Math.max(0, Math.round((minX + maxX) / 2 - scroller.clientWidth / 2)),
+        top: Math.max(0, Math.round(minY - 48)),
+        behavior: 'smooth',
+      });
+    });
+  };
+
+  const applySageResult = (blocksIn, height) => {
+    pushHistory('sage');
+    const normalized = normalizeBlocks(blocksIn);
+    setBlocks(normalized);
+    seedTextDrafts(normalized);
+    setCanvasHeight(Math.max(PAGE_HEIGHT, height || PAGE_HEIGHT));
+    markDirty();
+    centerViewportOnBlocks(normalized);
+  };
+
+  const runSage = async (styleId, { addons = [], topic = '' } = {}) => {
+    setSageMenuOpen(false);
+    if (sageBusy || !firebaseUser || !note || note.missing || isTemplateMode) return;
+    const snapshot = cloneBlocks(getBlocksSnapshot());
+    const hasText = snapshot.some(
+      (b) => b.type === 'text' && stripHtmlToPlainText(b.value).trim().length > 20,
+    );
+    if (!hasText) {
+      setSageError('Write a little first — Sage needs something to work with.');
+      return;
+    }
+    setSageError('');
+    setSageBusy(styleId);
+    startSagePhrases(styleId);
+    try {
+      if (!note.sageHasVersions) {
+        await saveNoteVersion(firebaseUser.uid, classId, noteId, 'original', snapshot, canvasHeightRef.current);
+      }
+      const result = await callSageImprove({
+        styleId,
+        noteTitle: note.title || '',
+        blocks: snapshot,
+        canvasHeight: canvasHeightRef.current,
+        addons,
+        topic,
+      });
+      const clean = sanitizeSageLayout(result?.blocks || [], snapshot);
+      if (!clean) throw new Error('Sage returned an unusable result — please try again.');
+      applySageResult(clean.blocks, clean.canvasHeight);
+      setSageView('improved');
+      await updateNote(firebaseUser.uid, classId, noteId, {
+        sageHasVersions: true,
+        sageView: 'improved',
+      });
+      setNote((prev) => (prev ? { ...prev, sageHasVersions: true, sageView: 'improved' } : prev));
+    } catch (err) {
+      console.error('Sage failed', err);
+      setSageError(err?.message || 'Sage hit a snag — please try again.');
+    } finally {
+      stopSagePhrases();
+      setSageBusy('');
+    }
+  };
+
+  // Flip between the AI-improved note and your original. The visible version always
+  // lives in content/main; the hidden one waits in its named slot.
+  const toggleSageView = async () => {
+    if (sageBusy || !firebaseUser || !note?.sageHasVersions) return;
+    const current = sageView || 'improved';
+    const next = current === 'improved' ? 'original' : 'improved';
+    try {
+      const snapshot = cloneBlocks(getBlocksSnapshot());
+      await saveNoteVersion(firebaseUser.uid, classId, noteId, current, snapshot, canvasHeightRef.current);
+      const other = await getNoteVersion(firebaseUser.uid, classId, noteId, next);
+      if (!other) return;
+      applySageResult(other.blocks, other.canvasHeight);
+      setSageView(next);
+      updateNote(firebaseUser.uid, classId, noteId, { sageView: next }).catch(() => {});
+      setNote((prev) => (prev ? { ...prev, sageView: next } : prev));
+    } catch (err) {
+      console.error('Version switch failed', err);
+    }
+  };
+
+  // ---- Sage presets (profile-synced via AuthContext's onSnapshot) ----
+  const sageDefaultId = profile?.sageDefaultPreset || '';
+  const sagePresetList = useMemo(() => {
+    const list = Object.values(profile?.sagePresets || {}).sort(
+      (a, b) => (a.createdAt || 0) - (b.createdAt || 0),
+    );
+    // The ⭐ default preset leads the pack.
+    return list.sort((a, b) => (b.id === sageDefaultId) - (a.id === sageDefaultId));
+  }, [profile?.sagePresets, sageDefaultId]);
+
+  const sagePresetHint = (preset) => {
+    const base = SAGE_STYLES.find((s) => s.id === preset.base)?.label || preset.base;
+    const extras = (preset.addons || [])
+      .map((id) => SAGE_ADDONS.find((a) => a.id === id)?.label)
+      .filter(Boolean);
+    return [base, ...extras].join(' + ');
+  };
+
+  const openSageCustomize = () => {
+    setSageMenuOpen(false);
+    setCustBase('restructure');
+    setCustAddons([]);
+    setCustTopic('');
+    setCustName('');
+    setCustMakeDefault(false);
+    setSageCustomizeOpen(true);
+  };
+
+  const runSageCustom = () => {
+    setSageCustomizeOpen(false);
+    runSage(custBase, { addons: custAddons, topic: custTopic.trim() });
+  };
+
+  const saveSageCustom = async (alsoRun) => {
+    if (!firebaseUser || !custName.trim()) return;
+    try {
+      const id = await saveSagePreset(firebaseUser.uid, {
+        name: custName,
+        base: custBase,
+        addons: custAddons,
+        topic: custTopic,
+      });
+      if (custMakeDefault) await setDefaultSagePreset(firebaseUser.uid, id);
+    } catch (err) {
+      console.error('Preset save failed', err);
+    }
+    setSageCustomizeOpen(false);
+    if (alsoRun) runSage(custBase, { addons: custAddons, topic: custTopic.trim() });
+  };
+
+  const toggleDefaultSagePreset = (id) => {
+    if (!firebaseUser) return;
+    setDefaultSagePreset(firebaseUser.uid, sageDefaultId === id ? '' : id).catch(() => {});
+  };
+
+  const removeSagePreset = (id) => {
+    if (!firebaseUser) return;
+    deleteSagePreset(firebaseUser.uid, id).catch(() => {});
+    if (sageDefaultId === id) setDefaultSagePreset(firebaseUser.uid, '').catch(() => {});
+  };
+
   const togglePriority = (id) => {
     pushHistory('priority');
     setBlocks((prev) => {
@@ -1567,7 +1799,7 @@ const NoteEditor = () => {
     scheduleTextIdleReset();
   };
 
-  const canUndo = useMemo(() => historyRef.current.length > 1, [historyVersion]);
+  const canUndo = historyRef.current.length > 1;
 
   const handleUndo = () => {
     if (historyRef.current.length <= 1) return;
@@ -1970,7 +2202,7 @@ const NoteEditor = () => {
     if (action === 'toggle-lock') {
       updateBlock(
         blockId,
-        { locked: !Boolean(contextMenuBlock?.locked) },
+        { locked: !contextMenuBlock?.locked },
         { recordHistory: true, reason: 'pin' },
       );
       setContextMenu(null);
@@ -2591,6 +2823,152 @@ const NoteEditor = () => {
         </div>
       </header>
       <section className="note-editor">
+        {(sageBusy || sageError) && (
+          <div className={`sage-overlay ${sageError ? 'error' : ''}`}>
+            <div className="sage-panel">
+              {sageBusy ? (
+                <>
+                  <span className="sage-spark" aria-hidden="true">✨</span>
+                  <p className="sage-phrase">{sagePhrase}</p>
+                  <span className="search-dots" aria-hidden="true"><i /><i /><i /></span>
+                </>
+              ) : (
+                <>
+                  <p className="sage-phrase">{sageError}</p>
+                  <button type="button" className="btn btn-soft btn-sm" onClick={() => setSageError('')}>
+                    Okay
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+        {sageCustomizeOpen && (
+          <div className="sage-modal-backdrop" onClick={() => setSageCustomizeOpen(false)}>
+            <div className="sage-modal" role="dialog" aria-label="Customize Sage" onClick={(e) => e.stopPropagation()}>
+              <div className="sage-modal-head">
+                <span className="sage-spark" aria-hidden="true">✨</span>
+                <h3>Customize Sage</h3>
+                <button
+                  type="button"
+                  className="sage-modal-close"
+                  onClick={() => setSageCustomizeOpen(false)}
+                  title="Close"
+                >
+                  <FaTimes />
+                </button>
+              </div>
+              <p className="sage-modal-label">Base style</p>
+              <div className="sage-chip-row">
+                {SAGE_STYLES.map((style) => (
+                  <button
+                    key={style.id}
+                    type="button"
+                    className={`sage-chip ${custBase === style.id ? 'active' : ''}`}
+                    title={style.hint}
+                    onClick={() => setCustBase(style.id)}
+                  >
+                    {style.label}
+                  </button>
+                ))}
+              </div>
+              <p className="sage-modal-label">Add-ons</p>
+              <div className="sage-chip-row">
+                {SAGE_ADDONS.map((addon) => (
+                  <button
+                    key={addon.id}
+                    type="button"
+                    className={`sage-chip ${custAddons.includes(addon.id) ? 'active' : ''}`}
+                    title={addon.hint}
+                    onClick={() =>
+                      setCustAddons((prev) =>
+                        prev.includes(addon.id) ? prev.filter((id) => id !== addon.id) : [...prev, addon.id],
+                      )
+                    }
+                  >
+                    {addon.label}
+                  </button>
+                ))}
+              </div>
+              <p className="sage-modal-label">Topic (optional)</p>
+              <input
+                type="text"
+                className="sage-modal-input"
+                value={custTopic}
+                maxLength={120}
+                placeholder='e.g. "Binary search trees" — helps Sage aim'
+                onChange={(e) => setCustTopic(e.target.value)}
+              />
+              <div className="sage-modal-saverow">
+                <input
+                  type="text"
+                  className="sage-modal-input"
+                  value={custName}
+                  maxLength={40}
+                  placeholder="Name it to save as a preset"
+                  onChange={(e) => setCustName(e.target.value)}
+                />
+                <label className="sage-modal-default" title="Show first in the Sage menu">
+                  <input
+                    type="checkbox"
+                    checked={custMakeDefault}
+                    onChange={(e) => setCustMakeDefault(e.target.checked)}
+                  />
+                  <FaStar aria-hidden="true" /> default
+                </label>
+              </div>
+              {sagePresetList.length > 0 && (
+                <>
+                  <p className="sage-modal-label">Your presets</p>
+                  <div className="sage-modal-presets">
+                    {sagePresetList.map((preset) => (
+                      <div key={preset.id} className="sage-preset-row">
+                        <button
+                          type="button"
+                          className={`sage-preset-star ${preset.id === sageDefaultId ? 'is-default' : ''}`}
+                          title={preset.id === sageDefaultId ? 'Default — click to unset' : 'Make default'}
+                          onClick={() => toggleDefaultSagePreset(preset.id)}
+                        >
+                          {preset.id === sageDefaultId ? <FaStar /> : <FaRegStar />}
+                        </button>
+                        <span className="sage-preset-name">{preset.name}</span>
+                        <small className="sage-preset-recipe">{sagePresetHint(preset)}</small>
+                        <button
+                          type="button"
+                          className="sage-preset-del"
+                          title="Delete preset"
+                          onClick={() => removeSagePreset(preset.id)}
+                        >
+                          <FaTrash />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <div className="sage-modal-actions">
+                <button type="button" className="btn btn-soft" onClick={() => setSageCustomizeOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-soft"
+                  disabled={!custName.trim()}
+                  onClick={() => saveSageCustom(false)}
+                >
+                  Save preset
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-fill"
+                  onClick={() => (custName.trim() ? saveSageCustom(true) : runSageCustom())}
+                >
+                  {custName.trim() ? 'Save & run' : 'Run once'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {imageDropActive && (
           <div className="canvas-drop-overlay" aria-hidden="true">
             <div className="canvas-drop-hint">
@@ -2831,6 +3209,70 @@ const NoteEditor = () => {
         </div>
       </section>
       <div className="note-fab" ref={addMenuRef}>
+        {note?.sageHasVersions && !isTemplateMode && (
+          <button
+            type="button"
+            className={`note-action-btn sage-version-btn ${sageView === 'original' ? 'on-original' : ''}`}
+            onClick={toggleSageView}
+            disabled={Boolean(sageBusy)}
+            title={sageView === 'original' ? 'Viewing your original — switch to improved' : 'View your original note'}
+          >
+            <FaHistory />
+          </button>
+        )}
+        {!isTemplateMode && (
+          <div className="sage-menu-wrap" ref={sageMenuRef}>
+            <button
+              type="button"
+              className={`note-action-btn sage-btn ${sageBusy ? 'busy' : ''}`}
+              onClick={() => setSageMenuOpen((prev) => !prev)}
+              disabled={Boolean(sageBusy)}
+              title="Sage — AI help"
+            >
+              <FaMagic />
+            </button>
+            {sageMenuOpen && (
+              <div className="sage-menu" role="menu">
+                <div className="sage-menu-head">
+                  <span className="sage-spark" aria-hidden="true">✨</span>
+                  <span>Sage</span>
+                </div>
+                <div className="sage-menu-list">
+                  {SAGE_STYLES.map((style) => (
+                    <button
+                      key={style.id}
+                      type="button"
+                      className="sage-menu-item"
+                      title={style.hint}
+                      onClick={() => runSage(style.id)}
+                    >
+                      <span className="sage-item-icon">{SAGE_STYLE_ICONS[style.id]}</span>
+                      {style.label}
+                    </button>
+                  ))}
+                  {sagePresetList.length > 0 && <div className="sage-menu-sep" />}
+                  {sagePresetList.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className="sage-menu-item preset"
+                      title={sagePresetHint(preset)}
+                      onClick={() => runSage(preset.base, { addons: preset.addons || [], topic: preset.topic || '' })}
+                    >
+                      <span className="sage-item-icon star">
+                        {preset.id === sageDefaultId ? <FaStar /> : <FaRegStar />}
+                      </span>
+                      {preset.name}
+                    </button>
+                  ))}
+                </div>
+                <button type="button" className="sage-menu-customize" onClick={openSageCustomize}>
+                  <FaSlidersH /> Customize…
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         <button
           type="button"
           className="note-action-btn"
@@ -2869,7 +3311,7 @@ const NoteEditor = () => {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={IMAGE_ACCEPT}
           aria-hidden="true"
           tabIndex={-1}
           style={{

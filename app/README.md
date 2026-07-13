@@ -55,7 +55,7 @@ Companion/
 │  │  ├─ firebase.js         Firebase init (config + Firestore cache)
 │  │  ├─ index.css           base + themes (Daylight/Lamplight, OKLCH)
 │  │  └─ dashboard-v3.css    dashboard redesign layer
-│  ├─ functions/             Cloud Functions (currently empty — see note)
+│  ├─ functions/             Sage AI + cascading deletion Cloud Functions
 │  ├─ firebase.json          hosting + rules + functions config
 │  ├─ .firebaserc            default project = companion-c4a42
 │  ├─ firestore.rules        Firestore security rules
@@ -109,6 +109,8 @@ Run from `app/`:
 | `npm run build` | Production build → `dist/` (what Firebase Hosting serves) |
 | `npm run preview` | Serve the built `dist/` locally |
 | `npm run lint` | Run ESLint |
+| `npm test` | Run unit tests, then Firestore/Storage rules tests in local emulators |
+| `npm run verify:hosting -- <url>` | Verify the deployed site's security response headers |
 
 ---
 
@@ -117,7 +119,10 @@ Run from `app/`:
 Firebase web config is in [`src/firebase.js`](src/firebase.js) and is **committed on purpose**.
 A Firebase web `apiKey` is **not a secret** — it only identifies the project to the client.
 All access is enforced server-side by **Firebase Auth + Security Rules**, not by hiding the key.
-There are no `.env` files to set up.
+There are no private client-side secrets to set up. To stage Firebase App Check, set the
+public reCAPTCHA Enterprise site key as `VITE_FIREBASE_APPCHECK_SITE_KEY`. Cloud Functions
+uses the deploy parameter `ENFORCE_APP_CHECK`, which defaults to `false` for local testing;
+enable it only after the deployed web client is sending valid App Check tokens.
 
 If you ever point this at a different Firebase project, replace the `firebaseConfig` object in
 `src/firebase.js` and the project id in `.firebaserc`.
@@ -183,10 +188,45 @@ Cloud Storage paths: `avatars/{uid}/…`, `notes/{uid}/{noteId}/…`, `templates
 
 ### Cloud Functions
 
-[`functions/`](functions) exists (Node 24) but currently exports **no functions** —
-`functions/index.js` only calls `admin.initializeApp()`. **Do not deploy `functions`** (a blanket
-`firebase deploy` may prompt to delete previously-deployed functions). The deploy commands below
-intentionally skip it.
+[`functions/`](functions) runs on Node 24 and exports the Sage AI callable plus authenticated,
+cascading note/class deletion callables. Sage keeps its provider key in the
+`DEEPSEEK_API_KEY` Firebase secret and stores rate-limit counters in the server-only
+`sageUsage/{uid}` collection.
+
+Before the first Functions deploy:
+
+```powershell
+firebase functions:secrets:set DEEPSEEK_API_KEY
+```
+
+App Check is staged with the `ENFORCE_APP_CHECK` deploy parameter, which defaults to `false`
+while the app is being tested. Set the web client's `VITE_FIREBASE_APPCHECK_SITE_KEY` first,
+verify tokens in Firebase metrics, and then set the parameter to `true` on a later deploy.
+
+### Offline cache and device clearing
+
+Firestore uses its persistent multi-tab cache and note editing keeps UID-scoped recovery drafts
+in browser storage. Normal sign-out intentionally preserves this data for faster reloads and
+offline recovery. Settings also provides **Clear this device and sign out**, which removes only
+Companion browser-storage keys and clears Firestore's local cache; other tabs must be closed so
+Firebase can safely clear the shared IndexedDB database.
+
+### Historical orphan-image cleanup
+
+Future note/class deletions remove their Storage prefixes through authenticated callables. To
+audit images left behind by deletions made before that change, run the Admin script from
+`app/functions/`. It is read-only by default and requires Application Default Credentials:
+
+```powershell
+npm run cleanup:orphan-images -- --project companion-c4a42 --bucket companion-c4a42.firebasestorage.app
+```
+
+Review the dry-run list before allowing deletion. The project confirmation, 24-hour age window,
+and 1,000-object ceiling are deliberate safety checks:
+
+```powershell
+npm run cleanup:orphan-images -- --project companion-c4a42 --bucket companion-c4a42.firebasestorage.app --delete --confirm-project companion-c4a42
+```
 
 ---
 
@@ -203,14 +243,14 @@ firebase login                    # use 'firebase login --reauth' if it gets stu
 firebase use companion-c4a42      # confirm the active project (it's the default)
 ```
 
-### Full deploy (site + rules)
+### Full deploy (site + rules + functions)
 
 **PowerShell** — quote the comma-separated target list, or it errors with "No targets match":
 
 ```powershell
 cd D:\Companion\app
 npm run build
-firebase deploy --only "hosting,firestore:rules,storage"
+firebase deploy --only "hosting,firestore:rules,storage,functions"
 ```
 
 > Note the targets: `firestore:rules` (Firestore supports `:rules`/`:indexes`), but plain
@@ -222,7 +262,7 @@ firebase deploy --only "hosting,firestore:rules,storage"
 ```bash
 cd app
 npm run build
-firebase deploy --only hosting,firestore:rules,storage
+firebase deploy --only hosting,firestore:rules,storage,functions
 ```
 
 This ships:
@@ -230,11 +270,19 @@ This ships:
 - **Hosting** — the contents of `dist/` (built by `npm run build`), with an SPA rewrite so
   client-side routes resolve to `index.html`.
 - **Firestore rules** and **Storage rules**.
+- **Cloud Functions** for Sage and recursive note/class deletion.
 
 On success it prints the live URLs:
 
 - https://companion-c4a42.web.app
 - https://companion-c4a42.firebaseapp.com
+
+After deployment, verify the public headers and smoke-test login, note loading, upload, Sage,
+and deletion with a disposable test note:
+
+```powershell
+npm run verify:hosting -- https://companion-c4a42.web.app
+```
 
 Then **hard-refresh** the site (Ctrl+Shift+R) to drop the old cached bundle.
 
@@ -244,6 +292,7 @@ Then **hard-refresh** the site (Ctrl+Shift+R) to drop the old cached bundle.
 firebase deploy --only hosting                     # just the site (after npm run build)
 firebase deploy --only "firestore:rules,storage"   # just security rules (no rebuild needed)
 firebase deploy --only firestore:rules             # one ruleset
+firebase deploy --only functions                   # Sage + deletion backend
 ```
 
 > Rules deploys are independent of the build — you can push a rules fix without rebuilding.
@@ -255,13 +304,13 @@ firebase deploy --only firestore:rules             # one ruleset
 | Symptom | Cause / fix |
 |---|---|
 | `Error: Not in a Firebase app directory` | You're in the repo root. `cd app` first. |
-| `No targets … match '--only hosting firestore …'` | PowerShell split the list. **Quote it**: `--only "hosting,firestore:rules,storage"`. |
+| `No targets … match '--only hosting firestore …'` | PowerShell split the list. **Quote it**: `--only "hosting,firestore:rules,storage,functions"`. |
 | `Could not find rules for the following storage targets: rules` | Wrong target — use `storage`, not `storage:rules` (only Firestore takes `:rules`). |
 | `npm error … could not read package.json` | Same thing — run npm/firebase from `app/`, not the repo root. |
 | App stuck on **"We couldn't load your profile"** / console `Missing or insufficient permissions` | The **deployed** rules are rejecting the read. Deploy rules (`--only "firestore:rules,storage"`) and confirm you're logged in with an `@aui.ma` account. |
 | Login won't complete | `firebase login --reauth`; ensure the account is `@aui.ma`. |
 | Old UI / white native scrollbar after deploy | Stale cache — hard-refresh (Ctrl+Shift+R). |
-| `firebase deploy` asks to **delete functions** | You deployed `functions`. Use the targeted commands above (they skip it). |
+| A callable returns `not-found` | Deploy Functions with `firebase deploy --only functions`. |
 
 ---
 
@@ -271,7 +320,13 @@ firebase deploy --only firestore:rules             # one ruleset
   `@aui.ma` domain restriction is still enforced). To restore it, re-add the
   `request.auth.token.email_verified == true` check in `firestore.rules` / `storage.rules`,
   re-enable the gate in `AuthContext`/`ProtectedRoute`, then redeploy the rules.
-- `npm run lint` currently reports some **pre-existing** warnings/errors (legacy unused vars,
-  a few hook-deps). They don't block the production build.
+- **App Check enforcement is temporarily disabled** with `ENFORCE_APP_CHECK=false`; this is
+  independent from email verification and is intentional while test clients are changing.
+- `npm run lint`, the production build, unit tests, and Firebase Rules tests pass locally.
+- The checked-in Hosting headers require a Hosting deployment before they appear on the public
+  site. Use `npm run verify:hosting -- https://companion-c4a42.web.app` after deployment.
+- `react-rnd` is intentionally pinned to `10.5.2`. Version `10.5.3` currently pulls a
+  `react-draggable` build that references Node's `process` global in the browser and prevents
+  note canvases from opening under Vite.
 - The note editor's longer-term plan lives in [`docs/editor-phase3-plan.md`](../docs/editor-phase3-plan.md).
 - This is a private project; no open-source license is attached.

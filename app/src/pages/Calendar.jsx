@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FaArrowLeft, FaChevronLeft, FaChevronRight, FaPlus, FaTrash } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/authState';
 import { setCalendarEvent, deleteCalendarEvent, setDashboardUpcomingVisible } from '../services/library';
 import { eventCountdownLabel, formatEventTime } from '../utils/eventTime';
 

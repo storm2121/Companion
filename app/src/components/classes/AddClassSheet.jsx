@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FaCheck } from 'react-icons/fa';
 import { createClass, renameClass, updateClassColor } from '../../services/library';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../context/authState';
 
 // Calm, distinguishable tones tuned for both Daylight and Lamplight. Stored as
 // oklch strings; previously-saved hex colors keep rendering fine.

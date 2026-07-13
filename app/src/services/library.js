@@ -16,10 +16,15 @@ import {
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../firebase';
 
 const NOTE_CONTENT_DOC_ID = 'main';
 const DEFAULT_CANVAS_HEIGHT = 720;
+const CALLABLE_TIMEOUT_MS = 300000;
+const callDeleteClass = httpsCallable(functions, 'deleteClassCascade', { timeout: CALLABLE_TIMEOUT_MS });
+const callDeleteNote = httpsCallable(functions, 'deleteNoteCascade', { timeout: CALLABLE_TIMEOUT_MS });
+const callDeleteNotes = httpsCallable(functions, 'deleteNotesCascade', { timeout: CALLABLE_TIMEOUT_MS });
 const getNoteRef = (uid, classId, noteId) => doc(db, 'users', uid, 'classes', classId, 'notes', noteId);
 const getNoteContentRef = (uid, classId, noteId) =>
   doc(db, 'users', uid, 'classes', classId, 'notes', noteId, 'content', NOTE_CONTENT_DOC_ID);
@@ -131,23 +136,18 @@ export const renameClass = async (uid, classId, name) => {
 };
 
 export const reorderClasses = async (uid, orderedClasses) => {
-  const batch = writeBatch(db);
-  orderedClasses.forEach((item, index) => {
-    batch.update(doc(db, 'users', uid, 'classes', item.id), { order: index });
-  });
-  await batch.commit();
+  for (let offset = 0; offset < orderedClasses.length; offset += 400) {
+    const batch = writeBatch(db);
+    orderedClasses.slice(offset, offset + 400).forEach((item, index) => {
+      batch.update(doc(db, 'users', uid, 'classes', item.id), { order: offset + index });
+    });
+    await batch.commit();
+  }
 };
 
 export const deleteClass = async (uid, classId) => {
-  const notesRef = collection(db, 'users', uid, 'classes', classId, 'notes');
-  const notesSnap = await getDocs(notesRef);
-  const batch = writeBatch(db);
-  notesSnap.forEach((docSnap) => {
-    batch.delete(docSnap.ref);
-    batch.delete(getNoteContentRef(uid, classId, docSnap.id));
-  });
-  batch.delete(doc(db, 'users', uid, 'classes', classId));
-  await batch.commit();
+  if (!uid || !classId) return;
+  await callDeleteClass({ classId });
 };
 
 export const getClass = async (uid, classId) => {
@@ -193,27 +193,16 @@ export const createNote = async (uid, classId, payload = {}) => {
 };
 
 export const deleteNote = async (uid, classId, noteId) => {
-  const batch = writeBatch(db);
-  batch.delete(getNoteRef(uid, classId, noteId));
-  batch.delete(getNoteContentRef(uid, classId, noteId));
-  batch.update(doc(db, 'users', uid, 'classes', classId), {
-    noteCount: increment(-1),
-  });
-  await batch.commit();
+  if (!uid || !classId || !noteId) return;
+  await callDeleteNote({ classId, noteId });
 };
 
 export const deleteNotes = async (uid, classId, noteIds = []) => {
   if (!uid || !classId || !Array.isArray(noteIds) || !noteIds.length) return;
-  const batch = writeBatch(db);
-  noteIds.forEach((noteId) => {
-    if (!noteId) return;
-    batch.delete(getNoteRef(uid, classId, noteId));
-    batch.delete(getNoteContentRef(uid, classId, noteId));
-  });
-  batch.update(doc(db, 'users', uid, 'classes', classId), {
-    noteCount: increment(-noteIds.length),
-  });
-  await batch.commit();
+  const uniqueIds = [...new Set(noteIds.filter(Boolean))];
+  for (let offset = 0; offset < uniqueIds.length; offset += 100) {
+    await callDeleteNotes({ classId, noteIds: uniqueIds.slice(offset, offset + 100) });
+  }
 };
 
 export const setNotePinned = async (uid, classId, noteId, pinned) => {
@@ -438,55 +427,66 @@ export const moveNotes = async (uid, fromClassId, toClassId, notes = []) => {
     }),
   );
   const contentById = new Map(contentSnapshots.map((entry) => [entry.id, entry]));
-  const batch = writeBatch(db);
-  const count = notes.length;
-  notes.forEach((note) => {
-    const { id, blocks, canvasHeight, ...data } = note;
-    if (!id) return;
-    const targetRef = getNoteRef(uid, toClassId, id);
-    const sourceRef = getNoteRef(uid, fromClassId, id);
-    const sourceContentRef = getNoteContentRef(uid, fromClassId, id);
-    const targetContentRef = getNoteContentRef(uid, toClassId, id);
-    const contentEntry = contentById.get(id);
-    const movedContent = contentEntry?.content || null;
-    const legacyContent =
-      movedContent ||
-      (Array.isArray(blocks) || Number.isFinite(canvasHeight)
-        ? {
-            blocks: sanitizeBlocks(blocks),
-            canvasHeight: sanitizeCanvasHeight(canvasHeight),
-          }
-        : null);
-    if (contentEntry?.unavailable && !legacyContent) {
-      throw new Error('Cannot move note while offline before opening it at least once.');
-    }
-    batch.set(targetRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
-    if (legacyContent) {
-      batch.set(
-        targetContentRef,
-        {
-          ...legacyContent,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
-    }
-    batch.delete(sourceRef);
-    batch.delete(sourceContentRef);
-  });
-  batch.update(doc(db, 'users', uid, 'classes', fromClassId), { noteCount: increment(-count) });
-  batch.update(doc(db, 'users', uid, 'classes', toClassId), { noteCount: increment(count) });
-  await batch.commit();
+  // Four writes per note plus counter transforms stay comfortably below Firestore's
+  // 500-write limit. Each chunk moves complete notes atomically and updates both counts.
+  for (let offset = 0; offset < notes.length; offset += 90) {
+    const chunk = notes.slice(offset, offset + 90);
+    const batch = writeBatch(db);
+    let count = 0;
+    chunk.forEach((note) => {
+      const { id, blocks, canvasHeight, ...data } = note;
+      if (!id) return;
+      const targetRef = getNoteRef(uid, toClassId, id);
+      const sourceRef = getNoteRef(uid, fromClassId, id);
+      const sourceContentRef = getNoteContentRef(uid, fromClassId, id);
+      const targetContentRef = getNoteContentRef(uid, toClassId, id);
+      const contentEntry = contentById.get(id);
+      const movedContent = contentEntry?.content || null;
+      const legacyContent =
+        movedContent ||
+        (Array.isArray(blocks) || Number.isFinite(canvasHeight)
+          ? {
+              blocks: sanitizeBlocks(blocks),
+              canvasHeight: sanitizeCanvasHeight(canvasHeight),
+            }
+          : null);
+      if (contentEntry?.unavailable && !legacyContent) {
+        throw new Error('Cannot move note while offline before opening it at least once.');
+      }
+      batch.set(targetRef, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+      if (legacyContent) {
+        batch.set(
+          targetContentRef,
+          {
+            ...legacyContent,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true },
+        );
+      }
+      batch.delete(sourceRef);
+      batch.delete(sourceContentRef);
+      count += 1;
+    });
+    if (!count) continue;
+    batch.update(doc(db, 'users', uid, 'classes', fromClassId), { noteCount: increment(-count) });
+    batch.update(doc(db, 'users', uid, 'classes', toClassId), { noteCount: increment(count) });
+    await batch.commit();
+  }
 };
 
 export const reorderNotes = async (uid, classId, orderedNotes) => {
   if (!uid || !classId || !Array.isArray(orderedNotes)) return;
-  const batch = writeBatch(db);
-  orderedNotes.forEach((note, index) => {
-    if (!note?.id) return;
-    batch.update(doc(db, 'users', uid, 'classes', classId, 'notes', note.id), { order: index });
-  });
-  await batch.commit();
+  for (let offset = 0; offset < orderedNotes.length; offset += 400) {
+    const batch = writeBatch(db);
+    orderedNotes.slice(offset, offset + 400).forEach((note, index) => {
+      if (!note?.id) return;
+      batch.update(doc(db, 'users', uid, 'classes', classId, 'notes', note.id), {
+        order: offset + index,
+      });
+    });
+    await batch.commit();
+  }
 };
 
 export const listenToNoteTemplates = (uid, onData, onError) => {
@@ -517,9 +517,62 @@ export const deleteCalendarEvent = async (uid, id) => {
   await updateDoc(doc(db, 'users', uid), { [`events.${id}`]: deleteField() });
 };
 
+// Sage versioning: snapshots live as sibling docs of content/main (covered by the same
+// security rules). 'original' is written once, before the first AI rewrite.
+export const saveNoteVersion = async (uid, classId, noteId, versionId, blocks, canvasHeight) => {
+  const { map, order } = blocksArrayToMap(sanitizeBlocks(blocks));
+  await setDoc(doc(db, 'users', uid, 'classes', classId, 'notes', noteId, 'content', versionId), {
+    blocks: map,
+    order,
+    canvasHeight: sanitizeCanvasHeight(canvasHeight),
+    updatedAt: serverTimestamp(),
+  });
+};
+
+export const getNoteVersion = async (uid, classId, noteId, versionId) => {
+  const snap = await getDoc(
+    doc(db, 'users', uid, 'classes', classId, 'notes', noteId, 'content', versionId),
+  );
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return {
+    blocks: blocksMapToArray(data.blocks, data.order),
+    canvasHeight: sanitizeCanvasHeight(data.canvasHeight),
+  };
+};
+
 // Preference: whether the "Upcoming" widget also appears on the dashboard sidebar.
 export const setDashboardUpcomingVisible = async (uid, visible) => {
   await updateDoc(doc(db, 'users', uid), { showUpcomingOnDashboard: Boolean(visible) });
+};
+
+// Sage presets: named style+add-on combos saved from the Customize popout. Stored as a
+// map on the profile doc (same pattern as calendar events); the default preset id lives
+// in its own field so switching defaults is a one-field write.
+export const saveSagePreset = async (uid, preset) => {
+  const id =
+    preset.id || globalThis.crypto?.randomUUID?.() || `sp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const payload = {
+    id,
+    name: (preset.name || '').trim() || 'My preset',
+    base: preset.base || 'restructure',
+    addons: Array.isArray(preset.addons) ? preset.addons : [],
+    topic: (preset.topic || '').trim(),
+    createdAt: preset.createdAt || Date.now(),
+  };
+  await updateDoc(doc(db, 'users', uid), { [`sagePresets.${id}`]: payload });
+  return id;
+};
+
+export const deleteSagePreset = async (uid, id) => {
+  if (!uid || !id) return;
+  await updateDoc(doc(db, 'users', uid), { [`sagePresets.${id}`]: deleteField() });
+};
+
+export const setDefaultSagePreset = async (uid, presetId) => {
+  await updateDoc(doc(db, 'users', uid), {
+    sageDefaultPreset: presetId ? presetId : deleteField(),
+  });
 };
 
 export const fetchNoteTemplates = async (uid) => {

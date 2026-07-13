@@ -1,12 +1,16 @@
 import { initializeApp } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
 import {
+  clearIndexedDbPersistence,
   getFirestore,
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  terminate,
 } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { getFunctions } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCV4AC0oWmbKW8KD558ZEbabpCiDZvkzZ8',
@@ -19,6 +23,14 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+
+const appCheckSiteKey = import.meta.env.VITE_FIREBASE_APPCHECK_SITE_KEY;
+if (appCheckSiteKey) {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey),
+    isTokenAutoRefreshEnabled: true,
+  });
+}
 
 export const auth = getAuth(app);
 let dbInstance;
@@ -34,3 +46,11 @@ try {
 }
 export const db = dbInstance;
 export const storage = getStorage(app);
+export const functions = getFunctions(app, 'europe-west1');
+
+// Persistent multi-tab caching remains the default. Clearing it is deliberately
+// separate so normal sign-out keeps the offline/load-saving behavior intact.
+export const clearFirestoreOfflineCache = async () => {
+  await terminate(db);
+  await clearIndexedDbPersistence(db);
+};

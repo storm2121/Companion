@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/authState';
 
 const AuthHub = () => {
   const {
@@ -9,7 +8,6 @@ const AuthHub = () => {
     loginWithPassword,
     sendLoginLink,
     firebaseUser,
-    profile,
     profileReady,
     loading,
     statusMessage,
@@ -58,11 +56,8 @@ const AuthHub = () => {
 
   return (
     <div className={`gate-shell ${eligible ? 'eligible' : ''}`}>
-      <motion.div
+      <div
         className="gate-card"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: 'easeInOut' }}
       >
         <h1>Companion</h1>
         <p className="status-text">Private vault access for verified AUI students.</p>
@@ -108,7 +103,7 @@ const AuthHub = () => {
           </button>
         </form>
         {(error || statusMessage) && <p className="status-text">{error || statusMessage}</p>}
-      </motion.div>
+      </div>
     </div>
   );
 };

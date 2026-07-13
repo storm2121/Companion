@@ -1,31 +1,43 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isVerified() {
-      // Email verification temporarily disabled. To restore it, re-add:
-      //   && request.auth.token.email_verified == true
+    function isAuiUser() {
+      // Email verification remains optional while the app is in testing.
       return request.auth != null
         && request.auth.token.email.matches('.*@aui\\.ma');
     }
 
     match /users/{userId} {
-      allow read, write: if isVerified() && request.auth.uid == userId;
+      function isOwner() {
+        return isAuiUser() && request.auth.uid == userId;
+      }
+
+      allow read, delete: if isOwner();
+      allow create: if isOwner()
+        && !request.resource.data.keys().hasAny(['aiUsage']);
+      allow update: if isOwner()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['aiUsage']);
 
       match /noteTemplates/{templateId} {
-        allow read, write: if isVerified() && request.auth.uid == userId;
+        allow read, write: if isAuiUser() && request.auth.uid == userId;
       }
 
       match /classes/{classId} {
-        allow read, write: if isVerified() && request.auth.uid == userId;
+        allow read, write: if isAuiUser() && request.auth.uid == userId;
 
         match /notes/{noteId} {
-          allow read, write: if isVerified() && request.auth.uid == userId;
+          allow read, write: if isAuiUser() && request.auth.uid == userId;
 
           match /content/{contentId} {
-            allow read, write: if isVerified() && request.auth.uid == userId;
+            allow read, write: if isAuiUser() && request.auth.uid == userId;
           }
         }
       }
+    }
+
+    // Sage usage is maintained only by the Admin SDK in Cloud Functions.
+    match /sageUsage/{userId} {
+      allow read, write: if false;
     }
 
     match /{document=**} {

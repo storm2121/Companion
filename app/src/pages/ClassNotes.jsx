@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FaArrowLeft, FaSearch } from 'react-icons/fa';
 import { useNavigate, useParams } from 'react-router-dom';
 import { listenToNotes, createNote, getClass } from '../services/library';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/authState';
 import ScreenLoader from '../components/ui/ScreenLoader';
 
 const getNoteTimestamp = (note) => {
@@ -14,8 +14,9 @@ const getNoteTimestamp = (note) => {
 };
 
 const toNoteMeta = (docSnap) => {
-  const data = docSnap.data() || {};
-  const { blocks, canvasHeight, ...meta } = data;
+  const meta = { ...(docSnap.data() || {}) };
+  delete meta.blocks;
+  delete meta.canvasHeight;
   return { id: docSnap.id, ...meta };
 };
 

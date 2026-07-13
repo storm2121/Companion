@@ -1,18 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isSignInWithEmailLink } from 'firebase/auth';
 import { auth } from '../firebase';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/authState';
+import { AUTH_EMAIL_STORAGE_KEY } from '../utils/offlineData';
 import ScreenLoader from '../components/ui/ScreenLoader';
 
 const AuthComplete = () => {
   const { completeEmailLinkSignIn, firebaseUser, profile } = useAuth();
-  const [email, setEmail] = useState(localStorage.getItem('authEmail') || '');
+  const [email, setEmail] = useState(localStorage.getItem(AUTH_EMAIL_STORAGE_KEY) || '');
   const [error, setError] = useState('');
   const [working, setWorking] = useState(true);
+  const attemptedRef = useRef(false);
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (attemptedRef.current) return;
+    attemptedRef.current = true;
     const attempt = async () => {
       if (!isSignInWithEmailLink(auth, window.location.href)) {
         setError('Open the verification link from your email to continue.');
@@ -28,7 +32,7 @@ const AuthComplete = () => {
       }
     };
     attempt();
-  }, []);
+  }, [completeEmailLinkSignIn, email]);
 
   useEffect(() => {
     if (!firebaseUser) return;

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaCheck,
   FaCopy,
@@ -35,10 +35,21 @@ import {
   setNotePinned,
   updateNote,
 } from '../services/library';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/authState';
+import {
+  DASHBOARD_RETURN_CLASS_KEY,
+  TEMPLATE_DRAFT_STORAGE_KEY,
+  TEMPLATE_RESULT_STORAGE_KEY,
+} from '../utils/offlineData';
 import AddClassSheet from '../components/classes/AddClassSheet';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
+import {
+  createImageObjectName,
+  IMAGE_ACCEPT,
+  NOTE_IMAGE_MAX_BYTES,
+  validateImageFile,
+} from '../utils/imageUpload';
 import { THEME_DEFAULT_MODE, THEME_OPTIONS, THEME_PRESETS } from '../themePresets';
 import {
   DEFAULT_TEMPLATE_ID,
@@ -51,8 +62,9 @@ import { eventCountdownLabel, eventDaysFromToday } from '../utils/eventTime';
 import { exportNotePdf } from '../utils/exportPdf';
 
 const toNoteMeta = (docSnap) => {
-  const data = docSnap.data() || {};
-  const { blocks, canvasHeight, ...meta } = data;
+  const meta = { ...(docSnap.data() || {}) };
+  delete meta.blocks;
+  delete meta.canvasHeight;
   return { id: docSnap.id, ...meta };
 };
 
@@ -184,9 +196,6 @@ const TemplatePreview = ({ template }) => {
     </span>
   );
 };
-const DASHBOARD_RETURN_CLASS_KEY = 'companion:returnClassId';
-const TEMPLATE_DRAFT_STORAGE_KEY = 'companion:new-note-draft';
-const TEMPLATE_RESULT_STORAGE_KEY = 'companion:new-note-template-result';
 const CUSTOM_TEMPLATE_PREFIX = 'custom:';
 
 const toCustomTemplateId = (id) => `${CUSTOM_TEMPLATE_PREFIX}${id}`;
@@ -939,7 +948,7 @@ const Dashboard = () => {
     setNoteModalOpen(true);
   };
 
-  const closeNoteModal = () => {
+  const closeNoteModal = useCallback(() => {
     if (noteSaving) return;
     setNoteModalOpen(false);
     setNoteModalNote(null);
@@ -951,7 +960,7 @@ const Dashboard = () => {
     setTemplatePromptName('');
     setTemplateDeleteTarget(null);
     setTemplateDeleting(false);
-  };
+  }, [noteSaving]);
 
   useEffect(() => {
     if (!noteModalOpen) return;
@@ -962,7 +971,7 @@ const Dashboard = () => {
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [noteModalOpen, noteSaving]);
+  }, [noteModalOpen, closeNoteModal]);
 
   useEffect(() => {
     const tick = () => {
@@ -1035,9 +1044,10 @@ const Dashboard = () => {
 
   const uploadCover = async (noteId) => {
     if (!firebaseUser || !noteImageFile) return '';
+    validateImageFile(noteImageFile, { maxBytes: NOTE_IMAGE_MAX_BYTES, label: 'Cover image' });
     const ref = storageRef(
       storage,
-      `notes/${firebaseUser.uid}/${noteId}/cover-${Date.now()}-${noteImageFile.name}`,
+      `notes/${firebaseUser.uid}/${noteId}/${createImageObjectName(noteImageFile, 'cover')}`,
     );
     await uploadBytes(ref, noteImageFile, {
       contentType: noteImageFile.type || undefined,
@@ -2085,7 +2095,7 @@ const Dashboard = () => {
                     <input
                       ref={imageRef}
                       type="file"
-                      accept="image/*"
+                      accept={IMAGE_ACCEPT}
                       onChange={(e) => setNoteImageFile(e.target.files?.[0] || null)}
                     />
                     <span className="file-tile-face">

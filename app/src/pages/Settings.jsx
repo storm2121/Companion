@@ -1,18 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
-import { FaArrowLeft, FaCamera, FaCheck, FaDownload, FaMoon, FaSignOutAlt, FaSun } from 'react-icons/fa';
+import { FaArrowLeft, FaCamera, FaCheck, FaDownload, FaMoon, FaSignOutAlt, FaSun, FaTrashAlt } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/authState';
 import { exportUserData, fetchNoteTemplates } from '../services/library';
-import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
+import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
 import { THEME_DEFAULT_MODE, THEME_OPTIONS, THEME_PRESETS } from '../themePresets';
 import { DEFAULT_TEMPLATE_ID } from '../data/noteTemplates';
+import {
+  AVATAR_MAX_BYTES,
+  createImageObjectName,
+  IMAGE_ACCEPT,
+  validateImageFile,
+} from '../utils/imageUpload';
 
 const normalizeThemeMode = (mode) => (THEME_PRESETS[mode] ? mode : THEME_DEFAULT_MODE);
 
 const Settings = () => {
-  const { firebaseUser, profile, updateProfileData, updateThemeMode, updateNoteTemplateDefault, applyThemeMode, logout } =
-    useAuth();
+  const {
+    firebaseUser,
+    profile,
+    updateProfileData,
+    updateThemeMode,
+    updateNoteTemplateDefault,
+    applyThemeMode,
+    logout,
+    logoutAndClearDevice,
+  } = useAuth();
   const navigate = useNavigate();
   const photoInputRef = useRef(null);
 
@@ -22,6 +36,7 @@ const Settings = () => {
   const [templates, setTemplates] = useState([]);
   const [defaultTemplate, setDefaultTemplate] = useState(profile?.noteTemplateDefault || DEFAULT_TEMPLATE_ID);
   const [exporting, setExporting] = useState(false);
+  const [clearingDevice, setClearingDevice] = useState(false);
   const [status, setStatus] = useState('');
 
   const themeMode = normalizeThemeMode(profile?.themeMode);
@@ -75,10 +90,24 @@ const Settings = () => {
     if (!file || !firebaseUser) return;
     setPhotoBusy(true);
     try {
-      const ref = storageRef(storage, `avatars/${firebaseUser.uid}/${Date.now()}-${file.name}`);
+      validateImageFile(file, { maxBytes: AVATAR_MAX_BYTES, label: 'Profile photo' });
+      const ref = storageRef(
+        storage,
+        `avatars/${firebaseUser.uid}/${createImageObjectName(file, 'avatar')}`,
+      );
       await uploadBytes(ref, file, { contentType: file.type || undefined });
       const url = await getDownloadURL(ref);
+      const previousUrl = profile?.photoUrl || '';
       await updateProfileData({ displayName: profile?.displayName || name.trim(), photoUrl: url });
+      if (previousUrl && previousUrl !== url) {
+        try {
+          await deleteObject(storageRef(storage, previousUrl));
+        } catch (deleteError) {
+          if (deleteError?.code !== 'storage/object-not-found') {
+            console.warn('Could not remove previous profile photo', deleteError);
+          }
+        }
+      }
       flash('Photo updated');
     } catch (err) {
       console.error(err);
@@ -124,6 +153,26 @@ const Settings = () => {
     }
   };
 
+  const handleClearDevice = async () => {
+    if (clearingDevice) return;
+    const confirmed = window.confirm(
+      'Clear Companion data saved in this browser? Unsaved local drafts will be removed, but notes already saved to Firebase will stay in your account.',
+    );
+    if (!confirmed) return;
+
+    setClearingDevice(true);
+    try {
+      await logoutAndClearDevice();
+    } catch (err) {
+      console.error('Could not fully clear the Firestore offline cache', err);
+      window.alert(
+        'You were signed out, but the shared Firestore cache could not be fully cleared. Close other Companion tabs, sign in again, and retry this action.',
+      );
+    } finally {
+      window.location.replace('/');
+    }
+  };
+
   const initial = (profile?.displayName || firebaseUser?.email || 'A').slice(0, 1).toUpperCase();
 
   return (
@@ -162,7 +211,7 @@ const Settings = () => {
             <input
               ref={photoInputRef}
               type="file"
-              accept="image/*"
+              accept={IMAGE_ACCEPT}
               style={{ display: 'none' }}
               onChange={handlePhoto}
             />
@@ -239,6 +288,17 @@ const Settings = () => {
           <p className="settings-hint">Download every class, note, and template as a JSON file.</p>
           <button className="btn btn-soft" onClick={handleExport} disabled={exporting}>
             <FaDownload /> {exporting ? 'Preparing…' : 'Export my data'}
+          </button>
+          <div className="settings-data-divider" />
+          <p className="settings-hint">
+            Offline notes and recovery drafts stay on this device for faster loading. Normal sign-out keeps them.
+          </p>
+          <button
+            className="btn btn-soft danger-soft"
+            onClick={handleClearDevice}
+            disabled={clearingDevice}
+          >
+            <FaTrashAlt /> {clearingDevice ? 'Clearing…' : 'Clear this device and sign out'}
           </button>
         </section>
 

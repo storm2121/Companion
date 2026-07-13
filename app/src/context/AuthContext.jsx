@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   browserLocalPersistence,
   createUserWithEmailAndPassword,
@@ -12,11 +12,14 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { auth, clearFirestoreOfflineCache, db } from '../firebase';
 import { THEME_DEFAULT_MODE, THEME_PRESETS } from '../themePresets';
 import { DEFAULT_TEMPLATE_ID } from '../data/noteTemplates';
-
-const AuthContext = createContext(null);
+import {
+  AUTH_EMAIL_STORAGE_KEY,
+  clearCompanionWebStorage,
+} from '../utils/offlineData';
+import { AuthContext } from './authState';
 
 const EMAIL_REGEX = /^[A-Z0-9._%+-]+@aui\.ma$/i;
 
@@ -173,7 +176,7 @@ export const AuthProvider = ({ children }) => {
       throw new Error('Only @aui.ma email addresses are permitted.');
     }
     await sendSignInLinkToEmail(auth, email, buildActionCodeSettings());
-    localStorage.setItem('authEmail', email);
+    localStorage.setItem(AUTH_EMAIL_STORAGE_KEY, email);
     setStatusMessage('Sign-in link sent. Check your university inbox.');
   };
 
@@ -182,18 +185,24 @@ export const AuthProvider = ({ children }) => {
     if (!isSignInWithEmailLink(auth, targetLink)) {
       throw new Error('Invalid or expired sign-in link.');
     }
-    const storedEmail = localStorage.getItem('authEmail');
+    const storedEmail = localStorage.getItem(AUTH_EMAIL_STORAGE_KEY);
     const resolvedEmail = email || storedEmail;
     if (!resolvedEmail) {
       throw new Error('Please confirm your email to finish sign-in.');
     }
     const result = await signInWithEmailLink(auth, resolvedEmail, targetLink);
-    localStorage.removeItem('authEmail');
+    localStorage.removeItem(AUTH_EMAIL_STORAGE_KEY);
     setFirebaseUser(result.user);
     return result.user;
   };
 
   const logout = () => signOut(auth);
+
+  const logoutAndClearDevice = async () => {
+    await signOut(auth);
+    clearCompanionWebStorage();
+    await clearFirestoreOfflineCache();
+  };
 
   const updateProfileData = async ({ displayName, major, photoUrl }) => {
     if (!firebaseUser) throw new Error('No authenticated user.');
@@ -232,30 +241,24 @@ export const AuthProvider = ({ children }) => {
     return Boolean(profile?.profileComplete || profile?.setupCompletedAt || (nameValue && majorValue));
   }, [profile, firebaseUser]);
 
-  const value = useMemo(
-    () => ({
-      firebaseUser,
-      profile,
-      profileReady,
-      loading,
-      statusMessage,
-      setStatusMessage,
-      registerWithPassword,
-      loginWithPassword,
-      sendLoginLink,
-      completeEmailLinkSignIn,
-      updateProfileData,
-      updateThemeMode,
-      updateNoteTemplateDefault,
-      applyThemeMode,
-      logout,
-    }),
-    [firebaseUser, profile, profileReady, loading, statusMessage],
-  );
+  const value = {
+    firebaseUser,
+    profile,
+    profileReady,
+    loading,
+    statusMessage,
+    setStatusMessage,
+    registerWithPassword,
+    loginWithPassword,
+    sendLoginLink,
+    completeEmailLinkSignIn,
+    updateProfileData,
+    updateThemeMode,
+    updateNoteTemplateDefault,
+    applyThemeMode,
+    logout,
+    logoutAndClearDevice,
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
-
-export function useAuth() {
-  return useContext(AuthContext);
-}
