@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment files (Vite env vars can carry keys - never commit)
+.env
+.env.*
+!.env.example
+
+# Firebase deploy cache
+.firebase/
+firebase-debug.log*

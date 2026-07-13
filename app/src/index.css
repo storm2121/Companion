@@ -34,7 +34,7 @@
   --page-padding: clamp(16px, 2vw, 28px);
   --gap: 16px;
   --transition: 0.22s ease;
-  --crest-url: url('/images/crest-placeholder.svg');
+  --crest-url: url('/crest-placeholder.svg');
   --card: var(--surface-2);
   --card-soft: var(--surface-1);
   --scroll-track: oklch(0.26 0.01 75 / 0.45);

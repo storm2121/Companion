@@ -1,2 +1,6 @@
 node_modules/
 *.local
+# Local-only env + secrets (param .env.<project> files ARE committed on purpose)
+.env.local
+*.secret.local
+!.env.companion-c4a42
