@@ -6,12 +6,14 @@ import {
   FaAlignLeft,
   FaAlignRight,
   FaBold,
+  FaCheck,
   FaCheckSquare,
   FaChevronDown,
   FaChevronUp,
   FaCode,
   FaCopy,
   FaEllipsisH,
+  FaExchangeAlt,
   FaFont,
   FaImage,
   FaIndent,
@@ -30,7 +32,6 @@ import {
   FaPlus,
   FaQuoteRight,
   FaRegStar,
-  FaSlidersH,
   FaSpellCheck,
   FaStar,
   FaStrikethrough,
@@ -53,6 +54,8 @@ import {
   saveSagePreset,
   deleteSagePreset,
   setDefaultSagePreset,
+  deleteNoteVersion,
+  presetStyles,
 } from '../services/library';
 import { callSageImprove, sanitizeSageLayout, SAGE_STYLES, SAGE_PHRASES, SAGE_ADDONS } from '../services/sage';
 import { WORKSPACE_WIDTH } from '../data/noteTemplates';
@@ -316,18 +319,22 @@ const NoteEditor = () => {
   const [blockMenuPos, setBlockMenuPos] = useState({ left: 12, top: 72 });
   const [renamingBlockId, setRenamingBlockId] = useState('');
   const [blockTitleDraft, setBlockTitleDraft] = useState('');
-  const [sageMenuOpen, setSageMenuOpen] = useState(false);
   const [sageBusy, setSageBusy] = useState('');
   const [sagePhrase, setSagePhrase] = useState('');
   const [sageError, setSageError] = useState('');
   const [sageView, setSageView] = useState('improved');
-  const sageMenuRef = useRef(null);
   const sagePhraseTimerRef = useRef(null);
-  // Customize popout: compose a base style + add-ons, optionally saved as a named preset.
-  const [sageCustomizeOpen, setSageCustomizeOpen] = useState(false);
-  const [custBase, setCustBase] = useState('restructure');
+  // Versions popout (🕘): switch original⇄Sage, or keep one and discard the other.
+  const [sageVersionsOpen, setSageVersionsOpen] = useState(false);
+  const [sageKeepConfirm, setSageKeepConfirm] = useState(false);
+  const sageVersionsRef = useRef(null);
+  // The Sage popout: compose goals (multi-select) + add-ons + topic + a free request,
+  // optionally saved as a named preset.
+  const [sagePopoutOpen, setSagePopoutOpen] = useState(false);
+  const [custStyles, setCustStyles] = useState(['polish']);
   const [custAddons, setCustAddons] = useState([]);
   const [custTopic, setCustTopic] = useState('');
+  const [custComment, setCustComment] = useState('');
   const [custName, setCustName] = useState('');
   const [custMakeDefault, setCustMakeDefault] = useState(false);
   const [, setHistoryVersion] = useState(0);
@@ -1565,16 +1572,31 @@ const NoteEditor = () => {
   }, [note?.sageView]);
 
   useEffect(() => {
-    if (!sageMenuOpen) return undefined;
+    if (!sageVersionsOpen) return undefined;
     const onDown = (event) => {
-      if (sageMenuRef.current && !sageMenuRef.current.contains(event.target)) setSageMenuOpen(false);
+      if (sageVersionsRef.current && !sageVersionsRef.current.contains(event.target)) {
+        setSageVersionsOpen(false);
+        setSageKeepConfirm(false);
+      }
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [sageMenuOpen]);
+  }, [sageVersionsOpen]);
+
+  useEffect(() => {
+    if (!sagePopoutOpen && !sageVersionsOpen) return undefined;
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      setSagePopoutOpen(false);
+      setSageVersionsOpen(false);
+      setSageKeepConfirm(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [sagePopoutOpen, sageVersionsOpen]);
 
   const startSagePhrases = (styleId) => {
-    const phrases = SAGE_PHRASES[styleId] || SAGE_PHRASES.polish;
+    const phrases = SAGE_PHRASES[styleId] || SAGE_PHRASES.default;
     let i = 0;
     setSagePhrase(phrases[0]);
     sagePhraseTimerRef.current = setInterval(() => {
@@ -1616,9 +1638,11 @@ const NoteEditor = () => {
     centerViewportOnBlocks(normalized);
   };
 
-  const runSage = async (styleId, { addons = [], topic = '' } = {}) => {
-    setSageMenuOpen(false);
+  const runSage = async (styles, { addons = [], topic = '', comment = '' } = {}) => {
+    setSagePopoutOpen(false);
     if (sageBusy || !firebaseUser || !note || note.missing || isTemplateMode) return;
+    const goalList = Array.isArray(styles) ? styles.filter(Boolean) : [styles].filter(Boolean);
+    if (!goalList.length && !addons.length) return;
     const snapshot = cloneBlocks(getBlocksSnapshot());
     const hasText = snapshot.some(
       (b) => b.type === 'text' && stripHtmlToPlainText(b.value).trim().length > 20,
@@ -1628,19 +1652,20 @@ const NoteEditor = () => {
       return;
     }
     setSageError('');
-    setSageBusy(styleId);
-    startSagePhrases(styleId);
+    setSageBusy(goalList[0] || 'default');
+    startSagePhrases(goalList[0] || 'default');
     try {
       if (!note.sageHasVersions) {
         await saveNoteVersion(firebaseUser.uid, classId, noteId, 'original', snapshot, canvasHeightRef.current);
       }
       const result = await callSageImprove({
-        styleId,
+        styles: goalList,
         noteTitle: note.title || '',
         blocks: snapshot,
         canvasHeight: canvasHeightRef.current,
         addons,
         topic,
+        comment,
       });
       const clean = sanitizeSageLayout(result?.blocks || [], snapshot);
       if (!clean) throw new Error('Sage returned an unusable result — please try again.');
@@ -1673,6 +1698,7 @@ const NoteEditor = () => {
       if (!other) return;
       applySageResult(other.blocks, other.canvasHeight);
       setSageView(next);
+      setSageKeepConfirm(false);
       updateNote(firebaseUser.uid, classId, noteId, { sageView: next }).catch(() => {});
       setNote((prev) => (prev ? { ...prev, sageView: next } : prev));
     } catch (err) {
@@ -1691,43 +1717,72 @@ const NoteEditor = () => {
   }, [profile?.sagePresets, sageDefaultId]);
 
   const sagePresetHint = (preset) => {
-    const base = SAGE_STYLES.find((s) => s.id === preset.base)?.label || preset.base;
+    const goals = presetStyles(preset)
+      .map((id) => SAGE_STYLES.find((s) => s.id === id)?.label)
+      .filter(Boolean);
     const extras = (preset.addons || [])
       .map((id) => SAGE_ADDONS.find((a) => a.id === id)?.label)
       .filter(Boolean);
-    return [base, ...extras].join(' + ');
+    return [...goals, ...extras].join(' + ') || 'Empty preset';
   };
 
-  const openSageCustomize = () => {
-    setSageMenuOpen(false);
-    setCustBase('restructure');
-    setCustAddons([]);
-    setCustTopic('');
+  // Loads a preset into the popout form so it can be run as-is or tweaked first.
+  const applySagePresetToForm = (preset) => {
+    setCustStyles(presetStyles(preset));
+    setCustAddons(Array.isArray(preset.addons) ? preset.addons : []);
+    setCustTopic(preset.topic || '');
+    setCustComment(preset.comment || '');
+  };
+
+  const openSagePopout = () => {
+    const defaultPreset = sagePresetList.find((p) => p.id === sageDefaultId);
+    if (defaultPreset) {
+      applySagePresetToForm(defaultPreset);
+    } else {
+      setCustStyles(['polish']);
+      setCustAddons([]);
+      setCustTopic('');
+      setCustComment('');
+    }
     setCustName('');
     setCustMakeDefault(false);
-    setSageCustomizeOpen(true);
+    setSageVersionsOpen(false);
+    setSagePopoutOpen(true);
   };
 
+  const toggleCustStyle = (id) => {
+    setCustStyles((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
+  };
+
+  const toggleCustAddon = (id) => {
+    setCustAddons((prev) => (prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]));
+  };
+
+  const sageRunnable = custStyles.length > 0 || custAddons.length > 0;
+
   const runSageCustom = () => {
-    setSageCustomizeOpen(false);
-    runSage(custBase, { addons: custAddons, topic: custTopic.trim() });
+    if (!sageRunnable) return;
+    setSagePopoutOpen(false);
+    runSage(custStyles, { addons: custAddons, topic: custTopic.trim(), comment: custComment.trim() });
   };
 
   const saveSageCustom = async (alsoRun) => {
-    if (!firebaseUser || !custName.trim()) return;
+    if (!firebaseUser || !custName.trim() || !sageRunnable) return;
     try {
       const id = await saveSagePreset(firebaseUser.uid, {
         name: custName,
-        base: custBase,
+        styles: custStyles,
         addons: custAddons,
         topic: custTopic,
+        comment: custComment,
       });
       if (custMakeDefault) await setDefaultSagePreset(firebaseUser.uid, id);
+      setCustName('');
+      setCustMakeDefault(false);
     } catch (err) {
       console.error('Preset save failed', err);
     }
-    setSageCustomizeOpen(false);
-    if (alsoRun) runSage(custBase, { addons: custAddons, topic: custTopic.trim() });
+    if (alsoRun) runSageCustom();
   };
 
   const toggleDefaultSagePreset = (id) => {
@@ -1739,6 +1794,29 @@ const NoteEditor = () => {
     if (!firebaseUser) return;
     deleteSagePreset(firebaseUser.uid, id).catch(() => {});
     if (sageDefaultId === id) setDefaultSagePreset(firebaseUser.uid, '').catch(() => {});
+  };
+
+  // "Keep this version": whatever is on the canvas stays as THE note; both stored
+  // version slots are removed and the 🕘 control disappears. This is also how you
+  // delete a generated version — switch to the one you want first, then keep it.
+  const keepCurrentVersion = async () => {
+    if (sageBusy || !firebaseUser || !note?.sageHasVersions) return;
+    try {
+      await Promise.all([
+        deleteNoteVersion(firebaseUser.uid, classId, noteId, 'original').catch(() => {}),
+        deleteNoteVersion(firebaseUser.uid, classId, noteId, 'improved').catch(() => {}),
+      ]);
+      await updateNote(firebaseUser.uid, classId, noteId, {
+        sageHasVersions: false,
+        sageView: 'improved',
+      });
+      setNote((prev) => (prev ? { ...prev, sageHasVersions: false, sageView: 'improved' } : prev));
+      setSageView('improved');
+      setSageVersionsOpen(false);
+      setSageKeepConfirm(false);
+    } catch (err) {
+      console.error('Keep version failed', err);
+    }
   };
 
   const togglePriority = (id) => {
@@ -2843,48 +2921,89 @@ const NoteEditor = () => {
             </div>
           </div>
         )}
-        {sageCustomizeOpen && (
-          <div className="sage-modal-backdrop" onClick={() => setSageCustomizeOpen(false)}>
-            <div className="sage-modal" role="dialog" aria-label="Customize Sage" onClick={(e) => e.stopPropagation()}>
+        {sagePopoutOpen && (
+          <div className="sage-modal-backdrop" onClick={() => setSagePopoutOpen(false)}>
+            <div className="sage-modal" role="dialog" aria-label="Sage" onClick={(e) => e.stopPropagation()}>
               <div className="sage-modal-head">
                 <span className="sage-spark" aria-hidden="true">✨</span>
-                <h3>Customize Sage</h3>
+                <h3>Sage</h3>
+                <p className="sage-modal-sub">pick goals · add extras · run</p>
                 <button
                   type="button"
                   className="sage-modal-close"
-                  onClick={() => setSageCustomizeOpen(false)}
-                  title="Close"
+                  onClick={() => setSagePopoutOpen(false)}
+                  title="Close (Esc)"
                 >
                   <FaTimes />
                 </button>
               </div>
-              <p className="sage-modal-label">Base style</p>
-              <div className="sage-chip-row">
+              {sagePresetList.length > 0 && (
+                <>
+                  <p className="sage-modal-label">Your presets — click one to load it</p>
+                  <div className="sage-preset-shelf">
+                    {sagePresetList.map((preset) => (
+                      <div key={preset.id} className="sage-preset-chip" title={sagePresetHint(preset)}>
+                        <button
+                          type="button"
+                          className="sage-preset-load"
+                          onClick={() => applySagePresetToForm(preset)}
+                        >
+                          {preset.name}
+                        </button>
+                        <button
+                          type="button"
+                          className={`sage-preset-star ${preset.id === sageDefaultId ? 'is-default' : ''}`}
+                          title={
+                            preset.id === sageDefaultId
+                              ? 'Default — loads when Sage opens. Click to unset'
+                              : 'Make default — loads when Sage opens'
+                          }
+                          onClick={() => toggleDefaultSagePreset(preset.id)}
+                        >
+                          {preset.id === sageDefaultId ? <FaStar /> : <FaRegStar />}
+                        </button>
+                        <button
+                          type="button"
+                          className="sage-preset-del"
+                          title="Delete preset"
+                          onClick={() => removeSagePreset(preset.id)}
+                        >
+                          <FaTimes />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <p className="sage-modal-label">What should Sage do? — pick any</p>
+              <div className="sage-goal-grid">
                 {SAGE_STYLES.map((style) => (
                   <button
                     key={style.id}
                     type="button"
-                    className={`sage-chip ${custBase === style.id ? 'active' : ''}`}
-                    title={style.hint}
-                    onClick={() => setCustBase(style.id)}
+                    className={`sage-goal-card ${custStyles.includes(style.id) ? 'active' : ''}`}
+                    aria-pressed={custStyles.includes(style.id)}
+                    onClick={() => toggleCustStyle(style.id)}
                   >
-                    {style.label}
+                    <span className="sage-goal-top">
+                      <span className="sage-item-icon">{SAGE_STYLE_ICONS[style.id]}</span>
+                      <strong>{style.label}</strong>
+                      {custStyles.includes(style.id) && <FaCheck className="sage-goal-check" />}
+                    </span>
+                    <span className="sage-goal-hint">{style.hint}</span>
                   </button>
                 ))}
               </div>
-              <p className="sage-modal-label">Add-ons</p>
+              <p className="sage-modal-label">Extras</p>
               <div className="sage-chip-row">
                 {SAGE_ADDONS.map((addon) => (
                   <button
                     key={addon.id}
                     type="button"
                     className={`sage-chip ${custAddons.includes(addon.id) ? 'active' : ''}`}
+                    aria-pressed={custAddons.includes(addon.id)}
                     title={addon.hint}
-                    onClick={() =>
-                      setCustAddons((prev) =>
-                        prev.includes(addon.id) ? prev.filter((id) => id !== addon.id) : [...prev, addon.id],
-                      )
-                    }
+                    onClick={() => toggleCustAddon(addon.id)}
                   >
                     {addon.label}
                   </button>
@@ -2899,16 +3018,25 @@ const NoteEditor = () => {
                 placeholder='e.g. "Binary search trees" — helps Sage aim'
                 onChange={(e) => setCustTopic(e.target.value)}
               />
+              <p className="sage-modal-label">Anything else? (optional)</p>
+              <textarea
+                className="sage-modal-input sage-textarea"
+                value={custComment}
+                maxLength={500}
+                rows={2}
+                placeholder='e.g. "Focus on the proofs, don&apos;t touch my code blocks"'
+                onChange={(e) => setCustComment(e.target.value)}
+              />
               <div className="sage-modal-saverow">
                 <input
                   type="text"
                   className="sage-modal-input"
                   value={custName}
                   maxLength={40}
-                  placeholder="Name it to save as a preset"
+                  placeholder="Name this combo to save it as a preset"
                   onChange={(e) => setCustName(e.target.value)}
                 />
-                <label className="sage-modal-default" title="Show first in the Sage menu">
+                <label className="sage-modal-default" title="Loads automatically when Sage opens">
                   <input
                     type="checkbox"
                     checked={custMakeDefault}
@@ -2916,54 +3044,21 @@ const NoteEditor = () => {
                   />
                   <FaStar aria-hidden="true" /> default
                 </label>
-              </div>
-              {sagePresetList.length > 0 && (
-                <>
-                  <p className="sage-modal-label">Your presets</p>
-                  <div className="sage-modal-presets">
-                    {sagePresetList.map((preset) => (
-                      <div key={preset.id} className="sage-preset-row">
-                        <button
-                          type="button"
-                          className={`sage-preset-star ${preset.id === sageDefaultId ? 'is-default' : ''}`}
-                          title={preset.id === sageDefaultId ? 'Default — click to unset' : 'Make default'}
-                          onClick={() => toggleDefaultSagePreset(preset.id)}
-                        >
-                          {preset.id === sageDefaultId ? <FaStar /> : <FaRegStar />}
-                        </button>
-                        <span className="sage-preset-name">{preset.name}</span>
-                        <small className="sage-preset-recipe">{sagePresetHint(preset)}</small>
-                        <button
-                          type="button"
-                          className="sage-preset-del"
-                          title="Delete preset"
-                          onClick={() => removeSagePreset(preset.id)}
-                        >
-                          <FaTrash />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-              <div className="sage-modal-actions">
-                <button type="button" className="btn btn-soft" onClick={() => setSageCustomizeOpen(false)}>
-                  Cancel
-                </button>
                 <button
                   type="button"
-                  className="btn btn-soft"
-                  disabled={!custName.trim()}
+                  className="btn btn-soft btn-sm"
+                  disabled={!custName.trim() || !sageRunnable}
                   onClick={() => saveSageCustom(false)}
                 >
-                  Save preset
+                  Save
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-fill"
-                  onClick={() => (custName.trim() ? saveSageCustom(true) : runSageCustom())}
-                >
-                  {custName.trim() ? 'Save & run' : 'Run once'}
+              </div>
+              <div className="sage-modal-actions">
+                <button type="button" className="btn btn-soft" onClick={() => setSagePopoutOpen(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="btn btn-fill" disabled={!sageRunnable} onClick={runSageCustom}>
+                  ✨ Run Sage
                 </button>
               </div>
             </div>
@@ -3210,68 +3305,68 @@ const NoteEditor = () => {
       </section>
       <div className="note-fab" ref={addMenuRef}>
         {note?.sageHasVersions && !isTemplateMode && (
-          <button
-            type="button"
-            className={`note-action-btn sage-version-btn ${sageView === 'original' ? 'on-original' : ''}`}
-            onClick={toggleSageView}
-            disabled={Boolean(sageBusy)}
-            title={sageView === 'original' ? 'Viewing your original — switch to improved' : 'View your original note'}
-          >
-            <FaHistory />
-          </button>
-        )}
-        {!isTemplateMode && (
-          <div className="sage-menu-wrap" ref={sageMenuRef}>
+          <div className="sage-versions-wrap" ref={sageVersionsRef}>
             <button
               type="button"
-              className={`note-action-btn sage-btn ${sageBusy ? 'busy' : ''}`}
-              onClick={() => setSageMenuOpen((prev) => !prev)}
+              className={`note-action-btn sage-version-btn ${sageView === 'original' ? 'on-original' : ''}`}
+              onClick={() => {
+                setSageVersionsOpen((prev) => !prev);
+                setSageKeepConfirm(false);
+              }}
               disabled={Boolean(sageBusy)}
-              title="Sage — AI help"
+              title="Versions — switch, keep or discard"
             >
-              <FaMagic />
+              <FaHistory />
             </button>
-            {sageMenuOpen && (
-              <div className="sage-menu" role="menu">
-                <div className="sage-menu-head">
-                  <span className="sage-spark" aria-hidden="true">✨</span>
-                  <span>Sage</span>
-                </div>
-                <div className="sage-menu-list">
-                  {SAGE_STYLES.map((style) => (
-                    <button
-                      key={style.id}
-                      type="button"
-                      className="sage-menu-item"
-                      title={style.hint}
-                      onClick={() => runSage(style.id)}
-                    >
-                      <span className="sage-item-icon">{SAGE_STYLE_ICONS[style.id]}</span>
-                      {style.label}
-                    </button>
-                  ))}
-                  {sagePresetList.length > 0 && <div className="sage-menu-sep" />}
-                  {sagePresetList.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      className="sage-menu-item preset"
-                      title={sagePresetHint(preset)}
-                      onClick={() => runSage(preset.base, { addons: preset.addons || [], topic: preset.topic || '' })}
-                    >
-                      <span className="sage-item-icon star">
-                        {preset.id === sageDefaultId ? <FaStar /> : <FaRegStar />}
-                      </span>
-                      {preset.name}
-                    </button>
-                  ))}
-                </div>
-                <button type="button" className="sage-menu-customize" onClick={openSageCustomize}>
-                  <FaSlidersH /> Customize…
+            {sageVersionsOpen && (
+              <div className="sage-version-pop" role="menu">
+                <p className="sage-version-status">
+                  Viewing{' '}
+                  <strong>{sageView === 'original' ? 'your original' : "Sage's version"}</strong>
+                </p>
+                <button type="button" className="sage-version-action" onClick={toggleSageView}>
+                  <FaExchangeAlt />
+                  Switch to {sageView === 'original' ? "Sage's version" : 'your original'}
                 </button>
+                {sageKeepConfirm ? (
+                  <div className="sage-version-confirm">
+                    <p>
+                      Keeps what you see, permanently deletes{' '}
+                      {sageView === 'original' ? "Sage's version" : 'your original'}.
+                    </p>
+                    <div className="sage-version-confirm-row">
+                      <button type="button" className="btn btn-soft btn-sm" onClick={() => setSageKeepConfirm(false)}>
+                        Cancel
+                      </button>
+                      <button type="button" className="btn btn-fill btn-sm" onClick={keepCurrentVersion}>
+                        Keep this one
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="sage-version-action keep"
+                    onClick={() => setSageKeepConfirm(true)}
+                  >
+                    <FaCheck />
+                    Keep this version…
+                  </button>
+                )}
               </div>
             )}
           </div>
+        )}
+        {!isTemplateMode && (
+          <button
+            type="button"
+            className={`note-action-btn sage-btn ${sageBusy ? 'busy' : ''}`}
+            onClick={openSagePopout}
+            disabled={Boolean(sageBusy)}
+            title="Sage — AI help"
+          >
+            <FaMagic />
+          </button>
         )}
         <button
           type="button"

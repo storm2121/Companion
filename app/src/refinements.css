@@ -531,7 +531,8 @@
 .sage-overlay {
   position: absolute;
   inset: 0;
-  z-index: 45;
+  /* Above priority blocks (zIndex ≈ 100000+) but below the dock (2000000). */
+  z-index: 1500000;
   display: grid;
   place-items: center;
   background: color-mix(in srgb, var(--bg) 55%, transparent);
@@ -588,46 +589,45 @@
   border-color: var(--accent-line);
 }
 
-/* Mini Sage menu — a small card, not a floating list. */
-.sage-menu {
+/* Versions popout (🕘) — switch original⇄Sage, keep one, discard the other. */
+.sage-versions-wrap {
+  position: relative;
+}
+
+.sage-version-pop {
   position: absolute;
   bottom: calc(100% + 10px);
   right: 0;
-  width: 208px;
+  width: 232px;
   background: var(--surface-2);
   border: 1px solid var(--accent-line);
   border-radius: 14px;
   box-shadow: var(--shadow-2);
-  overflow: hidden;
+  padding: 10px;
   z-index: 80;
   animation: dropFade 0.16s ease;
 }
 
-.sage-menu-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 13px;
+.sage-version-status {
+  margin: 0 0 8px;
+  padding: 0 3px;
   font-family: var(--serif);
   font-style: italic;
-  font-size: 14.5px;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.sage-version-status strong {
   color: var(--accent-ink);
-  background: linear-gradient(180deg, var(--accent-soft), transparent);
-  border-bottom: 1px solid var(--border-soft);
+  font-weight: 600;
 }
 
-.sage-menu-list {
-  padding: 6px;
-  display: grid;
-  gap: 2px;
-}
-
-.sage-menu-item {
+.sage-version-action {
   display: flex;
   align-items: center;
   gap: 9px;
   width: 100%;
-  padding: 7px 9px;
+  padding: 8px 9px;
   border: 0;
   background: none;
   border-radius: 9px;
@@ -638,10 +638,38 @@
   text-align: left;
 }
 
-.sage-menu-item:hover {
+.sage-version-action svg {
+  font-size: 11px;
+  color: var(--accent-ink);
+  opacity: 0.85;
+}
+
+.sage-version-action:hover {
   background: var(--surface-3);
 }
 
+.sage-version-confirm {
+  margin-top: 4px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+}
+
+.sage-version-confirm p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.sage-version-confirm-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Shared icon slot (goal cards) */
 .sage-item-icon {
   width: 16px;
   display: grid;
@@ -651,67 +679,64 @@
   opacity: 0.85;
 }
 
-.sage-menu-sep {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border-soft);
-}
-
-.sage-menu-customize {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 9px 13px;
-  border: 0;
-  border-top: 1px solid var(--border-soft);
-  background: none;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.sage-menu-customize:hover {
-  color: var(--accent-ink);
-  background: var(--accent-soft);
-}
-
 /* Customize popout */
 .sage-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  /* Above everything, including priority blocks (≈100000+) and the dock (2000000). */
+  z-index: 2100000;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, #000 45%, transparent);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  background: color-mix(in srgb, #000 48%, transparent);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
   animation: dropFade 0.18s ease;
 }
 
 .sage-modal {
-  width: min(440px, calc(100vw - 32px));
-  max-height: min(660px, 90vh);
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(700px, 92vh);
   overflow-y: auto;
   background: var(--surface-2);
   border: 1px solid var(--accent-line);
-  border-radius: 18px;
-  box-shadow: var(--shadow-2);
-  padding: 18px 20px 16px;
+  border-radius: 20px;
+  box-shadow: 0 24px 70px color-mix(in srgb, #000 35%, transparent), var(--shadow-2);
+  padding: 0 20px 16px;
 }
 
 .sage-modal-head {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin: 0 -20px 4px;
+  padding: 16px 20px 12px;
+  background: linear-gradient(180deg, var(--accent-soft), transparent);
+  border-bottom: 1px solid var(--border-soft);
+  position: sticky;
+  top: 0;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 2;
 }
 
 .sage-modal-head h3 {
   margin: 0;
   font-family: var(--serif);
-  font-size: 18px;
+  font-style: italic;
+  font-size: 19px;
   color: var(--text);
+}
+
+.sage-modal-head .sage-spark {
+  font-size: 18px;
+}
+
+.sage-modal-sub {
+  margin: 0 0 0 2px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  align-self: flex-end;
+  padding-bottom: 2px;
 }
 
 .sage-modal-close {
@@ -765,6 +790,10 @@
   font-weight: 600;
 }
 
+.sage-chip.active::before {
+  content: '✓ ';
+}
+
 .sage-modal-input {
   width: 100%;
   padding: 8px 11px;
@@ -806,31 +835,39 @@
   color: var(--accent-ink);
 }
 
-.sage-modal-presets {
-  display: grid;
-  gap: 2px;
-}
-
-.sage-preset-row {
+/* Preset shelf: pill per preset — name loads it, star = default, × deletes. */
+.sage-preset-shelf {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sage-preset-chip {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 2px;
-  font-size: 13px;
-  color: var(--text);
+  gap: 2px;
+  padding: 2px 4px 2px 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-1);
 }
 
-.sage-preset-name {
+.sage-preset-chip:hover {
+  border-color: var(--accent-line);
+}
+
+.sage-preset-load {
+  border: 0;
+  background: none;
+  padding: 4px 6px 4px 10px;
+  font-size: 12.5px;
   font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
 }
 
-.sage-preset-recipe {
-  flex: 1;
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sage-preset-load:hover {
+  color: var(--accent-ink);
 }
 
 .sage-preset-star,
@@ -839,11 +876,11 @@
   background: none;
   cursor: pointer;
   padding: 4px;
-  border-radius: 7px;
+  border-radius: 999px;
   color: var(--text-muted);
   display: grid;
   place-items: center;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .sage-preset-star.is-default,
@@ -854,6 +891,70 @@
 .sage-preset-del:hover {
   color: #d05b5b;
   background: var(--surface-3);
+}
+
+/* Goal cards: multi-select, clearly differentiated jobs. */
+.sage-goal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.sage-goal-card {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 13px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-1);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+}
+
+.sage-goal-card:hover {
+  border-color: var(--accent-line);
+  transform: translateY(-1px);
+}
+
+.sage-goal-card.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 1px var(--accent-line), 0 4px 14px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.sage-goal-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sage-goal-top strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sage-goal-card.active .sage-goal-top strong {
+  color: var(--accent-ink);
+}
+
+.sage-goal-check {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--accent-ink);
+}
+
+.sage-goal-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.sage-textarea {
+  resize: vertical;
+  min-height: 48px;
+  font-family: var(--font);
 }
 
 .sage-modal-actions {

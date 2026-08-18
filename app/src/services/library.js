@@ -529,6 +529,10 @@ export const saveNoteVersion = async (uid, classId, noteId, versionId, blocks, c
   });
 };
 
+export const deleteNoteVersion = async (uid, classId, noteId, versionId) => {
+  await deleteDoc(doc(db, 'users', uid, 'classes', classId, 'notes', noteId, 'content', versionId));
+};
+
 export const getNoteVersion = async (uid, classId, noteId, versionId) => {
   const snap = await getDoc(
     doc(db, 'users', uid, 'classes', classId, 'notes', noteId, 'content', versionId),
@@ -546,23 +550,33 @@ export const setDashboardUpcomingVisible = async (uid, visible) => {
   await updateDoc(doc(db, 'users', uid), { showUpcomingOnDashboard: Boolean(visible) });
 };
 
-// Sage presets: named style+add-on combos saved from the Customize popout. Stored as a
-// map on the profile doc (same pattern as calendar events); the default preset id lives
-// in its own field so switching defaults is a one-field write.
+// Sage presets: named goal+add-on combos saved from the Sage popout. Stored as a map on
+// the profile doc (same pattern as calendar events); the default preset id lives in its
+// own field so switching defaults is a one-field write. Older presets stored a single
+// `base` style — readers normalize with `presetStyles()` below.
 export const saveSagePreset = async (uid, preset) => {
   const id =
     preset.id || globalThis.crypto?.randomUUID?.() || `sp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const payload = {
     id,
     name: (preset.name || '').trim() || 'My preset',
-    base: preset.base || 'restructure',
+    styles: Array.isArray(preset.styles) ? preset.styles : preset.base ? [preset.base] : [],
     addons: Array.isArray(preset.addons) ? preset.addons : [],
     topic: (preset.topic || '').trim(),
+    comment: (preset.comment || '').trim(),
     createdAt: preset.createdAt || Date.now(),
   };
   await updateDoc(doc(db, 'users', uid), { [`sagePresets.${id}`]: payload });
   return id;
 };
+
+// Normalizes old ({base}) and new ({styles}) preset shapes to a styles array.
+export const presetStyles = (preset) =>
+  Array.isArray(preset?.styles) && preset.styles.length
+    ? preset.styles
+    : preset?.base
+      ? [preset.base]
+      : [];
 
 export const deleteSagePreset = async (uid, id) => {
   if (!uid || !id) return;
