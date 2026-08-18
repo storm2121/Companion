@@ -1,0 +1,40 @@
+# Dependencies & build output
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Environment files — never commit (Vite inlines VITE_* vars into the bundle)
+.env
+.env.*
+!app/functions/.env.companion-c4a42
+
+# Firebase local state
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+*-debug.log
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.sw?
+
+# Internal working notes — not part of the published project
+contextweb.md
+LifeCycle.md
+security_best_practices_report.md
+.codex-backups/

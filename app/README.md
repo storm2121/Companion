@@ -35,7 +35,7 @@ quickly, and write in a freeform, block-based canvas editor — with two warm th
 | Backend | **Firebase 12** — Auth, Cloud Firestore (offline persistent multi-tab cache), Storage |
 | Editor | **TipTap 2** (ProseMirror) with a custom font-size mark + tables, task lists, etc. |
 | Canvas | **react-rnd** (drag/resize blocks) |
-| Icons / motion | **react-icons**, **framer-motion** |
+| Icons | **react-icons** |
 | Lint | ESLint 9 (flat config) |
 
 ---
@@ -46,23 +46,30 @@ quickly, and write in a freeform, block-based canvas editor — with two warm th
 Companion/
 ├─ app/                      ← the web app (run all commands from here)
 │  ├─ src/
-│  │  ├─ pages/              AuthHub, ProfileSetup, Dashboard, ClassNotes, NoteEditor…
-│  │  ├─ components/         auth/ classes/ editor/ profile/ ui/
-│  │  ├─ context/            AuthContext (auth + theme)
-│  │  ├─ services/           library.js (all Firestore reads/writes)
+│  │  ├─ pages/              AuthHub, AuthComplete, ProfileSetup, Dashboard,
+│  │  │                      ClassNotes, NoteEditor, Settings, Calendar
+│  │  ├─ components/         classes/ editor/ ui/ + ProtectedRoute
+│  │  ├─ context/            AuthContext (auth + theme), authState
+│  │  ├─ services/           library.js (all Firestore/Storage access), sage*.js
 │  │  ├─ hooks/              useNetworkStatus…
+│  │  ├─ utils/              exportPdf, imageUpload, eventTime, offlineData
 │  │  ├─ data/               note templates
 │  │  ├─ firebase.js         Firebase init (config + Firestore cache)
 │  │  ├─ index.css           base + themes (Daylight/Lamplight, OKLCH)
-│  │  └─ dashboard-v3.css    dashboard redesign layer
+│  │  ├─ dashboard-v3.css    dashboard redesign layer
+│  │  ├─ calendar.css        calendar page layer
+│  │  └─ refinements.css     latest override layer (imported last)
 │  ├─ functions/             Sage AI + cascading deletion Cloud Functions
+│  ├─ tests/                 unit tests + Firestore/Storage rules tests
+│  ├─ scripts/               verify-hosting.mjs (security-header probe)
 │  ├─ firebase.json          hosting + rules + functions config
 │  ├─ .firebaserc            default project = companion-c4a42
 │  ├─ firestore.rules        Firestore security rules
 │  ├─ storage.rules          Storage security rules
 │  ├─ database.rules.json    Realtime DB rules (locked; RTDB unused)
 │  └─ firestore.indexes.json (no custom indexes)
-└─ docs/                     design/plan docs (e.g. editor-phase3-plan.md)
+├─ README.md                 project overview
+└─ todo.md                   backlog
 ```
 
 ---
@@ -238,7 +245,7 @@ All deploy commands run from **`app/`** (where `firebase.json` lives).
 
 ```powershell
 npm install -g firebase-tools     # if not installed
-cd D:\Companion\app
+cd app
 firebase login                    # use 'firebase login --reauth' if it gets stuck
 firebase use companion-c4a42      # confirm the active project (it's the default)
 ```
@@ -248,7 +255,7 @@ firebase use companion-c4a42      # confirm the active project (it's the default
 **PowerShell** — quote the comma-separated target list, or it errors with "No targets match":
 
 ```powershell
-cd D:\Companion\app
+cd app
 npm run build
 firebase deploy --only "hosting,firestore:rules,storage,functions"
 ```
@@ -316,17 +323,19 @@ firebase deploy --only functions                   # Sage + deletion backend
 
 ## Current state & notes
 
-- **Email verification is temporarily disabled** in the auth flow and security rules (the
-  `@aui.ma` domain restriction is still enforced). To restore it, re-add the
-  `request.auth.token.email_verified == true` check in `firestore.rules` / `storage.rules`,
-  re-enable the gate in `AuthContext`/`ProtectedRoute`, then redeploy the rules.
-- **App Check enforcement is temporarily disabled** with `ENFORCE_APP_CHECK=false`; this is
-  independent from email verification and is intentional while test clients are changing.
+- Access requires **a verified mailbox on the `@aui.ma` domain**. Both conditions are
+  enforced in `firestore.rules`, `storage.rules`, and every callable (`requireAuiUser`) —
+  the client-side gates in `AuthContext` / `ProtectedRoute` / `AuthHub` are UX, not the
+  boundary. Email-link sign-in satisfies verification implicitly.
+- **App Check is staged** behind the `ENFORCE_APP_CHECK` deploy parameter and is not yet
+  enforced; see [`todo.md`](../todo.md).
+- Callables carry `maxInstances` ceilings, and both Sage and the delete callables are
+  metered per user per day in server-only counter collections.
 - `npm run lint`, the production build, unit tests, and Firebase Rules tests pass locally.
 - The checked-in Hosting headers require a Hosting deployment before they appear on the public
   site. Use `npm run verify:hosting -- https://companion-c4a42.web.app` after deployment.
 - `react-rnd` is intentionally pinned to `10.5.2`. Version `10.5.3` currently pulls a
   `react-draggable` build that references Node's `process` global in the browser and prevents
   note canvases from opening under Vite.
-- The note editor's longer-term plan lives in [`docs/editor-phase3-plan.md`](../docs/editor-phase3-plan.md).
-- This is a private project; no open-source license is attached.
+- Remaining work and design decisions are tracked in [`todo.md`](../todo.md).
+- No license is attached — the code is published to be read, not reused.

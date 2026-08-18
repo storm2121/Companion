@@ -6,17 +6,25 @@ paste/drop, settings page, in-app link/delete popouts, resizable code block) are
 listed here.
 
 ## Trust & security
-- [ ] **Re-enable email verification** (or OTP-on-signup). Currently OFF — anyone with any
-      `@aui.ma` string can register unverified. _High priority._ Re-add
-      `request.auth.token.email_verified == true` in `firestore.rules`/`storage.rules`,
-      re-enable the gate in `AuthContext`/`ProtectedRoute`, redeploy rules.
+- [x] **Email-verification gate** — done 2026-08: enforced in `firestore.rules`,
+      `storage.rules`, `requireAuiUser`, `AuthContext`, `ProtectedRoute`, and a confirm
+      card in `AuthHub` (resend + recheck). Email-link sign-in verifies implicitly.
+- [x] **Abuse ceilings on the callables** — done 2026-08: `maxInstances` on all four,
+      delete callables metered by note count via `deleteUsage/{uid}`.
+- [ ] **Enforce App Check** on the callables. Code is ready (`ENFORCE_APP_CHECK` param +
+      `VITE_FIREBASE_APPCHECK_SITE_KEY`); needs reCAPTCHA Enterprise registration in the
+      console, then flip the param **after** confirming tokens arrive. _High priority._
+- [ ] **Hard billing cap** — budget alerts only notify. Add a Cloud Functions
+      invocations/day quota in the Cloud console, and/or a budget→Pub/Sub→disable-billing
+      function.
 - [ ] **Account deletion** in Settings (recursive data delete + reauth flow). Deferred —
       destructive, needs care.
 - [ ] **noteCount via Cloud Function** for always-accurate counts (current fix self-heals
       on view). Needs Blaze plan + a Firestore trigger.
 
 ## Editor
-- [ ] **Export a note → PDF / Markdown / print** (Settings only does full-workspace JSON today).
+- [x] **Export a note → PDF** — done 2026-07: print-pipeline export from the note ⋯ menu.
+- [ ] **Export a note → Markdown** (Settings does full-workspace JSON; PDF is covered above).
 - [ ] **Math (KaTeX)** — inline + block math for STEM notes.
 - [ ] **Slash menu (`/`)** to insert blocks/formatting.
 - [ ] **Markdown input rules** (`## `, `- `, etc.) for faster capture.
@@ -27,9 +35,8 @@ listed here.
 ## Organization & planning
 - [ ] **Tags UI** — `tags` field already exists in data; add chips + filtering.
 - [ ] **Due dates / reminders** (optional `dueAt` on notes + "due soon" cue).
-- [ ] **📅 Calendar view** — month/agenda of notes by date.
-      - Decision pending: **created-date timeline** (quick, data exists) vs **due-date planner**
-        (pairs with due dates above).
+- [x] **📅 Calendar view** — done 2026-07: month grid, day panel with countdowns, and an
+      "Up next" spine, with an optional Upcoming widget on the dashboard.
 - [ ] **Full command palette** (Ctrl+K is just search today — make it jump-to-class/note/action).
 
 ## Sharing & platform
@@ -45,7 +52,8 @@ listed here.
 - [ ] **Tests for the persistence layer** (delta save + legacy→map migration is the riskiest code).
 - [x] **Remove dormant legacy contentEditable editor** — done 2026-07: ~16 KB of legacy
       source excised; TipTap is the only editor path.
-- [ ] **CI** (GitHub Actions: build + lint on push) and clear the ~19 pre-existing lint errors.
+- [ ] **CI** (GitHub Actions: build + lint + unit tests on push). Lint is at a clean baseline
+      of 0 problems — CI would keep it there.
 - [ ] **Error monitoring** (Sentry).
 - [x] **Route-level code-splitting** — done 2026-07: NoteEditor/Settings/Calendar lazy;
       main bundle 981 KB → 882 KB, editor in its own chunk.
