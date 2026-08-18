@@ -2,8 +2,9 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     function isAuiUser() {
-      // Email verification remains optional while the app is in testing.
+      // Mirrors firestore.rules — verified mailbox first, then the domain claim.
       return request.auth != null
+        && request.auth.token.email_verified == true
         && request.auth.token.email.matches('.*@aui\\.ma');
     }
 

@@ -3,7 +3,7 @@ import { useAuth } from '../context/authState';
 import ScreenLoader from './ui/ScreenLoader';
 
 const ProtectedRoute = ({ children, requireProfile = false }) => {
-  const { firebaseUser, profile, profileReady, loading } = useAuth();
+  const { firebaseUser, profile, profileReady, loading, emailVerified } = useAuth();
 
   if (loading) {
     return <ScreenLoader note="Checking secure session..." />;
@@ -13,7 +13,11 @@ const ProtectedRoute = ({ children, requireProfile = false }) => {
     return <Navigate to="/" replace />;
   }
 
-  // Email verification temporarily disabled.
+  // Unverified accounts are sent back to the hub, which owns the "confirm your address"
+  // card and the resend controls.
+  if (!emailVerified) {
+    return <Navigate to="/" replace />;
+  }
 
   // At this point `loading` is already false, so a null profile means the profile
   // fetch failed (network/permissions) — show a recoverable state, not a perpetual loader.

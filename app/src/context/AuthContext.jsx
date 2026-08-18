@@ -4,6 +4,7 @@ import {
   createUserWithEmailAndPassword,
   isSignInWithEmailLink,
   onAuthStateChanged,
+  sendEmailVerification,
   sendSignInLinkToEmail,
   setPersistence,
   signInWithEmailAndPassword,
@@ -69,7 +70,14 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
-      // Email verification temporarily disabled — load the profile for any signed-in user.
+      // An unverified account cannot read its own profile under the deployed rules, so
+      // subscribing would only produce a permission error. Stop here and let the gate
+      // screen ask the user to verify.
+      if (!user.emailVerified) {
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
 
       const profileRef = doc(db, 'users', user.uid);
       profileUnsub = onSnapshot(
@@ -158,17 +166,40 @@ export const AuthProvider = ({ children }) => {
     if (!EMAIL_REGEX.test(email)) {
       throw new Error('Only @aui.ma email addresses are permitted.');
     }
-    // Email verification temporarily disabled — the new account stays signed in.
-    await createUserWithEmailAndPassword(auth, email, password);
+    const credential = await createUserWithEmailAndPassword(auth, email, password);
+    // The account stays signed in but reaches no data until the mailbox is confirmed.
+    await sendEmailVerification(credential.user);
+    setStatusMessage('Check your university inbox to confirm your address.');
+    return credential.user;
   };
 
   const loginWithPassword = async (email, password) => {
     if (!EMAIL_REGEX.test(email)) {
       throw new Error('Only @aui.ma email addresses are permitted.');
     }
-    // Email verification temporarily disabled.
     const result = await signInWithEmailAndPassword(auth, email, password);
     return result.user;
+  };
+
+  const resendVerification = async () => {
+    if (!auth.currentUser) throw new Error('No authenticated user.');
+    await sendEmailVerification(auth.currentUser);
+    setStatusMessage('Verification email sent. Check your university inbox.');
+  };
+
+  // Firebase caches emailVerified on the local token, so the app only notices the click
+  // in the inbox after the user record is reloaded.
+  const refreshVerification = async () => {
+    if (!auth.currentUser) return false;
+    await auth.currentUser.reload();
+    const verified = auth.currentUser.emailVerified;
+    if (verified) {
+      setFirebaseUser({ ...auth.currentUser, emailVerified: true });
+      window.location.reload();
+    } else {
+      setStatusMessage("That address still isn't confirmed — try the link again.");
+    }
+    return verified;
   };
 
   const sendLoginLink = async (email) => {
@@ -246,10 +277,13 @@ export const AuthProvider = ({ children }) => {
     profile,
     profileReady,
     loading,
+    emailVerified: Boolean(firebaseUser?.emailVerified),
     statusMessage,
     setStatusMessage,
     registerWithPassword,
     loginWithPassword,
+    resendVerification,
+    refreshVerification,
     sendLoginLink,
     completeEmailLinkSignIn,
     updateProfileData,

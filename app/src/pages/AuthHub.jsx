@@ -7,9 +7,13 @@ const AuthHub = () => {
     registerWithPassword,
     loginWithPassword,
     sendLoginLink,
+    resendVerification,
+    refreshVerification,
     firebaseUser,
     profileReady,
     loading,
+    emailVerified,
+    logout,
     statusMessage,
     setStatusMessage,
   } = useAuth();
@@ -24,11 +28,11 @@ const AuthHub = () => {
 
   useEffect(() => {
     if (loading) return;
-    // Email verification temporarily disabled.
-    if (firebaseUser) {
+    // Unverified accounts stay here so the confirm-your-address card can render.
+    if (firebaseUser && emailVerified) {
       navigate(profileReady ? '/dashboard' : '/setup', { replace: true });
     }
-  }, [firebaseUser, profileReady, loading, navigate]);
+  }, [firebaseUser, emailVerified, profileReady, loading, navigate]);
 
   const resetFeedback = () => {
     setError('');
@@ -53,6 +57,52 @@ const AuthHub = () => {
       setWorking(false);
     }
   };
+
+  const handleVerificationAction = async (action) => {
+    setWorking(true);
+    resetFeedback();
+    try {
+      await action();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  if (!loading && firebaseUser && !emailVerified) {
+    return (
+      <div className="gate-shell eligible">
+        <div className="gate-card">
+          <h1>Confirm your address</h1>
+          <p className="status-text">
+            We sent a link to <strong>{firebaseUser.email}</strong>. Open it, then come back
+            and continue.
+          </p>
+          <button
+            type="button"
+            className="primary-btn"
+            disabled={working}
+            onClick={() => handleVerificationAction(refreshVerification)}
+          >
+            {working ? 'Working…' : "I've confirmed it"}
+          </button>
+          <button
+            type="button"
+            className="ghost-btn"
+            disabled={working}
+            onClick={() => handleVerificationAction(resendVerification)}
+          >
+            Resend the email
+          </button>
+          <button type="button" className="ghost-btn" disabled={working} onClick={logout}>
+            Use a different account
+          </button>
+          {(error || statusMessage) && <p className="status-text">{error || statusMessage}</p>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`gate-shell ${eligible ? 'eligible' : ''}`}>

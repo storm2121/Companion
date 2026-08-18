@@ -2,8 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isAuiUser() {
-      // Email verification remains optional while the app is in testing.
+      // Mailbox control is proven before any data access: the domain match alone is
+      // only a claim, since Firebase lets a client register any address it likes.
       return request.auth != null
+        && request.auth.token.email_verified == true
         && request.auth.token.email.matches('.*@aui\\.ma');
     }
 
@@ -35,8 +37,13 @@ service cloud.firestore {
       }
     }
 
-    // Sage usage is maintained only by the Admin SDK in Cloud Functions.
+    // Usage counters are maintained only by the Admin SDK in Cloud Functions. They are
+    // deliberately outside users/{uid}, whose documents are client-writable.
     match /sageUsage/{userId} {
+      allow read, write: if false;
+    }
+
+    match /deleteUsage/{userId} {
       allow read, write: if false;
     }
 
