@@ -9,6 +9,7 @@ import {
   FaCheck,
   FaCheckSquare,
   FaChevronDown,
+  FaChevronRight,
   FaChevronUp,
   FaCode,
   FaCopy,
@@ -56,8 +57,23 @@ import {
   setDefaultSagePreset,
   deleteNoteVersion,
   presetStyles,
+  listenSageUsage,
 } from '../services/library';
-import { callSageImprove, sanitizeSageLayout, SAGE_STYLES, SAGE_PHRASES, SAGE_ADDONS } from '../services/sage';
+import {
+  callSageImprove,
+  composeSageLayout,
+  applySagePatch,
+  refitSageBlocks,
+  describeSageRun,
+  sageDayKey,
+  sageRunWeight,
+  readSageBalance,
+  MAX_SAGE_ADDONS,
+  SAGE_STYLES,
+  SAGE_PHRASES,
+  SAGE_ADDONS,
+} from '../services/sage';
+import { releaseMeasureHost } from '../services/sageMeasure';
 import { WORKSPACE_WIDTH } from '../data/noteTemplates';
 import { useAuth } from '../context/authState';
 import {
@@ -250,6 +266,10 @@ const normalizeBlocks = (blocks = []) =>
       collapsed: Boolean(block.collapsed),
       restoreHeight: Number.isFinite(block.restoreHeight) ? block.restoreHeight : null,
       bgColor: typeof block.bgColor === 'string' ? block.bgColor : '',
+      // Sage's semantic role, when it assigned one. Presentational on the canvas (see
+      // .note-block[data-role=...] in refinements.css) and re-used as the layout
+      // engine's input the next time the page is rebuilt.
+      role: typeof block.role === 'string' ? block.role : '',
       zIndex,
       fontSize: Number.isFinite(block.fontSize) ? block.fontSize : defaults.fontSize || 14,
       lineHeight: Number.isFinite(block.lineHeight) ? block.lineHeight : 1.4,
@@ -337,6 +357,15 @@ const NoteEditor = () => {
   const [custComment, setCustComment] = useState('');
   const [custName, setCustName] = useState('');
   const [custMakeDefault, setCustMakeDefault] = useState(false);
+  // Authoring presets is a different job from running Sage, so it gets its own view of
+  // the popout instead of six more controls stacked under the run button.
+  const [sagePanel, setSagePanel] = useState('run');
+  // Extras/topic/free-text start folded away: they are the rarely-used two thirds of the
+  // old single-scroll form, and hiding them is most of why it stopped feeling clogged.
+  const [custExtrasOpen, setCustExtrasOpen] = useState(false);
+  // The allowance counter, live. Server-written and read-only to us; absent means an
+  // account that has never run Sage, which is a full allowance.
+  const [sageUsage, setSageUsage] = useState(null);
   const [, setHistoryVersion] = useState(0);
   const addMenuRef = useRef(null);
   const toolbarMoreRef = useRef(null);
@@ -1610,6 +1639,21 @@ const NoteEditor = () => {
     sagePhraseTimerRef.current = null;
   };
 
+  // The height-measuring probe lives in a detached host on document.body; drop it with
+  // the editor so it never outlives the page that needed it.
+  useEffect(() => releaseMeasureHost, []);
+
+  useEffect(() => {
+    if (!firebaseUser?.uid) return undefined;
+    return listenSageUsage(
+      firebaseUser.uid,
+      (usage) => setSageUsage(usage),
+      // A read failure is not worth interrupting the editor for: the balance simply shows
+      // as full and the server remains the authority that refuses an over-budget run.
+      (err) => console.warn('Sage usage unavailable', err?.code || err),
+    );
+  }, [firebaseUser?.uid]);
+
   // Bring the camera to the result: after Sage lands a new layout the viewport glides to
   // the top-center of the content, so the reveal happens in front of the user even if
   // they were scrolled far away.
@@ -1628,6 +1672,42 @@ const NoteEditor = () => {
     });
   };
 
+  // Sage's composed heights come from an off-screen replica of a block (sageMeasure.js).
+  // That replica is faithful but not identical, so once the real blocks are on screen we
+  // read them and correct anything that came out short. This is what actually guarantees
+  // no block hides its own last line: it measures the element the student is looking at.
+  const autofitSageHeights = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || typeof window === 'undefined') return;
+    const run = () => {
+      const current = getBlocksSnapshot();
+      if (!current.length) return;
+      const byId = new Map(current.map((block) => [block.id, block]));
+      const overflow = new Map();
+      canvas.querySelectorAll('[data-block-id]').forEach((node) => {
+        const id = node.dataset.blockId;
+        const block = id ? byId.get(id) : null;
+        // Collapsed blocks are short on purpose, and an image is sized by its own pixels.
+        if (!block || block.type !== 'text' || block.collapsed) return;
+        const content = node.querySelector('.note-textarea');
+        if (!content) return;
+        const short = content.scrollHeight - content.clientHeight;
+        if (short > 1) overflow.set(id, Math.min(short, 1400));
+      });
+      if (!overflow.size) return;
+      const refit = refitSageBlocks(current, overflow);
+      if (!refit) return;
+      setBlocks(normalizeBlocks(refit.blocks));
+      setCanvasHeight(Math.max(PAGE_HEIGHT, refit.canvasHeight));
+      markDirty();
+    };
+    // Two frames for TipTap to mount and paint, then again once webfonts settle — a font
+    // landing late changes line count, and the first pass would have measured the
+    // fallback face.
+    requestAnimationFrame(() => requestAnimationFrame(run));
+    document.fonts?.ready?.then(() => requestAnimationFrame(run)).catch(() => {});
+  };
+
   const applySageResult = (blocksIn, height) => {
     pushHistory('sage');
     const normalized = normalizeBlocks(blocksIn);
@@ -1636,13 +1716,32 @@ const NoteEditor = () => {
     setCanvasHeight(Math.max(PAGE_HEIGHT, height || PAGE_HEIGHT));
     markDirty();
     centerViewportOnBlocks(normalized);
+    autofitSageHeights();
+  };
+
+  // The provider's answer arrives in one of three shapes, and the mode says which. Only
+  // "layout" hands back a whole page; the other two are patches, which is why they are
+  // fast. All geometry is computed here, from measured text — never received.
+  const applySageByMode = (result, snapshot) => {
+    const mode = result?.mode || (Array.isArray(result?.blocks) ? 'layout' : '');
+    if (mode === 'layout') {
+      const composed = composeSageLayout(result.blocks, snapshot);
+      return composed ? { ...composed, touched: composed.blocks.length } : null;
+    }
+    if (mode === 'patch' || mode === 'reflow') {
+      const patched = applySagePatch(snapshot, result);
+      if (!patched) return null;
+      return { ...patched, touched: patched.editedCount + patched.addedCount };
+    }
+    return null;
   };
 
   const runSage = async (styles, { addons = [], topic = '', comment = '' } = {}) => {
     setSagePopoutOpen(false);
     if (sageBusy || !firebaseUser || !note || note.missing || isTemplateMode) return;
     const goalList = Array.isArray(styles) ? styles.filter(Boolean) : [styles].filter(Boolean);
-    if (!goalList.length && !addons.length) return;
+    const addonList = (Array.isArray(addons) ? addons : []).slice(0, MAX_SAGE_ADDONS);
+    if (!goalList.length && !addonList.length) return;
     const snapshot = cloneBlocks(getBlocksSnapshot());
     const hasText = snapshot.some(
       (b) => b.type === 'text' && stripHtmlToPlainText(b.value).trim().length > 20,
@@ -1651,25 +1750,46 @@ const NoteEditor = () => {
       setSageError('Write a little first — Sage needs something to work with.');
       return;
     }
+    // Save the round trip when the counter we can actually see says the allowance is
+    // gone. If there is no counter (a fresh account, or the read failed) fall through and
+    // let the server decide — it refuses before spending anything, so guessing wrong in
+    // that direction is free, while guessing wrong the other way blocks a valid run.
+    if (sageUsage && readSageBalance(sageUsage).left <= 0) {
+      setSageError('No Sage runs left today — your allowance resets at 01:00.');
+      return;
+    }
     setSageError('');
     setSageBusy(goalList[0] || 'default');
     startSagePhrases(goalList[0] || 'default');
     try {
-      if (!note.sageHasVersions) {
-        await saveNoteVersion(firebaseUser.uid, classId, noteId, 'original', snapshot, canvasHeightRef.current);
-      }
       const result = await callSageImprove({
         styles: goalList,
         noteTitle: note.title || '',
         blocks: snapshot,
         canvasHeight: canvasHeightRef.current,
-        addons,
+        addons: addonList,
         topic,
         comment,
       });
-      const clean = sanitizeSageLayout(result?.blocks || [], snapshot);
-      if (!clean) throw new Error('Sage returned an unusable result — please try again.');
-      applySageResult(clean.blocks, clean.canvasHeight);
+      // The server returns the balance it just charged, so the popout is right
+      // immediately instead of a listener round trip later.
+      if (result?.usage) {
+        setSageUsage({ date: sageDayKey(), count: result.usage.count, cap: result.usage.cap });
+      }
+      const applied = applySageByMode(result, snapshot);
+      if (!applied) throw new Error('Sage returned an unusable result — please try again.');
+      // A patch with nothing in it is a real answer, not a failure: say so, and leave the
+      // note (and its version slots) untouched.
+      if (!applied.touched) {
+        setSageError('Sage read it through and found nothing worth changing.');
+        return;
+      }
+      // The pre-Sage snapshot is only banked once there is something to go back FROM,
+      // so a no-op run no longer leaves a phantom version behind.
+      if (!note.sageHasVersions) {
+        await saveNoteVersion(firebaseUser.uid, classId, noteId, 'original', snapshot, canvasHeightRef.current);
+      }
+      applySageResult(applied.blocks, applied.canvasHeight);
       setSageView('improved');
       await updateNote(firebaseUser.uid, classId, noteId, {
         sageHasVersions: true,
@@ -1728,10 +1848,14 @@ const NoteEditor = () => {
 
   // Loads a preset into the popout form so it can be run as-is or tweaked first.
   const applySagePresetToForm = (preset) => {
+    const addons = Array.isArray(preset.addons) ? preset.addons.slice(0, MAX_SAGE_ADDONS) : [];
     setCustStyles(presetStyles(preset));
-    setCustAddons(Array.isArray(preset.addons) ? preset.addons : []);
+    setCustAddons(addons);
     setCustTopic(preset.topic || '');
     setCustComment(preset.comment || '');
+    // Unfold the extras when the preset actually uses them — otherwise the loaded
+    // settings would sit invisible behind a collapsed row.
+    if (addons.length || preset.topic || preset.comment) setCustExtrasOpen(true);
   };
 
   const openSagePopout = () => {
@@ -1746,6 +1870,7 @@ const NoteEditor = () => {
     }
     setCustName('');
     setCustMakeDefault(false);
+    setSagePanel('run');
     setSageVersionsOpen(false);
     setSagePopoutOpen(true);
   };
@@ -1755,10 +1880,29 @@ const NoteEditor = () => {
   };
 
   const toggleCustAddon = (id) => {
-    setCustAddons((prev) => (prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]));
+    setCustAddons((prev) => {
+      if (prev.includes(id)) return prev.filter((a) => a !== id);
+      // Each add-on is another job for one call. Past a few, the writing degrades as much
+      // as the latency, so the limit is real rather than advisory.
+      if (prev.length >= MAX_SAGE_ADDONS) return prev;
+      return [...prev, id];
+    });
   };
 
   const sageRunnable = custStyles.length > 0 || custAddons.length > 0;
+  const sageRunPlan = useMemo(() => describeSageRun(custStyles, custAddons), [custStyles, custAddons]);
+
+  // What this run will cost, and what is left. Both are computed from the same inputs the
+  // server uses, so the quote in the popout is the price that gets charged.
+  const sageBalance = useMemo(() => readSageBalance(sageUsage), [sageUsage]);
+  const sageCost = useMemo(() => {
+    if (!sagePopoutOpen) return 1;
+    return sageRunWeight(getBlocksSnapshot(), sageRunPlan.mode);
+    // getBlocksSnapshot reads a ref, so the cost is recomputed whenever the popout opens
+    // or the selection changes rather than on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sagePopoutOpen, sageRunPlan.mode]);
+  const sageOutOfRuns = sageBalance.left <= 0;
 
   const runSageCustom = () => {
     if (!sageRunnable) return;
@@ -1779,6 +1923,7 @@ const NoteEditor = () => {
       if (custMakeDefault) await setDefaultSagePreset(firebaseUser.uid, id);
       setCustName('');
       setCustMakeDefault(false);
+      setSagePanel('run');
     } catch (err) {
       console.error('Preset save failed', err);
     }
@@ -2927,7 +3072,26 @@ const NoteEditor = () => {
               <div className="sage-modal-head">
                 <span className="sage-spark" aria-hidden="true">✨</span>
                 <h3>Sage</h3>
-                <p className="sage-modal-sub">pick goals · add extras · run</p>
+                <div className="sage-modal-tabs" role="tablist">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={sagePanel === 'run'}
+                    className={sagePanel === 'run' ? 'active' : ''}
+                    onClick={() => setSagePanel('run')}
+                  >
+                    Run
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={sagePanel === 'presets'}
+                    className={sagePanel === 'presets' ? 'active' : ''}
+                    onClick={() => setSagePanel('presets')}
+                  >
+                    Presets{sagePresetList.length ? ` (${sagePresetList.length})` : ''}
+                  </button>
+                </div>
                 <button
                   type="button"
                   className="sage-modal-close"
@@ -2937,130 +3101,249 @@ const NoteEditor = () => {
                   <FaTimes />
                 </button>
               </div>
-              {sagePresetList.length > 0 && (
+
+              {sagePanel === 'run' ? (
                 <>
-                  <p className="sage-modal-label">Your presets — click one to load it</p>
-                  <div className="sage-preset-shelf">
-                    {sagePresetList.map((preset) => (
-                      <div key={preset.id} className="sage-preset-chip" title={sagePresetHint(preset)}>
+                  {sagePresetList.length > 0 && (
+                    <div className="sage-preset-quickrow">
+                      {sagePresetList.map((preset) => (
                         <button
+                          key={preset.id}
                           type="button"
                           className="sage-preset-load"
+                          title={sagePresetHint(preset)}
                           onClick={() => applySagePresetToForm(preset)}
                         >
+                          {preset.id === sageDefaultId && <FaStar aria-hidden="true" />}
                           {preset.name}
                         </button>
-                        <button
-                          type="button"
-                          className={`sage-preset-star ${preset.id === sageDefaultId ? 'is-default' : ''}`}
-                          title={
-                            preset.id === sageDefaultId
-                              ? 'Default — loads when Sage opens. Click to unset'
-                              : 'Make default — loads when Sage opens'
-                          }
-                          onClick={() => toggleDefaultSagePreset(preset.id)}
-                        >
-                          {preset.id === sageDefaultId ? <FaStar /> : <FaRegStar />}
-                        </button>
-                        <button
-                          type="button"
-                          className="sage-preset-del"
-                          title="Delete preset"
-                          onClick={() => removeSagePreset(preset.id)}
-                        >
-                          <FaTimes />
-                        </button>
-                      </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="sage-modal-label">What should Sage do? — pick any</p>
+                  <div className="sage-goal-grid">
+                    {SAGE_STYLES.map((style) => (
+                      <button
+                        key={style.id}
+                        type="button"
+                        className={`sage-goal-card ${custStyles.includes(style.id) ? 'active' : ''}`}
+                        aria-pressed={custStyles.includes(style.id)}
+                        onClick={() => toggleCustStyle(style.id)}
+                      >
+                        <span className="sage-goal-top">
+                          <span className="sage-item-icon">{SAGE_STYLE_ICONS[style.id]}</span>
+                          <strong>{style.label}</strong>
+                          {custStyles.includes(style.id) && <FaCheck className="sage-goal-check" />}
+                        </span>
+                        <span className="sage-goal-hint">{style.hint}</span>
+                      </button>
                     ))}
+                  </div>
+
+                  {/* What this selection actually costs in waiting. Rebuilding the page and
+                      adding any extra each change the KIND of run the server makes, and
+                      that used to stay invisible until the spinner told you. */}
+                  <div className={`sage-run-badge mode-${sageRunPlan.mode}`}>
+                    <strong>{sageRunPlan.label}</strong>
+                    <span>{sageRunPlan.detail}</span>
+                    {/* The price, and what is left to pay it with. A long note is more
+                        tokens in and more back, so it costs more than one run — and
+                        finding that out only after the fact would be the same invisible
+                        cliff the mode badge above exists to remove. */}
+                    <span className="sage-allowance">
+                      {sageOutOfRuns ? (
+                        <>
+                          <b>No runs left today.</b> Your allowance resets at 01:00
+                          {sageBalance.over > 0 && (
+                            <>
+                              , and opens with {sageBalance.cap - sageBalance.over} of {sageBalance.cap}{' '}
+                              because the last run went {sageBalance.over} over
+                            </>
+                          )}
+                          .
+                        </>
+                      ) : (
+                        <>
+                          Costs <b>{sageCost}</b> of your <b>{sageBalance.left}</b> left today
+                          {sageCost > 1 && <> — this note is long enough to count as {sageCost}</>}
+                          {sageCost > sageBalance.left && (
+                            <> . It will still run, and tomorrow opens {sageCost - sageBalance.left} short</>
+                          )}
+                          .
+                        </>
+                      )}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="sage-disclosure"
+                    aria-expanded={custExtrasOpen}
+                    onClick={() => setCustExtrasOpen((prev) => !prev)}
+                  >
+                    {custExtrasOpen ? <FaChevronDown /> : <FaChevronRight />}
+                    Extras, topic and a note to Sage
+                    {custAddons.length > 0 && <span className="sage-disclosure-count">{custAddons.length}</span>}
+                  </button>
+
+                  {custExtrasOpen && (
+                    <div className="sage-extras">
+                      <p className="sage-modal-label">
+                        Extras — up to {MAX_SAGE_ADDONS}
+                        {custAddons.length >= MAX_SAGE_ADDONS && (
+                          <span className="sage-modal-note"> · limit reached, unpick one to swap</span>
+                        )}
+                      </p>
+                      <div className="sage-chip-row">
+                        {SAGE_ADDONS.map((addon) => {
+                          const on = custAddons.includes(addon.id);
+                          const blocked = !on && custAddons.length >= MAX_SAGE_ADDONS;
+                          return (
+                            <button
+                              key={addon.id}
+                              type="button"
+                              className={`sage-chip ${on ? 'active' : ''} ${blocked ? 'blocked' : ''}`}
+                              aria-pressed={on}
+                              disabled={blocked}
+                              onClick={() => toggleCustAddon(addon.id)}
+                            >
+                              <strong>{addon.label}</strong>
+                              <span>{addon.hint}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="sage-modal-label">Topic (optional)</p>
+                      <input
+                        type="text"
+                        className="sage-modal-input"
+                        value={custTopic}
+                        maxLength={120}
+                        placeholder="e.g. Binary search trees — helps Sage aim"
+                        onChange={(e) => setCustTopic(e.target.value)}
+                      />
+                      <p className="sage-modal-label">Anything else? (optional)</p>
+                      <textarea
+                        className="sage-modal-input sage-textarea"
+                        value={custComment}
+                        maxLength={500}
+                        rows={2}
+                        placeholder="e.g. Focus on the proofs, leave my code blocks alone"
+                        onChange={(e) => setCustComment(e.target.value)}
+                      />
+                    </div>
+                  )}
+
+                  <div className="sage-modal-actions">
+                    <button
+                      type="button"
+                      className="btn btn-soft"
+                      disabled={!sageRunnable}
+                      onClick={() => setSagePanel('presets')}
+                    >
+                      Save as preset
+                    </button>
+                    <button type="button" className="btn btn-soft" onClick={() => setSagePopoutOpen(false)}>
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-fill"
+                      disabled={!sageRunnable || sageOutOfRuns}
+                      title={sageOutOfRuns ? 'No Sage runs left today' : undefined}
+                      onClick={runSageCustom}
+                    >
+                      ✨ Run Sage
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="sage-modal-label">Save the current selection</p>
+                  {sageRunnable ? (
+                    <p className="sage-preset-summary">
+                      {sagePresetHint({ styles: custStyles, addons: custAddons })}
+                    </p>
+                  ) : (
+                    <p className="sage-preset-summary muted">
+                      Nothing selected yet — pick a goal on the Run tab first.
+                    </p>
+                  )}
+                  <div className="sage-modal-saverow">
+                    <input
+                      type="text"
+                      className="sage-modal-input"
+                      value={custName}
+                      maxLength={40}
+                      placeholder="Name this combo"
+                      onChange={(e) => setCustName(e.target.value)}
+                    />
+                    <label className="sage-modal-default" title="Loads automatically when Sage opens">
+                      <input
+                        type="checkbox"
+                        checked={custMakeDefault}
+                        onChange={(e) => setCustMakeDefault(e.target.checked)}
+                      />
+                      <FaStar aria-hidden="true" /> default
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-fill btn-sm"
+                      disabled={!custName.trim() || !sageRunnable}
+                      onClick={() => saveSageCustom(false)}
+                    >
+                      Save
+                    </button>
+                  </div>
+
+                  <p className="sage-modal-label">
+                    {sagePresetList.length ? 'Saved presets' : 'No presets saved yet'}
+                  </p>
+                  {sagePresetList.length > 0 && (
+                    <div className="sage-preset-shelf">
+                      {sagePresetList.map((preset) => (
+                        <div key={preset.id} className="sage-preset-chip" title={sagePresetHint(preset)}>
+                          <button
+                            type="button"
+                            className="sage-preset-load"
+                            onClick={() => {
+                              applySagePresetToForm(preset);
+                              setSagePanel('run');
+                            }}
+                          >
+                            {preset.name}
+                          </button>
+                          <button
+                            type="button"
+                            className={`sage-preset-star ${preset.id === sageDefaultId ? 'is-default' : ''}`}
+                            title={
+                              preset.id === sageDefaultId
+                                ? 'Default — loads when Sage opens. Click to unset'
+                                : 'Make default — loads when Sage opens'
+                            }
+                            onClick={() => toggleDefaultSagePreset(preset.id)}
+                          >
+                            {preset.id === sageDefaultId ? <FaStar /> : <FaRegStar />}
+                          </button>
+                          <button
+                            type="button"
+                            className="sage-preset-del"
+                            title="Delete preset"
+                            onClick={() => removeSagePreset(preset.id)}
+                          >
+                            <FaTimes />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="sage-modal-actions">
+                    <button type="button" className="btn btn-soft" onClick={() => setSagePanel('run')}>
+                      Back to run
+                    </button>
                   </div>
                 </>
               )}
-              <p className="sage-modal-label">What should Sage do? — pick any</p>
-              <div className="sage-goal-grid">
-                {SAGE_STYLES.map((style) => (
-                  <button
-                    key={style.id}
-                    type="button"
-                    className={`sage-goal-card ${custStyles.includes(style.id) ? 'active' : ''}`}
-                    aria-pressed={custStyles.includes(style.id)}
-                    onClick={() => toggleCustStyle(style.id)}
-                  >
-                    <span className="sage-goal-top">
-                      <span className="sage-item-icon">{SAGE_STYLE_ICONS[style.id]}</span>
-                      <strong>{style.label}</strong>
-                      {custStyles.includes(style.id) && <FaCheck className="sage-goal-check" />}
-                    </span>
-                    <span className="sage-goal-hint">{style.hint}</span>
-                  </button>
-                ))}
-              </div>
-              <p className="sage-modal-label">Extras</p>
-              <div className="sage-chip-row">
-                {SAGE_ADDONS.map((addon) => (
-                  <button
-                    key={addon.id}
-                    type="button"
-                    className={`sage-chip ${custAddons.includes(addon.id) ? 'active' : ''}`}
-                    aria-pressed={custAddons.includes(addon.id)}
-                    title={addon.hint}
-                    onClick={() => toggleCustAddon(addon.id)}
-                  >
-                    {addon.label}
-                  </button>
-                ))}
-              </div>
-              <p className="sage-modal-label">Topic (optional)</p>
-              <input
-                type="text"
-                className="sage-modal-input"
-                value={custTopic}
-                maxLength={120}
-                placeholder='e.g. "Binary search trees" — helps Sage aim'
-                onChange={(e) => setCustTopic(e.target.value)}
-              />
-              <p className="sage-modal-label">Anything else? (optional)</p>
-              <textarea
-                className="sage-modal-input sage-textarea"
-                value={custComment}
-                maxLength={500}
-                rows={2}
-                placeholder='e.g. "Focus on the proofs, don&apos;t touch my code blocks"'
-                onChange={(e) => setCustComment(e.target.value)}
-              />
-              <div className="sage-modal-saverow">
-                <input
-                  type="text"
-                  className="sage-modal-input"
-                  value={custName}
-                  maxLength={40}
-                  placeholder="Name this combo to save it as a preset"
-                  onChange={(e) => setCustName(e.target.value)}
-                />
-                <label className="sage-modal-default" title="Loads automatically when Sage opens">
-                  <input
-                    type="checkbox"
-                    checked={custMakeDefault}
-                    onChange={(e) => setCustMakeDefault(e.target.checked)}
-                  />
-                  <FaStar aria-hidden="true" /> default
-                </label>
-                <button
-                  type="button"
-                  className="btn btn-soft btn-sm"
-                  disabled={!custName.trim() || !sageRunnable}
-                  onClick={() => saveSageCustom(false)}
-                >
-                  Save
-                </button>
-              </div>
-              <div className="sage-modal-actions">
-                <button type="button" className="btn btn-soft" onClick={() => setSagePopoutOpen(false)}>
-                  Cancel
-                </button>
-                <button type="button" className="btn btn-fill" disabled={!sageRunnable} onClick={runSageCustom}>
-                  ✨ Run Sage
-                </button>
-              </div>
             </div>
           </div>
         )}
@@ -3183,6 +3466,7 @@ const NoteEditor = () => {
                 >
                   <div
                     data-block-id={block.id}
+                    data-role={block.role || undefined}
                     className={`note-block ${isActive ? 'active' : ''} ${block.locked ? 'locked' : ''} ${
                       block.collapsed ? 'collapsed' : ''
                     } ${block.priority ? 'priority' : ''}`}

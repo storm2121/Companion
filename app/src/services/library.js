@@ -571,6 +571,23 @@ export const saveSagePreset = async (uid, preset) => {
 };
 
 // Normalizes old ({base}) and new ({styles}) preset shapes to a styles array.
+/**
+ * Live view of your own Sage allowance counter.
+ *
+ * `sageUsage/{uid}` is written only by the Admin SDK in Cloud Functions — the client is
+ * denied every write in firestore.rules, and reads are scoped to your own uid (which also
+ * keeps the app-wide `_global` document private). The document simply may not exist yet
+ * for an account that has never run Sage, which reads as a full allowance.
+ */
+export const listenSageUsage = (uid, onData, onError) => {
+  if (!uid) return () => {};
+  return onSnapshot(
+    doc(db, 'sageUsage', uid),
+    (snap) => onData(snap.exists() ? snap.data() : null),
+    onError,
+  );
+};
+
 export const presetStyles = (preset) =>
   Array.isArray(preset?.styles) && preset.styles.length
     ? preset.styles

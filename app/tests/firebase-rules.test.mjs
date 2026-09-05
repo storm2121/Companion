@@ -18,6 +18,9 @@ before(async () => {
   });
   await testEnv.withSecurityRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), 'users', 'alice'), { displayName: 'Alice' });
+    await setDoc(doc(context.firestore(), 'sageUsage', 'alice'), { date: '2026-09-04', count: 3, cap: 10 });
+    await setDoc(doc(context.firestore(), 'sageUsage', 'bob'), { date: '2026-09-04', count: 9, cap: 10 });
+    await setDoc(doc(context.firestore(), 'sageUsage', '_global'), { date: '2026-09-04', count: 120, cap: 400 });
   });
 });
 
@@ -34,7 +37,9 @@ test('verified AUI users can edit profiles but cannot alter usage counters', asy
   await assertSucceeds(updateDoc(doc(db, 'users', 'alice'), { displayName: 'Alice Updated' }));
   await assertFails(updateDoc(doc(db, 'users', 'alice'), { aiUsage: { date: '2026-07-10', count: 0 } }));
   await assertFails(setDoc(doc(db, 'sageUsage', 'alice'), { date: '2026-07-10', count: 0 }));
-  await assertFails(getDoc(doc(db, 'sageUsage', 'alice')));
+  // Reading your own Sage counter IS allowed — it is how the popout shows what is left.
+  // Writing it never is: a counter its own subject can edit would not be a limit.
+  await assertSucceeds(getDoc(doc(db, 'sageUsage', 'alice')));
   await assertFails(setDoc(doc(db, 'deleteUsage', 'alice'), { date: '2026-07-10', count: 0 }));
   await assertFails(getDoc(doc(db, 'deleteUsage', 'alice')));
 });
@@ -97,4 +102,28 @@ test('Storage accepts bounded raster images and rejects SVG or oversized uploads
     ),
   );
   await assertSucceeds(deleteObject(avatar));
+});
+
+test('the Sage allowance counter is readable only by its own owner', async () => {
+  const alice = testEnv
+    .authenticatedContext('alice', { email: 'alice@aui.ma', email_verified: true })
+    .firestore();
+  // own counter: readable, so the popout can say "7 of 10 left"
+  await assertSucceeds(getDoc(doc(alice, 'sageUsage', 'alice')));
+  // someone else's usage is nobody's business
+  await assertFails(getDoc(doc(alice, 'sageUsage', 'bob')));
+  // and the app-wide counter stays private — no uid can equal "_global", which is
+  // exactly why that id was chosen
+  await assertFails(getDoc(doc(alice, 'sageUsage', '_global')));
+  // writes remain closed on every path, including your own
+  await assertFails(setDoc(doc(alice, 'sageUsage', 'alice'), { date: '2026-09-04', count: 0 }));
+  await assertFails(updateDoc(doc(alice, 'sageUsage', 'alice'), { count: 0 }));
+  await assertFails(setDoc(doc(alice, 'sageUsage', '_global'), { count: 0 }));
+  // an unverified mailbox reads nothing, same as everywhere else
+  const mallory = testEnv
+    .authenticatedContext('mallory', { email: 'mallory@aui.ma', email_verified: false })
+    .firestore();
+  await assertFails(getDoc(doc(mallory, 'sageUsage', 'mallory')));
+  // deletion metering stays fully server-only: nothing in the UI needs it
+  await assertFails(getDoc(doc(alice, 'deleteUsage', 'alice')));
 });

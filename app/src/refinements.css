@@ -963,3 +963,294 @@
   gap: 8px;
   margin-top: 18px;
 }
+
+/* ==========================================================================
+   Sage, rebuilt (2026-09)
+   --------------------------------------------------------------------------
+   Two changes here. First, the popout is now two views instead of one long
+   scroll, so it needs tabs, a disclosure and a plan badge. Second, blocks
+   carry a semantic `role` from Sage, and the role is what the layout engine
+   composed the page from — so it is also what the page can be coloured by.
+   ========================================================================== */
+
+/* ---- popout: tabs + views ---- */
+.sage-modal-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-soft);
+}
+
+.sage-modal-tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.sage-modal-tabs button:hover {
+  color: var(--text);
+}
+
+.sage-modal-tabs button.active {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The run view keeps presets one tap away without the star/delete controls that
+   belong to managing them. */
+.sage-preset-quickrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.sage-preset-quickrow .sage-preset-load {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.sage-preset-quickrow .sage-preset-load:hover {
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+
+.sage-preset-quickrow .sage-preset-load svg {
+  color: var(--accent);
+  font-size: 10px;
+}
+
+/* ---- the plan badge: what this selection will actually cost you ---- */
+.sage-run-badge {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 12px 0 4px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--surface-1);
+  border-left: 3px solid var(--line-2);
+}
+
+.sage-run-badge strong {
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.sage-run-badge span {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* Quick edit is the cheap path, so it is the one that reads as "good". */
+.sage-run-badge.mode-patch {
+  border-left-color: var(--accent);
+}
+
+.sage-run-badge.mode-reflow {
+  border-left-color: var(--accent-line);
+}
+
+.sage-run-badge.mode-layout {
+  border-left-color: var(--text-muted);
+}
+
+/* ---- extras, folded away ---- */
+.sage-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 2px;
+  border: 0;
+  border-top: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.sage-disclosure:hover {
+  color: var(--text);
+}
+
+.sage-disclosure svg {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.sage-disclosure-count {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.sage-extras {
+  padding-top: 2px;
+}
+
+/* Add-on hints were tooltip-only, which meant seven unexplained chips on a laptop
+   and no explanation at all on a touch screen. They are on the chip now. */
+.sage-extras .sage-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  flex: 1 1 168px;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.sage-extras .sage-chip strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.sage-extras .sage-chip span {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.sage-extras .sage-chip.active span {
+  color: var(--accent-ink);
+  opacity: 0.75;
+}
+
+.sage-extras .sage-chip.active::before {
+  content: none;
+}
+
+.sage-extras .sage-chip.blocked {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.sage-modal-note {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.sage-preset-summary {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  color: var(--accent-ink);
+}
+
+.sage-preset-summary.muted {
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Role-driven block treatment
+   --------------------------------------------------------------------------
+   `data-role` comes from Sage. The engine already put an example or a caveat in
+   the margin beside the idea it belongs to; these rules make the relationship
+   visible without the student having to read the two blocks to work it out.
+   The tilt on margin notes is applied to the SHELL, never to the react-rnd
+   wrapper — Rnd owns that element's transform for positioning, and the
+   snapping/de-overlap math is all axis-aligned rectangles, so the paint tilts
+   while the geometry stays square.
+   ========================================================================== */
+.note-block[data-role='lead'] .note-block-shell,
+.note-block[data-role='summary'] .note-block-shell {
+  border-color: var(--accent-line);
+}
+
+.note-block[data-role='lead'] .note-block-header,
+.note-block[data-role='summary'] .note-block-header {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.note-block[data-role='example'] .note-block-shell {
+  background: var(--surface-1);
+  border-style: dashed;
+  transform: rotate(-0.35deg);
+}
+
+.note-block[data-role='caveat'] .note-block-shell {
+  border-left: 3px solid var(--accent);
+  transform: rotate(0.5deg);
+}
+
+.note-block[data-role='formula'] .note-block-shell {
+  border-left: 3px solid var(--line-2);
+  transform: rotate(-0.5deg);
+}
+
+.note-block[data-role='formula'] .note-textarea {
+  font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Mono', Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+}
+
+/* A tilted card must sit flat again the moment you touch it: reading and editing at
+   an angle is a novelty, and the tilt is only there to say "this is a margin note". */
+.note-block[data-role='example'] .note-block-shell,
+.note-block[data-role='caveat'] .note-block-shell,
+.note-block[data-role='formula'] .note-block-shell {
+  transition: transform 140ms ease;
+}
+
+.note-block.active[data-role='example'] .note-block-shell,
+.note-block.active[data-role='caveat'] .note-block-shell,
+.note-block.active[data-role='formula'] .note-block-shell,
+.note-block[data-role='example']:hover .note-block-shell,
+.note-block[data-role='caveat']:hover .note-block-shell,
+.note-block[data-role='formula']:hover .note-block-shell {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-block[data-role='example'] .note-block-shell,
+  .note-block[data-role='caveat'] .note-block-shell,
+  .note-block[data-role='formula'] .note-block-shell {
+    transform: none;
+    transition: none;
+  }
+}
+
+/* The allowance line inside the run-plan badge. A long note costs more than one run, so
+   the price is quoted before the button rather than discovered after it. */
+.sage-allowance {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-2);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.sage-allowance b {
+  color: var(--text);
+  font-weight: 600;
+}

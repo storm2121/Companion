@@ -37,10 +37,17 @@ service cloud.firestore {
       }
     }
 
-    // Usage counters are maintained only by the Admin SDK in Cloud Functions. They are
-    // deliberately outside users/{uid}, whose documents are client-writable.
+    // Usage counters are WRITTEN only by the Admin SDK in Cloud Functions. They live
+    // outside users/{uid} precisely because those documents are client-writable — a
+    // counter a user can edit is not a limit. Writes therefore stay closed to everyone.
+    //
+    // Reading your own counter is a different matter, and it is how the Sage popout shows
+    // "7 of 10 left today" instead of only telling you once you have already hit zero.
+    // The uid match also keeps the app-wide "_global" document private, since no uid
+    // can ever equal that id.
     match /sageUsage/{userId} {
-      allow read, write: if false;
+      allow read: if isAuiUser() && request.auth.uid == userId;
+      allow write: if false;
     }
 
     match /deleteUsage/{userId} {

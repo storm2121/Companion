@@ -22,7 +22,10 @@ const App = () => {
       <BrowserRouter>
         <Suspense fallback={<ScreenLoader note="Loading…" />}>
         <Routes>
+          {/* The sign-in form answers on both paths: "/" as it always has, and "/login"
+              because that is where ProtectedRoute sends a signed-out visitor. */}
           <Route path="/" element={<AuthHub />} />
+          <Route path="/login" element={<AuthHub />} />
           <Route path="/auth/complete" element={<AuthComplete />} />
           <Route
             path="/setup"

@@ -1,22 +1,28 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/authState';
 import ScreenLoader from './ui/ScreenLoader';
 
 const ProtectedRoute = ({ children, requireProfile = false }) => {
   const { firebaseUser, profile, profileReady, loading, emailVerified } = useAuth();
+  const location = useLocation();
+  // Where the person was actually trying to go. Before the landing page existed, a
+  // logged-out visitor was dropped at "/" and lost their destination; now "/" is a
+  // marketing page, so losing it would mean clicking your own dashboard bookmark and
+  // arriving at a sales pitch.
+  const next = encodeURIComponent(`${location.pathname}${location.search}`);
 
   if (loading) {
     return <ScreenLoader note="Checking secure session..." />;
   }
 
   if (!firebaseUser) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={`/login?next=${next}`} replace />;
   }
 
   // Unverified accounts are sent back to the hub, which owns the "confirm your address"
   // card and the resend controls.
   if (!emailVerified) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={`/login?next=${next}`} replace />;
   }
 
   // At this point `loading` is already false, so a null profile means the profile
