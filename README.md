@@ -70,31 +70,6 @@ the palettes living entirely in CSS custom properties.
 
 ---
 
-## Running it
-
-Everything lives in [`app/`](app/) — the repo root holds only docs.
-
-```bash
-git clone https://github.com/storm2121/Companion.git
-cd Companion/app
-npm install
-npm run dev      # http://localhost:5173
-```
-
-The dev server talks to the live Firebase project and there is no emulator setup for the app
-itself, so signing in requires an account on the permitted email domain. The rules tests do run
-fully locally:
-
-```bash
-npm test         # unit tests + Firestore/Storage rules tests (needs Java for the emulators)
-npm run lint
-npm run build
-```
-
-Full setup, architecture, deployment, and troubleshooting notes: **[`app/README.md`](app/README.md)**.
-Backlog: [`todo.md`](todo.md).
-
----
 
 ## Project status
 
