@@ -12,15 +12,18 @@ const ENFORCE_APP_CHECK = defineBoolean('ENFORCE_APP_CHECK', {
   description: 'Reject callable requests without valid Firebase App Check tokens.',
 });
 const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
-// One model, thinking OFF. `deepseek-reasoner` (thinking ON) used to serve the
-// restructure path because "layout math benefits from reasoning" — it was reasoning for
-// ~15k tokens about box coordinates that the client clamped and re-flowed anyway. The
-// model no longer computes geometry at all (it returns semantic roles; src/services/
-// sageLayout.js composes the page), so there is nothing left to reason about and the
-// thinking path was pure latency and spend. Both aliases resolve to deepseek-v4-flash;
-// the constants are MODE selectors, not versions, so never "upgrade" this to the raw
-// `deepseek-v4-flash` id — that turns thinking back ON by default.
-const MODEL = 'deepseek-chat';
+// The current, non-legacy model id. Thinking is switched OFF explicitly in the request
+// body (see `requestDeepSeek`) rather than being inherited from whatever this id happens
+// to default to.
+//
+// That distinction is the whole lesson of 2026-09-14. This used to be `deepseek-chat`,
+// chosen because that alias meant "reasoning off" — a MODE selector rather than a version.
+// Then DeepSeek retired the model behind it and began serving those requests with
+// DeepSeek-V4.1-Flash, whose default is thinking ON. Nothing in this repo changed; Sage
+// just became a reasoning model overnight and every call spent its entire deadline
+// thinking instead of answering. An alias's default is the provider's to change, so it is
+// not a thing to depend on.
+const MODEL = 'deepseek-flash';
 // Two output budgets, because the two contracts differ by an order of magnitude: a patch
 // carries only the blocks that changed, a layout re-emits the whole note.
 const MAX_TOKENS_PATCH = 8000;
@@ -44,9 +47,13 @@ const PROVIDER_TIMEOUT_MS = 90000;
 const TEMPERATURE = 0.3;
 const DAILY_CAP = 10;
 // Per-user caps bound one abuser; they do not bound the bill, which is what a shared
-// prepaid API key actually risks. This is the whole-app ceiling for a single day:
-// GLOBAL_DAILY_CAP x worst-case call (~15k in + 24k out on Flash) ~= $3/day, and the
-// provider balance is the backstop under it. Raise it if real students hit the wall.
+// prepaid API key actually risks. This is the whole-app ceiling for a single day.
+//
+// Flash pricing as of 2026-09 is off-peak $0.15/M in ($0.003 cached) / $0.60/M out, and
+// DOUBLE that during peak hours (01:00-04:00 and 06:00-10:00 UTC, Mon-Fri). Output went up
+// roughly 2x from the $0.28/M this cap was originally sized against. Worst case is a big
+// note in layout mode at peak: ~15k in + 24k out ~= $0.033, so 400 of those is ~$13/day.
+// A realistic day of ~1.5k-token runs is nearer $1. The provider balance is the backstop.
 const GLOBAL_DAILY_CAP = 400;
 // Deletes are cheap per call but fan out to Storage list+delete operations, so they are
 // metered by NOTES touched rather than by call. Far above any real student's day.
@@ -493,6 +500,13 @@ const requestDeepSeek = async (signal, system, user, maxTokens) => {
       max_tokens: maxTokens,
       response_format: { type: 'json_object' },
       temperature: TEMPERATURE,
+      // Sent EXPLICITLY, never left to the model's default. On 2026-09-14 DeepSeek retired
+      // the model behind the alias this code was using and began serving those requests
+      // with V4.1-Flash, which has thinking ON by default — so Sage silently became a
+      // reasoning model overnight and every call burned its whole deadline producing
+      // reasoning tokens and no answer. There is nothing here for a model to reason about:
+      // it rewrites prose and tags each block with a role, and the app computes the layout.
+      thinking: { type: 'disabled' },
     }),
   });
   if (!res.ok) {
@@ -524,6 +538,17 @@ const requestDeepSeek = async (signal, system, user, maxTokens) => {
   if (!content.trim()) throw unusable('Sage returned an empty result — please try again.');
   // One line per successful call: the only place actual spend is visible per request.
   console.log('AI provider usage', { model: MODEL, finish, usage: data?.usage });
+  // If this ever fires, the provider is thinking despite being told not to — which is
+  // exactly how 2026-09-14 went unnoticed until a call hit its deadline with nothing to
+  // show. A named line makes it one `firebase functions:log` away instead of a mystery.
+  const reasoningTokens = data?.usage?.completion_tokens_details?.reasoning_tokens || 0;
+  if (reasoningTokens > 0) {
+    console.error('AI provider IGNORED the thinking:disabled flag', {
+      model: MODEL,
+      reasoningTokens,
+      hint: 'check the current model id and the thinking parameter against the DeepSeek docs',
+    });
+  }
   try {
     return JSON.parse(content);
   } catch {
