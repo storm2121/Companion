@@ -3,6 +3,7 @@ import { FaArrowLeft, FaSearch } from 'react-icons/fa';
 import { useNavigate, useParams } from 'react-router-dom';
 import { listenToNotes, createNote, getClass } from '../services/library';
 import { useAuth } from '../context/authState';
+import { isCanvasNote } from '../designModes';
 import ScreenLoader from '../components/ui/ScreenLoader';
 
 const getNoteTimestamp = (note) => {
@@ -46,7 +47,10 @@ const ClassNotes = () => {
       firebaseUser.uid,
       classId,
       (snapshot) => {
-        const items = snapshot.docs.map((docSnap) => toNoteMeta(docSnap));
+        // Classic shows canvas notes only. Filtered in JS, never in a Firestore
+        // query: notes written before the dual-design seam have no `format` field and
+        // a where() clause would not match them (dualmode.md §6.2).
+        const items = snapshot.docs.map((docSnap) => toNoteMeta(docSnap)).filter(isCanvasNote);
         const ordered = [...items].sort((a, b) => {
           const aHasOrder = Number.isFinite(a.order);
           const bHasOrder = Number.isFinite(b.order);

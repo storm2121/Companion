@@ -37,6 +37,7 @@ const AuthComplete = () => {
   useEffect(() => {
     if (!firebaseUser) return;
     if (profile?.profileComplete) {
+      // /dashboard renders whichever design this person picked.
       navigate('/dashboard', { replace: true });
     } else {
       navigate('/setup', { replace: true });

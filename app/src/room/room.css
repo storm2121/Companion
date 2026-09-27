@@ -1,0 +1,3054 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   room.css — the "lofi study room" design layer.
+
+   SCOPING RULES (see dualmode.md §6.5). Both designs' stylesheets are in the page
+   at once, so every rule here must be unable to reach classic:
+
+     1. Tokens live under html[data-design='room'] — never on bare :root.
+     2. Every component class is prefixed `room-`.
+     3. No bare element selectors (body, h1, a …). index.css owns those, and they
+        are token-driven, so redefining the tokens repaints them for free.
+
+   This file rides the lazy room chunk (imported by RoomShell), so classic never
+   downloads it.
+
+   Attributes it reads, all set on <html> by the room shell (see roomPrefs.js):
+     data-design='room'   the design is mounted
+     data-mood            'night' | 'day'   — resolved, never the raw preference
+     data-grain           'on' | 'off'
+     data-hand-drawn      'on' | 'off'      — off squares the radii and kills tilts
+     data-motion          'calm' | 'still'
+   ────────────────────────────────────────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+/* ── Tokens: night (the default) ──────────────────────────────────────────── */
+
+html[data-design='room'] {
+  scrollbar-gutter: stable;
+
+  --room-ground: #1f2622;
+  --room-paper: #f3ede1;
+  --room-ink: #1f2622;
+  --room-ink-soft: #5a625d;
+  --room-ink-faint: #8d948f;
+  --room-on-ground: #efe7d8;
+  --room-on-ground-70: rgba(239, 231, 216, 0.7);
+  --room-on-ground-48: rgba(239, 231, 216, 0.48);
+  --room-accent: #f0a868;
+  --room-accent-on-paper: #c9792f;
+  --room-accent-ink: #2a1a0c;
+  --room-hairline: rgba(31, 38, 34, 0.15);
+  --room-rule: rgba(31, 38, 34, 0.12);
+  --room-edge: rgba(239, 231, 216, 0.28);
+  --room-edge-soft: rgba(239, 231, 216, 0.18);
+
+  /* Paper on ground, night. */
+  --room-lift: 0 22px 50px rgba(0, 0, 0, 0.42), 0 2px 0 rgba(0, 0, 0, 0.2);
+  --room-lift-hover: 0 30px 60px rgba(0, 0, 0, 0.5), 0 2px 0 rgba(0, 0, 0, 0.2);
+
+  --room-font: 'Figtree', system-ui, sans-serif;
+  --room-display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --room-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --room-gutter: 56px;
+  --room-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* Repoint the tokens index.css's global element rules already consume, so
+     body/headings/inputs follow without touching a single classic selector. */
+  --bg: var(--room-ground);
+  --text: var(--room-on-ground);
+  --font: var(--room-font);
+
+  /* Non-negotiable #1: the ground is ONE FLAT COLOUR. index.css gives body a
+     radial-gradient(… var(--glow) …); this is what switches it off. */
+  --glow: transparent;
+
+  /* index.css's global scrollbar reads these. */
+  --scroll-thumb: var(--room-edge);
+  --scroll-track: transparent;
+
+  /* The mood change cross-fades; it is never a hard cut. body already reads this. */
+  --transition: 600ms var(--room-ease);
+
+  color-scheme: dark;
+}
+
+/* ── Tokens: day (rain) ───────────────────────────────────────────────────── */
+
+html[data-design='room'][data-mood='day'] {
+  --room-ground: #d6dde0;
+  --room-paper: #fbfaf6;
+  --room-ink: #25302d;
+  --room-ink-soft: #5f6a67;
+  --room-ink-faint: #939c99;
+  --room-on-ground: #25302d;
+  --room-on-ground-70: rgba(37, 48, 45, 0.72);
+  --room-on-ground-48: rgba(37, 48, 45, 0.5);
+  --room-edge: rgba(37, 48, 45, 0.26);
+  --room-edge-soft: rgba(37, 48, 45, 0.16);
+
+  /* Slate replaces amber in the top line and wordmark. Amber is KEPT for the
+     primary button and calendar tags, so --room-accent-warm stays constant. */
+  --room-accent: #3f6a8a;
+
+  --room-lift: 0 18px 40px rgba(40, 55, 65, 0.22), 0 2px 0 rgba(40, 55, 65, 0.08);
+  --room-lift-hover: 0 26px 52px rgba(40, 55, 65, 0.28), 0 2px 0 rgba(40, 55, 65, 0.08);
+
+  color-scheme: light;
+}
+
+/* Amber survives the mood change wherever the design says it should. */
+html[data-design='room'] {
+  --room-accent-warm: #f0a868;
+  --room-marker: #f6dc7a;
+}
+
+/* ── Shape: the "hand-drawn" tokens ───────────────────────────────────────────
+   Two radius recipes only, plus a tilt scale. `handDrawn: off` squares them and
+   flattens every tilt — which is why nothing below hard-codes a radius.        */
+
+html[data-design='room'] {
+  --room-r-paper: 14px 17px 13px 19px;
+  --room-r-chip: 14px 11px 15px 10px;
+  --room-r-pill: 22px 18px 24px 16px;
+  --room-r-round: 48% 52% 45% 55%;
+  --room-r-toggle: 14px 12px 15px 11px;
+  --room-r-btn: 12px 10px 13px 9px;
+  --room-border: 1.6px;
+  --room-tilt: 1;
+}
+
+html[data-design='room'][data-hand-drawn='off'] {
+  --room-r-paper: 14px;
+  --room-r-chip: 12px;
+  --room-r-pill: 20px;
+  --room-r-round: 50%;
+  --room-r-toggle: 13px;
+  --room-r-btn: 11px;
+  --room-tilt: 0;
+}
+
+/* ── Motion ───────────────────────────────────────────────────────────────── */
+
+@keyframes room-rise {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes room-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes room-rain {
+  from { transform: translateY(-140px); }
+  to { transform: translateY(1000px); }
+}
+
+@keyframes room-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.room-rise {
+  animation: room-rise 0.9s var(--room-ease) both;
+}
+
+/* "Still" kills every animation AND every transition — the spec lists paper hover among
+   the things Still disables — except the mood cross-fade, which lives on body and .room.
+   Nothing here bounces or scales. */
+html[data-design='room'][data-motion='still'] *:not(body):not(.room),
+html[data-design='room'][data-motion='still'] *::before,
+html[data-design='room'][data-motion='still'] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-design='room'] *,
+  html[data-design='room'] *::before,
+  html[data-design='room'] *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Shell ────────────────────────────────────────────────────────────────── */
+
+.room {
+  position: relative;
+  min-height: 100vh;
+  background: var(--room-ground);
+  color: var(--room-on-ground);
+  font-family: var(--room-font);
+  font-feature-settings: 'tnum';
+  transition: background var(--transition), color var(--transition);
+}
+
+.room-content {
+  position: relative;
+  z-index: 2;
+  padding: 26px var(--room-gutter) 48px;
+}
+
+/* ── Atmosphere ───────────────────────────────────────────────────────────────
+   Absolutely-positioned, pointer-events:none siblings. The lamp glow is the only
+   gradient in the entire design.                                               */
+
+.room-atmos {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.room-lamp-glow {
+  position: absolute;
+  left: -260px;
+  top: -420px;
+  width: 1100px;
+  height: 1000px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 40% 40%,
+    rgba(240, 168, 104, 0.34),
+    rgba(240, 168, 104, 0.08) 45%,
+    transparent 66%
+  );
+  animation: room-breathe 9s ease-in-out infinite;
+}
+
+.room-lamp-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 20% 0%, transparent 40%, rgba(0, 0, 0, 0.42) 100%);
+}
+
+.room-rain-drop {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  background: rgba(60, 80, 95, 0.18);
+  animation: room-rain linear infinite;
+}
+
+.room-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0.09;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .6 0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+html[data-design='room'][data-grain='off'] .room-grain {
+  display: none;
+}
+
+/* ── Top line ─────────────────────────────────────────────────────────────────
+   No sidebar. One thin line; inner pages start it with "← Desk".               */
+
+.room-topline {
+  position: relative;
+  z-index: 3;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.room-wordmark {
+  font-family: var(--room-display);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+
+.room-wordmark span {
+  color: var(--room-accent);
+}
+
+.room-topline-nav {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.room-topline-link {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-on-ground-70);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease);
+}
+
+.room-topline-link:hover {
+  color: var(--room-on-ground);
+}
+
+.room-kbd {
+  font-family: var(--room-mono);
+  font-size: 12px;
+  opacity: 0.7;
+  margin-left: 7px;
+}
+
+.room-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-on-ground-70);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease);
+}
+
+.room-back:hover {
+  color: var(--room-on-ground);
+}
+
+.room-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--room-r-round);
+  background: var(--room-accent-warm);
+  color: var(--room-accent-ink);
+  border: 0;
+  cursor: pointer;
+  font-family: var(--room-display);
+  font-weight: 700;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Paper ────────────────────────────────────────────────────────────────────
+   Every card is a sheet: cream fill, the deep two-part shadow, a static tilt.
+   Hover lifts it 5px AND straightens it. Nothing scales.                       */
+
+.room-paper {
+  position: relative;
+  background: var(--room-paper);
+  color: var(--room-ink);
+  box-shadow: var(--room-lift);
+  border-radius: var(--room-r-paper);
+  padding: 22px 24px 20px;
+  transform: rotate(calc(var(--room-paper-tilt, 0deg) * var(--room-tilt)));
+  transition: transform 0.35s var(--room-ease), box-shadow 0.35s var(--room-ease),
+    background var(--transition), color var(--transition);
+}
+
+.room-paper--interactive {
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  border: 0;
+  display: block;
+}
+
+.room-paper--interactive:hover,
+.room-paper--interactive:focus-visible {
+  transform: translateY(-5px) rotate(0deg);
+  box-shadow: var(--room-lift-hover);
+}
+
+.room-paper--flat {
+  box-shadow: none;
+}
+
+/* Text colours on paper. */
+.room-ink-soft { color: var(--room-ink-soft); }
+.room-ink-faint { color: var(--room-ink-faint); }
+
+/* Mono stamps, timestamps, § markers. */
+.room-stamp {
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-on-ground-48);
+}
+
+.room-paper .room-stamp {
+  color: var(--room-ink-faint);
+}
+
+.room-display {
+  font-family: var(--room-display);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+/* ── Pills, chips, toggles ────────────────────────────────────────────────── */
+
+.room-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 18px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: var(--room-r-pill);
+  border: var(--room-border) solid currentColor;
+  background: none;
+  color: var(--room-on-ground-70);
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease), background 0.35s var(--room-ease);
+}
+
+.room-pill:hover {
+  color: var(--room-on-ground);
+}
+
+.room-pill--primary {
+  border-color: var(--room-accent-warm);
+  background: var(--room-accent-warm);
+  color: var(--room-accent-ink);
+  font-weight: 700;
+}
+
+.room-pill--primary:hover {
+  color: var(--room-accent-ink);
+  filter: brightness(1.05);
+}
+
+.room-pill--accent {
+  border-color: var(--room-accent-warm);
+  color: var(--room-accent-warm);
+}
+
+.room-pill--accent:hover {
+  color: var(--room-accent-warm);
+  background: rgba(240, 168, 104, 0.1);
+}
+
+.room-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--room-r-round);
+  background: currentColor;
+  flex: none;
+}
+
+.room-chip {
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: var(--room-r-chip);
+  border: var(--room-border) solid var(--room-edge);
+  background: none;
+  color: var(--room-on-ground-70);
+  cursor: pointer;
+  transition: color 0.3s var(--room-ease), background 0.3s var(--room-ease),
+    border-color 0.3s var(--room-ease);
+}
+
+.room-chip[aria-pressed='true'] {
+  background: var(--room-on-ground);
+  border-color: var(--room-on-ground);
+  color: var(--room-ground);
+}
+
+.room-paper .room-chip {
+  border-color: rgba(31, 38, 34, 0.3);
+  color: var(--room-ink-soft);
+}
+
+.room-paper .room-chip[aria-pressed='true'] {
+  background: var(--room-ink);
+  border-color: var(--room-ink);
+  color: var(--room-paper);
+}
+
+.room-toggle {
+  width: 40px;
+  height: 24px;
+  flex: none;
+  position: relative;
+  border: var(--room-border) solid var(--room-ink);
+  border-radius: var(--room-r-toggle);
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.3s var(--room-ease);
+}
+
+.room-toggle[aria-pressed='true'] {
+  background: var(--room-ink);
+}
+
+.room-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: var(--room-r-round);
+  background: var(--room-ink);
+  transition: transform 0.3s var(--room-ease), background 0.3s var(--room-ease);
+}
+
+.room-toggle[aria-pressed='true']::after {
+  background: var(--room-paper);
+  transform: translateX(16px);
+}
+
+/* ── Pencil rule ──────────────────────────────────────────────────────────── */
+
+.room-rule-svg {
+  display: block;
+  color: currentColor;
+}
+
+html[data-design='room'][data-hand-drawn='off'] .room-rule-svg {
+  display: none;
+}
+
+html[data-design='room'][data-hand-drawn='off'] .room-rule {
+  border-top: 1px solid currentColor;
+  opacity: 0.35;
+}
+
+/* ── Overlay: another sheet set down on the desk ──────────────────────────────
+   Design 6 has no modals, so parity invents exactly one surface (dualmode.md
+   §4.2). No scrim — the vignette deepens. No title bar, no X.                  */
+
+.room-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: radial-gradient(ellipse at 20% 0%, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.62));
+  animation: room-rise 0.35s var(--room-ease) both;
+}
+
+.room-overlay-sheet {
+  --room-paper-tilt: 0.4deg;
+  width: min(620px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 28px 34px 24px;
+}
+
+.room-overlay-title {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 23px;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+}
+
+/* ── ··· menu card ────────────────────────────────────────────────────────── */
+
+.room-menu {
+  --room-paper-tilt: 0deg;
+  min-width: 208px;
+  padding: 6px;
+  z-index: 30;
+}
+
+.room-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-ink);
+  background: none;
+  border: 0;
+  border-radius: var(--room-r-btn);
+  cursor: pointer;
+}
+
+.room-menu-item + .room-menu-item {
+  border-top: 1px solid var(--room-rule);
+  border-radius: 0 0 var(--room-r-btn) var(--room-r-btn);
+}
+
+.room-menu-item:hover {
+  color: var(--room-accent-on-paper);
+}
+
+/* ── Segmented control ────────────────────────────────────────────────────── */
+
+.room-seg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Setting rows (You page, overlays) ────────────────────────────────────── */
+
+.room-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 0;
+}
+
+.room-setting-row + .room-setting-row {
+  border-top: 1px solid var(--room-rule);
+}
+
+.room-setting-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.room-setting-copy {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--room-ink-soft);
+  margin: 3px 0 0;
+}
+
+/* ── Home ─────────────────────────────────────────────────────────────────── */
+
+.room-home {
+  display: grid;
+  grid-template-columns: 420px minmax(0, 1fr);
+  gap: 60px;
+  margin-top: 52px;
+  align-items: start;
+}
+
+.room-home-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.room-clock {
+  font-family: var(--room-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--room-on-ground-48);
+}
+
+.room-greeting {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 48px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  margin: 14px 0 0;
+}
+
+.room-status {
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--room-on-ground-70);
+  margin: 14px 0 0;
+  max-width: 40ch;
+}
+
+/* Lofi scene: a paper border around a user image. No asset supplied yet, so it
+   renders the dashed placeholder — which IS the designed empty state. */
+.room-scene {
+  width: 100%;
+  margin-top: 34px;
+  padding: 10px;
+  aspect-ratio: 420 / 236;
+}
+
+.room-scene-inner {
+  width: 100%;
+  height: 100%;
+  border: var(--room-border) dashed rgba(31, 38, 34, 0.28);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  font-family: var(--room-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--room-ink-faint);
+}
+
+.room-scene-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+  display: block;
+}
+
+/* Quick capture scrap. */
+.room-scrap {
+  width: 340px;
+  max-width: 100%;
+  margin-top: 26px;
+  padding: 16px 18px 12px;
+}
+
+.room-scrap-input {
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  min-height: 0;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--room-ink);
+  outline: none;
+}
+
+.room-scrap-input::placeholder {
+  color: var(--room-ink-faint);
+}
+
+.room-scrap-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--room-ink-faint);
+}
+
+/* ── Your desk ────────────────────────────────────────────────────────────── */
+
+.room-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.room-section-title {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.room-section-action {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--room-on-ground-70);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease);
+}
+
+.room-section-action:hover {
+  color: var(--room-on-ground);
+}
+
+.room-desk-rule {
+  margin: 10px 0 20px;
+  color: var(--room-on-ground);
+}
+
+.room-course-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.room-course-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.room-course-name {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 23px;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  margin: 12px 0 0;
+  text-wrap: balance;
+}
+
+.room-course-meta {
+  font-size: 13px;
+  color: var(--room-ink-soft);
+  margin: 6px 0 0;
+}
+
+.room-course-last {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--room-ink);
+  min-width: 0;
+}
+
+.room-course-last span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Where you left off ───────────────────────────────────────────────────── */
+
+.room-recent {
+  margin-top: 34px;
+}
+
+.room-recent-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 16px;
+}
+
+.room-recent-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  min-width: 0;
+}
+
+.room-recent-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Course page ──────────────────────────────────────────────────────────── */
+
+.room-course-head {
+  margin-top: 52px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.room-course-title {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 52px;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.room-course-sub {
+  font-size: 16px;
+  color: var(--room-on-ground-70);
+  margin: 14px 0 0;
+}
+
+.room-note-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 22px 20px;
+  margin-top: 40px;
+}
+
+.room-new-note {
+  border: var(--room-border) dashed var(--room-edge);
+  border-radius: var(--room-r-paper);
+  background: none;
+  color: var(--room-on-ground-70);
+  min-height: 190px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease), border-color 0.35s var(--room-ease);
+}
+
+.room-new-note:hover {
+  color: var(--room-on-ground);
+  border-color: var(--room-on-ground-70);
+}
+
+.room-new-note-plus {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.room-new-note-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Selected: the design's own Today treatment, borrowed rather than invented. */
+.room-paper.is-selected {
+  outline: 2px solid var(--room-accent-warm);
+  outline-offset: 3px;
+}
+
+/* The select mark: the design's own checklist box (wobbly round, 1.6px ink; done = filled
+   ink with a cream ✓), pinned to the sheet's corner. Paper-filled so it reads on the
+   sheet AND on the dark ground behind the corner. It shows on hover — which is how a mouse
+   user discovers selecting at all — and stays on every sheet while in select mode. */
+.room-select-mark {
+  position: absolute;
+  top: -9px;
+  left: -9px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--room-border) solid var(--room-ink);
+  border-radius: var(--room-r-round);
+  background: var(--room-paper);
+  color: var(--room-paper);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s var(--room-ease);
+}
+
+.room-paper:hover > .room-select-mark,
+.room-paper:focus-visible > .room-select-mark,
+.room-note-grid.is-selecting .room-select-mark {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.room-paper.is-selected > .room-select-mark {
+  background: var(--room-ink);
+  opacity: 1;
+}
+
+/* A touch screen has no hover: marks appear only once selecting has started (the Select
+   pill, or a long press), rather than flashing under a finger that meant to open a note. */
+@media (hover: none) {
+  .room-paper:hover > .room-select-mark {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .room-note-grid.is-selecting .room-select-mark {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* `3 SELECTED · MOVE · DELETE` — one line of text on the ground. Sticky, so it stays in
+   reach under a long grid; it takes the ground colour so it stays legible when it floats
+   over the sheets behind it. */
+.room-bulk {
+  position: sticky;
+  bottom: 22px;
+  z-index: 8;
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 20px;
+  margin-top: 28px;
+  padding: 10px 18px;
+  background: var(--room-ground);
+  border: var(--room-border) solid var(--room-edge);
+  border-radius: var(--room-r-chip);
+}
+
+.room-bulk-action {
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-accent-warm);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.room-bulk-action:hover,
+.room-bulk-action:focus-visible {
+  color: var(--room-on-ground);
+}
+
+/* ── Colour swatches (new course) ─────────────────────────────────────────── */
+
+.room-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.room-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--room-r-round);
+  border: var(--room-border) solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.room-swatch[aria-pressed='true'] {
+  border-color: var(--room-ink);
+  outline: 2px solid var(--room-ink);
+  outline-offset: 2px;
+}
+
+.room-field {
+  width: 100%;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--room-ink);
+  background: none;
+  border: 0;
+  border-bottom: var(--room-border) solid var(--room-hairline);
+  border-radius: 0;
+  padding: 8px 0;
+  min-height: 0;
+  outline: none;
+}
+
+.room-field:focus {
+  border-bottom-color: var(--room-ink);
+}
+
+/* ── You ───────────────────────────────────────────────────────── */
+
+.room-you {
+  display: grid;
+  grid-template-columns: 380px minmax(0, 620px);
+  gap: 76px;
+  margin-top: 52px;
+  align-items: start;
+}
+
+.room-you-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.room-you-avatar {
+  width: 88px;
+  height: 88px;
+  border-radius: var(--room-r-round);
+  background: var(--room-accent-warm);
+  color: var(--room-accent-ink);
+  font-family: var(--room-display);
+  font-weight: 700;
+  font-size: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.room-you-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.room-you-name {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 48px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  margin: 26px 0 0;
+}
+
+.room-you-meta {
+  font-size: 16px;
+  color: var(--room-on-ground-70);
+  margin: 10px 0 0;
+}
+
+.room-you-sheet {
+  padding: 10px 34px 16px;
+}
+
+/* Mono group label, e.g. THE ROOM / NOTES. */
+.room-you-group {
+  font-family: var(--room-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--room-ink-faint);
+  margin: 26px 0 2px;
+}
+
+.room-setting-row + .room-you-group {
+  border-top: 1px solid var(--room-rule);
+  padding-top: 24px;
+}
+
+/* A text action, never a red button — the design has no red anywhere. */
+.room-you-action {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-accent-on-paper);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.room-you-action:disabled {
+  color: var(--room-ink-faint);
+  cursor: default;
+}
+
+@media (max-width: 980px) {
+  .room-you {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+  }
+}
+
+/* ── Note editor ──────────────────────────────────────────────────────────── */
+
+.room-note {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 364px;
+  gap: 44px;
+  margin-top: 26px;
+  align-items: start;
+}
+
+.room-saved {
+  white-space: nowrap;
+}
+
+.room-strip-dock {
+  /* The format strip and the find bar stick together, so both stay reachable once the
+     page is long. z-index stays below the grain, a sibling of the content that must
+     remain topmost. */
+  position: sticky;
+  top: 10px;
+  z-index: 4;
+  background: var(--room-ground);
+}
+
+/* Format strip: one outlined wobbly bar, groups split by 1.6px dividers. */
+.room-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 2px 4px;
+  border: var(--room-border) solid var(--room-edge);
+  border-radius: var(--room-r-pill);
+  flex-wrap: wrap;
+}
+
+.room-strip-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 3px;
+}
+
+.room-strip-group + .room-strip-group {
+  border-left: var(--room-border) solid var(--room-edge-soft);
+}
+
+.room-strip-btn {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  border-radius: var(--room-r-btn);
+  font-family: inherit;
+  font-size: 13.5px;
+  color: var(--room-on-ground);
+  cursor: pointer;
+  transition: background 0.25s var(--room-ease), color 0.25s var(--room-ease);
+}
+
+.room-strip-btn:hover {
+  background: var(--room-edge-soft);
+}
+
+/* Active = filled, ink on cream. */
+.room-strip-btn.is-on {
+  background: var(--room-on-ground);
+  color: var(--room-ground);
+  font-weight: 700;
+}
+
+.room-strip-swatch {
+  width: 16px;
+  height: 16px;
+}
+
+/* Find: a quiet line under the strip. `2 OF 7` in mono, ← → as plain glyphs. */
+.room-find {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 4px 6px 4px 14px;
+  border: var(--room-border) solid var(--room-edge);
+  border-radius: var(--room-r-pill);
+}
+
+.room-find-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--room-on-ground);
+  outline: none;
+}
+
+.room-find-input::placeholder {
+  color: var(--room-on-ground-48);
+}
+
+.room-find-count {
+  white-space: nowrap;
+  min-width: 7ch;
+  text-align: right;
+}
+
+.room-find-btn {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--room-r-btn);
+  background: none;
+  color: var(--room-on-ground-70);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.room-find-btn:hover:not(:disabled) {
+  color: var(--room-on-ground);
+  background: var(--room-edge-soft);
+}
+
+.room-find-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Painted by the CSS Custom Highlight API (noteFind.js) — never by changing the note.
+   The design's marker yellow: every match softly, the current one in full. */
+::highlight(room-find) {
+  background-color: rgba(246, 220, 122, 0.45);
+  color: inherit;
+}
+
+::highlight(room-find-current) {
+  background-color: #f6dc7a;
+  color: #1f2622;
+}
+
+/* Code and math live in textareas, which a highlight cannot reach: the field is marked. */
+.room-code-area.is-found {
+  outline: 2px solid var(--room-marker);
+  outline-offset: 2px;
+}
+
+/* The template row on a blank note — gone the moment the note has anything in it. */
+.room-templates {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.room-template-own {
+  position: relative;
+  display: inline-flex;
+}
+
+.room-template-forget {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--room-r-round);
+  background: var(--room-ink);
+  color: var(--room-paper);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s var(--room-ease);
+}
+
+.room-template-own:hover .room-template-forget,
+.room-template-forget:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .room-template-forget {
+    opacity: 1;
+  }
+}
+
+/* ── The page itself ──────────────────────────────────────────────────────── */
+
+.room-page {
+  /* The wide left gutter holds the + block button. */
+  padding: 40px 56px 36px 80px;
+  margin-top: 16px;
+}
+
+.room-page-meta {
+  display: flex;
+  gap: 18px;
+}
+
+.room-page-title {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  min-height: 0;
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 46px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--room-ink);
+  outline: none;
+}
+
+.room-page-title::placeholder {
+  color: var(--room-ink-faint);
+}
+
+/* ── Blocks ───────────────────────────────────────────────────────────────── */
+
+.room-block-shell {
+  position: relative;
+  margin-top: 22px;
+  scroll-margin-top: 90px;
+}
+
+.room-gutter-tools {
+  position: absolute;
+  left: -52px;
+  bottom: -26px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.25s var(--room-ease);
+}
+
+/* § and × sit at the block's own top-right, inside the paper. */
+.room-block-tools {
+  position: absolute;
+  right: 0;
+  top: -2px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: var(--room-r-btn);
+  background: var(--room-paper);
+  opacity: 0;
+  transition: opacity 0.25s var(--room-ease);
+}
+
+.room-block-shell:hover .room-gutter-tools,
+.room-block-shell:focus-within .room-gutter-tools,
+.room-block-shell:hover .room-block-tools,
+.room-block-shell:focus-within .room-block-tools {
+  opacity: 1;
+}
+
+.room-gutter-btn.is-on {
+  color: var(--room-accent-on-paper);
+}
+
+.room-block-shell.is-last .room-gutter-tools {
+  opacity: 1;
+}
+
+.room-plus {
+  width: 30px;
+  height: 30px;
+  border: var(--room-border) solid var(--room-ink);
+  border-radius: 50% 45% 52% 48%;
+  background: none;
+  color: var(--room-ink);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+html[data-design='room'][data-hand-drawn='off'] .room-plus {
+  border-radius: 50%;
+}
+
+.room-gutter-btn {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: none;
+  color: var(--room-ink-faint);
+  font-family: var(--room-mono);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.room-gutter-btn:hover {
+  color: var(--room-accent-on-paper);
+}
+
+.room-plus-menu {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+/* §n marker — inline, at the start of a section's first line. */
+.room-section-mark {
+  font-family: var(--room-mono);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--room-ink-faint);
+  margin-right: 12px;
+  vertical-align: 2px;
+  float: left;
+  line-height: 1.75;
+}
+
+.room-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 36px;
+  position: relative;
+}
+
+.room-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.room-col-item {
+  position: relative;
+}
+
+.room-col-x {
+  position: absolute;
+  right: 0;
+  top: -4px;
+  z-index: 3;
+  opacity: 0;
+  background: var(--room-paper);
+  border-radius: var(--room-r-btn);
+  transition: opacity 0.25s var(--room-ease);
+}
+
+.room-col-item:hover .room-col-x,
+.room-col-item:focus-within .room-col-x {
+  opacity: 1;
+}
+
+.room-col-add {
+  align-self: flex-start;
+  font-family: var(--room-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-ink-faint);
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.25s var(--room-ease), color 0.25s var(--room-ease);
+}
+
+.room-two-col:hover .room-col-add,
+.room-two-col:focus-within .room-col-add {
+  opacity: 1;
+}
+
+.room-col-add:hover {
+  color: var(--room-accent-on-paper);
+}
+
+.room-two-col::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--room-hairline);
+  margin-left: -18px;
+}
+
+.room-callout {
+  border-left: 3px solid var(--room-accent-on-paper);
+  background: rgba(31, 38, 34, 0.05);
+  border-radius: 0 10px 10px 0;
+  padding: 12px 16px 12px 18px;
+}
+
+.room-callout-label {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  min-height: 0;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-accent-on-paper);
+  margin-bottom: 4px;
+  outline: none;
+}
+
+.room-code {
+  position: relative;
+}
+
+.room-code-lang {
+  position: absolute;
+  right: 0;
+  top: 30px;
+  width: 90px;
+  border: 0;
+  background: none;
+  padding: 0;
+  min-height: 0;
+  text-align: right;
+  font-family: var(--room-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--room-ink-faint);
+  outline: none;
+}
+
+.room-code-area {
+  width: 100%;
+  border: 0;
+  background: rgba(31, 38, 34, 0.05);
+  border-radius: 10px;
+  padding: 16px 18px;
+  min-height: 0;
+  font-family: var(--room-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--room-ink);
+  resize: vertical;
+  outline: none;
+}
+
+.room-image img {
+  display: block;
+  max-width: 100%;
+  border-radius: 10px;
+}
+
+.room-image .room-scene-inner {
+  min-height: 160px;
+}
+
+.room-image .room-field {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+/* ── Prose (TipTap content) ───────────────────────────────────────────────── */
+
+.room-prose {
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--room-ink);
+  outline: none;
+}
+
+.room-prose p {
+  margin: 0 0 0.35em;
+}
+
+.room-prose h1,
+.room-prose h2,
+.room-prose h3 {
+  font-family: var(--room-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0 0 0.25em;
+}
+
+.room-prose h2 {
+  font-size: 23px;
+}
+
+.room-prose ul,
+.room-prose ol {
+  margin: 0 0 0.2em;
+  padding-left: 1.2em;
+}
+
+.room-prose a {
+  color: var(--room-accent-on-paper);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.room-prose pre {
+  font-family: var(--room-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  background: rgba(31, 38, 34, 0.05);
+  border-radius: 10px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+
+/* A marker stroke, not a solid fill. TipTap's multicolor Highlight writes both an inline
+   background-color and a data-color attribute; the inline colour is cleared and the
+   attribute drives the gradient, so the band sits where a real highlighter would. */
+.room-prose mark {
+  background-color: transparent !important;
+  background-image: linear-gradient(
+    transparent 52%,
+    var(--room-marker) 52%,
+    var(--room-marker) 92%,
+    transparent 92%
+  );
+  color: inherit;
+}
+
+.room-prose mark[data-color='#bfe3d0'] {
+  background-image: linear-gradient(transparent 52%, #bfe3d0 52%, #bfe3d0 92%, transparent 92%);
+}
+
+.room-prose mark[data-color='#f5c7cf'] {
+  background-image: linear-gradient(transparent 52%, #f5c7cf 52%, #f5c7cf 92%, transparent 92%);
+}
+
+/* Checklist: a wobbly 16px box; done is filled ink with a cream tick. */
+.room-prose ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.room-prose ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.room-prose ul[data-type='taskList'] li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.room-prose input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  flex: none;
+  margin-top: 6px;
+  padding: 0;
+  border: var(--room-border) solid var(--room-ink);
+  border-radius: var(--room-r-round);
+  background: none;
+  cursor: pointer;
+  position: relative;
+}
+
+.room-prose input[type='checkbox']:checked {
+  background: var(--room-ink);
+}
+
+.room-prose input[type='checkbox']:checked::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--room-paper);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.room-prose li[data-checked='true'] > div {
+  color: var(--room-ink-faint);
+  text-decoration: line-through;
+}
+
+.room-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--room-ink-faint);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ── Right rail ───────────────────────────────────────────────────────────────
+   Scrolls with the page, deliberately not sticky: photos hang at heights beside the
+   text, so they have to move with it. (Sticky also made a long board's lower photos
+   unreachable until the very end of the note.)                                  */
+
+.room-outline-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Always exactly --outline-rows tall. It never grows with the note: more sections scroll
+   inside it, and — because its height is constant — adding a § never pushes the board,
+   and every photo hung on it, further down the page. */
+.room-outline {
+  --outline-row: 28px;
+  position: relative;
+  height: calc(var(--outline-rows, 4) * var(--outline-row));
+  margin-top: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  font-size: 14px;
+  color: var(--room-on-ground-70);
+}
+
+.room-outline-item {
+  display: block;
+  width: 100%;
+  height: var(--outline-row);
+  line-height: var(--outline-row);
+  text-align: left;
+  padding: 0 4px 0 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--room-on-ground-70);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 0.25s var(--room-ease);
+}
+
+.room-outline-item:hover,
+.room-outline-item:focus-visible {
+  color: var(--room-on-ground);
+}
+
+/* The section you are reading: full strength, as the design specifies. */
+.room-outline-item.is-current {
+  color: var(--room-on-ground);
+}
+
+.room-outline-item.is-current .room-outline-num {
+  color: var(--room-accent);
+}
+
+.room-outline-num {
+  font-family: var(--room-mono);
+  font-size: 12px;
+  margin-right: 10px;
+}
+
+/* ── The board ────────────────────────────────────────────────────────────────
+   Photos hang here at whatever height they were put. Positions come from
+   railLayout.js — pure arithmetic, nothing measured — and are applied as transforms.
+   PIN_PAD there MUST equal the card padding below, or the derived heights drift from
+   the rendered ones.                                                            */
+
+.room-board {
+  position: relative;
+  margin-top: 26px;
+}
+
+.room-board.is-empty {
+  min-height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  border: var(--room-border) dashed var(--room-edge);
+  border-radius: var(--room-r-paper);
+}
+
+.room-board-empty {
+  margin: 0;
+  max-width: 24ch;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--room-on-ground-48);
+}
+
+.room-rail.is-drop .room-board {
+  outline: var(--room-border) dashed var(--room-edge);
+  outline-offset: 12px;
+  border-radius: var(--room-r-paper);
+}
+
+.room-hang {
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: grab;
+  /* The browser must not treat a drag on a photo as a scroll or a text selection. */
+  touch-action: none;
+  user-select: none;
+  outline: none;
+  /* Position comes from boardMotion.js as a transform, every frame it moves. No CSS
+     transition here — it would chase the engine instead of letting it lead. */
+  will-change: transform;
+}
+
+/* Lifted: the photo under the pointer. It follows the pointer exactly (no transition),
+   floats above its neighbours, and straightens — the same lift the design gives paper
+   on hover. The rest glide out of its way. */
+.room-hang.is-lifted {
+  z-index: 6;
+  cursor: grabbing;
+  transition: none;
+}
+
+.room-hang .room-hang-card {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+}
+
+.room-hang.is-lifted .room-hang-card {
+  transform: rotate(0deg) translateY(-3px);
+  box-shadow: var(--room-lift-hover);
+}
+
+.room-hang:focus-visible .room-hang-card {
+  outline: 2px solid var(--room-accent-warm);
+  outline-offset: 3px;
+}
+
+.room-hang-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* The only two controls, both drawn INSIDE the photo's own frame, so two photos side
+   by side can never have their controls collide. Shown on hover or keyboard focus. */
+.room-hang-x,
+.room-hang-grip {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--room-r-round);
+  background: var(--room-paper);
+  color: var(--room-ink);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transition: opacity 0.2s var(--room-ease);
+}
+
+.room-hang-x {
+  top: 12px;
+  right: 12px;
+  border: 0;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.room-hang-x:hover {
+  color: var(--room-accent-on-paper);
+}
+
+.room-hang-grip {
+  right: 12px;
+  bottom: 12px;
+  cursor: nwse-resize;
+}
+
+.room-hang:hover .room-hang-x,
+.room-hang:hover .room-hang-grip,
+.room-hang:focus-within .room-hang-x,
+.room-hang:focus-within .room-hang-grip,
+.room-hang.is-lifted .room-hang-grip {
+  opacity: 1;
+}
+
+/* No hover on a touch screen: keep the controls visible instead of unreachable. */
+@media (hover: none) {
+  .room-hang-x,
+  .room-hang-grip {
+    opacity: 1;
+  }
+}
+
+.room-board-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.room-board-add {
+  font-family: var(--room-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-on-ground-48);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: color 0.25s var(--room-ease);
+}
+
+.room-board-add:hover,
+.room-board-add:focus-visible {
+  color: var(--room-on-ground);
+}
+
+.room-board-add:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.room-loading {
+  margin-top: 60px;
+}
+
+/* ── Undo line ────────────────────────────────────────────────────────────────
+   Deletes never ask; they offer this instead (dualmode.md §4.2). One line of plain
+   text on the ground — no toast, no modal, no red.                             */
+
+.room-undo {
+  position: fixed;
+  left: var(--room-gutter);
+  bottom: 28px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-on-ground-70);
+}
+
+.room-undo .room-you-action {
+  color: var(--room-accent-warm);
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 1100px) {
+  /* The rail moves below the paper rather than squeezing the reading column. */
+  .room-note {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  .room-page {
+    padding: 32px 28px 30px 62px;
+  }
+}
+
+/* ── Responsive ───────────────────────────────────────────────────────────────
+   Authored at 1440x900; paper grids drop 3 -> 2 -> 1. Nothing hard-codes 1440.  */
+
+@media (max-width: 1240px) {
+  .room-course-grid,
+  .room-recent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .room-note-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .room-home {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+  }
+
+  .room-note-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  html[data-design='room'] {
+    --room-gutter: 20px;
+  }
+
+  .room-course-grid,
+  .room-recent-grid,
+  .room-note-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .room-greeting {
+    font-size: 38px;
+  }
+
+  .room-course-title {
+    font-size: 38px;
+  }
+
+  .room-topline-nav {
+    gap: 14px;
+  }
+}
+
+/* ── Pills on paper ───────────────────────────────────────────────────────────
+   A plain pill is drawn in the ground's text colour — cream at night, so on a sheet of
+   paper (every overlay) it all but vanished. On paper it takes the ink instead. The
+   primary and accent pills keep their own colours.                               */
+
+.room-paper .room-pill:not(.room-pill--primary):not(.room-pill--accent) {
+  color: var(--room-ink-soft);
+}
+
+.room-paper .room-pill:not(.room-pill--primary):not(.room-pill--accent):hover {
+  color: var(--room-ink);
+}
+
+.room-pill:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
+
+/* Fields sit on paper, which is light in both moods: their native pickers (date, time)
+   must draw for a light surface even when the room is dark. */
+.room-paper .room-field {
+  color-scheme: light;
+}
+
+.room-topline-link[aria-current='page'] {
+  color: var(--room-on-ground);
+}
+
+/* ── Sheets with a form (course, calendar item) ───────────────────────────── */
+
+.room-form-label {
+  display: block;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--room-ink-faint);
+  margin: 22px 0 8px;
+}
+
+.room-days {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.room-time-field {
+  width: 118px;
+  margin-left: 8px;
+  padding: 6px 0;
+}
+
+.room-time-field:disabled {
+  opacity: 0.45;
+}
+
+.room-form-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 22px;
+}
+
+.room-form-field {
+  display: block;
+  min-width: 0;
+}
+
+/* The quiet last row of a sheet — "Delete this course" — under a hairline. */
+.room-sheet-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--room-rule);
+}
+
+/* ── Search (Cmd/Ctrl+K) ──────────────────────────────────────────────────── */
+
+.room-search-input {
+  width: 100%;
+  font-family: var(--room-display);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--room-ink);
+  background: none;
+  border: 0;
+  border-bottom: var(--room-border) solid var(--room-hairline);
+  border-radius: 0;
+  padding: 4px 0 10px;
+  min-height: 0;
+  outline: none;
+}
+
+.room-search-input::placeholder {
+  color: var(--room-ink-faint);
+}
+
+.room-search-input:focus {
+  border-bottom-color: var(--room-ink);
+}
+
+.room-search-status,
+.room-search-none {
+  margin: 14px 0 0;
+}
+
+.room-search-list {
+  list-style: none;
+  margin: 8px -10px 0;
+  padding: 0;
+  max-height: min(56vh, 460px);
+  overflow-y: auto;
+}
+
+.room-search-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 10px;
+  background: none;
+  border: 0;
+  border-radius: var(--room-r-btn);
+  font-family: inherit;
+  text-align: left;
+  color: var(--room-ink);
+  cursor: pointer;
+}
+
+.room-search-row.is-active {
+  background: rgba(31, 38, 34, 0.06);
+}
+
+.room-search-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.room-search-title {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-search-row > .room-search-title {
+  flex: 1;
+}
+
+.room-search-snippet {
+  font-size: 13px;
+  color: var(--room-ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The design's highlighter stroke, as on the page itself. */
+.room-search-snippet mark {
+  color: inherit;
+  background: linear-gradient(
+    transparent 52%,
+    var(--room-marker) 52%,
+    var(--room-marker) 92%,
+    transparent 92%
+  );
+}
+
+.room-search-row .room-stamp {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-search-foot {
+  margin: 16px 0 0;
+}
+
+/* ── Split pages: Inbox, Calendar ─────────────────────────────────────────────
+   The page head of 6d on the left (56px from the edge, 360 wide), the stack of paper
+   strips from 476px.                                                              */
+
+.room-split {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 60px;
+  margin-top: 52px;
+  align-items: start;
+}
+
+.room-split-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.room-page-name {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 56px;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  margin: 0;
+}
+
+.room-page-summary {
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--room-on-ground-70);
+  margin: 12px 0 0;
+  max-width: 36ch;
+}
+
+.room-page-note {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--room-on-ground-48);
+  margin: 16px 0 0;
+  max-width: 34ch;
+}
+
+/* One quiet line of ground text — collapsed days, an empty inbox. */
+.room-quiet {
+  margin: 0;
+  padding: 10px 22px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--room-on-ground-48);
+}
+
+.room-inline-action {
+  font: inherit;
+  font-weight: 600;
+  color: var(--room-accent-warm);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* ── Inbox ────────────────────────────────────────────────────────────────── */
+
+.room-scrap--inbox {
+  margin-top: 30px;
+}
+
+.room-inbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  max-width: 760px;
+}
+
+.room-inbox-line {
+  padding: 16px 22px 14px;
+}
+
+/* Its menu must paint over the strips below it. */
+.room-inbox-line.is-open {
+  z-index: 5;
+}
+
+.room-inbox-text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.room-inbox-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.room-inbox-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+}
+
+/* ── Calendar (6d) ────────────────────────────────────────────────────────── */
+
+/* The month stays in reach while the journal scrolls under it. */
+.room-cal-side {
+  position: sticky;
+  top: 24px;
+}
+
+.room-cal-title {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.room-cal-steps {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.room-cal-step {
+  font-family: var(--room-mono);
+  font-size: 17px;
+  color: var(--room-on-ground-70);
+  background: none;
+  border: 0;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease);
+}
+
+.room-cal-step:hover {
+  color: var(--room-on-ground);
+}
+
+/* The dot-month: 7 x 30px, gap 6px 8px, mono 12.5px; today gets the amber marker. */
+.room-dotmonth {
+  margin-top: 34px;
+  display: grid;
+  grid-template-columns: repeat(7, 30px);
+  gap: 6px 8px;
+}
+
+.room-dotmonth-head {
+  width: 30px;
+  text-align: center;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  color: var(--room-on-ground-48);
+}
+
+.room-dotmonth-day {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: var(--room-mono);
+  font-size: 12.5px;
+  color: var(--room-on-ground-70);
+  background: none;
+  border: 0;
+  border-radius: var(--room-r-round);
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease), box-shadow 0.35s var(--room-ease);
+}
+
+.room-dotmonth-day.is-past {
+  color: var(--room-on-ground-48);
+}
+
+.room-dotmonth-day:hover {
+  color: var(--room-on-ground);
+}
+
+.room-dotmonth-day.is-picked {
+  box-shadow: inset 0 0 0 var(--room-border) var(--room-on-ground-70);
+}
+
+.room-dotmonth-day.is-today {
+  color: var(--room-accent-ink);
+  background: var(--room-accent-warm);
+  box-shadow: none;
+}
+
+.room-journal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.room-journal-month {
+  margin: 18px 0 0 22px;
+  color: var(--room-on-ground-70);
+}
+
+/* A day strip: 120px | entries | +. */
+.room-day {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 22px;
+  scroll-margin-top: 24px;
+}
+
+.room-day.is-today {
+  outline: 2px solid var(--room-accent-warm);
+  outline-offset: 3px;
+}
+
+.room-day-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.room-day-num {
+  font-family: var(--room-display);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.room-day-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-ink-soft);
+}
+
+.room-day-name.is-today {
+  color: var(--room-accent-on-paper);
+}
+
+.room-day-entries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 26px;
+  min-width: 0;
+}
+
+.room-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--room-ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease);
+}
+
+.room-entry:hover {
+  color: var(--room-accent-on-paper);
+}
+
+.room-entry-time {
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--room-ink-faint);
+}
+
+/* Something you added: an amber tag. */
+.room-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--room-accent-ink);
+  background: var(--room-accent-warm);
+  border-radius: var(--room-r-chip);
+  overflow-wrap: anywhere;
+}
+
+.room-tag-course {
+  opacity: 0.75;
+}
+
+.room-day-add {
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--room-ink-faint);
+  background: none;
+  border: 0;
+  padding: 4px 6px;
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease);
+}
+
+.room-day-add:hover {
+  color: var(--room-ink);
+}
+
+/* Month view: classic's six-week wall grid, on paper. */
+.room-month {
+  padding: 18px 18px 20px;
+}
+
+.room-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.room-month-head {
+  padding: 0 8px 10px;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-ink-faint);
+}
+
+.room-month-cell {
+  min-width: 0;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  padding: 6px 8px 8px;
+  font-family: inherit;
+  text-align: left;
+  color: var(--room-ink);
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--room-rule);
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 0.35s var(--room-ease);
+}
+
+.room-month-cell:hover {
+  background: rgba(31, 38, 34, 0.045);
+}
+
+.room-month-cell.is-out {
+  color: var(--room-ink-faint);
+}
+
+.room-month-cell.is-out .room-month-entry {
+  opacity: 0.55;
+}
+
+.room-month-num {
+  align-self: flex-start;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+  font-family: var(--room-mono);
+  font-size: 12.5px;
+  border-radius: var(--room-r-round);
+}
+
+.room-month-cell.is-today .room-month-num {
+  color: var(--room-accent-ink);
+  background: var(--room-accent-warm);
+}
+
+.room-month-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.room-month-entry.is-tag {
+  padding: 1px 7px;
+  color: var(--room-accent-ink);
+  background: var(--room-accent-warm);
+  border-radius: var(--room-r-chip);
+}
+
+.room-month-entry-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-month-more {
+  font-family: var(--room-mono);
+  font-size: 11px;
+  color: var(--room-ink-faint);
+}
+
+@media (max-width: 980px) {
+  .room-split {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
+  }
+
+  .room-cal-side {
+    position: static;
+  }
+}
+
+@media (max-width: 720px) {
+  .room-page-name {
+    font-size: 42px;
+  }
+
+  .room-day {
+    grid-template-columns: 64px minmax(0, 1fr) auto;
+    gap: 14px;
+    padding: 14px 16px;
+  }
+
+  .room-day-head {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .room-month {
+    padding: 12px 8px 14px;
+  }
+
+  .room-month-cell {
+    min-height: 64px;
+    padding: 4px 3px 6px;
+  }
+
+  .room-month-entry {
+    font-size: 11px;
+  }
+
+  .room-form-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Home's scene slot ────────────────────────────────────────────────────────
+   Empty, the dashed placeholder is a button that asks for a picture; filled, the picture
+   opens a small menu to change it or take it down.                               */
+
+.room-scene.is-open {
+  z-index: 5;
+}
+
+.room-scene-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.room-scene-inner {
+  flex-direction: column;
+  gap: 12px;
+  background: none;
+  cursor: pointer;
+  transition: border-color 0.35s var(--room-ease), color 0.35s var(--room-ease);
+}
+
+.room-scene-inner:hover:not(:disabled) {
+  border-color: rgba(31, 38, 34, 0.45);
+  color: var(--room-ink-soft);
+}
+
+.room-scene-inner:disabled {
+  cursor: default;
+}
+
+.room-scene-add {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-accent-on-paper);
+}
+
+.room-scene-busy {
+  position: absolute;
+  left: 20px;
+  bottom: 18px;
+  padding: 3px 9px;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-ink-soft);
+  background: var(--room-paper);
+  border-radius: var(--room-r-chip);
+}
+
+/* ── Focus on the room's own fields ───────────────────────────────────────────
+   index.css draws a 2px amber rectangle round every focused input. The room's fields are
+   underlines that darken on focus (and carry a caret), so the rectangle boxed a line that
+   already says "here". Buttons keep the global ring — that one is the only cue they get. */
+
+html[data-design='room'] .room-field:focus-visible,
+html[data-design='room'] .room-search-input:focus-visible,
+html[data-design='room'] .room-scrap-input:focus-visible,
+html[data-design='room'] .room-page-title:focus-visible,
+html[data-design='room'] .room-find-input:focus-visible {
+  outline: none;
+}
+
+/* ── The top line on a phone ──────────────────────────────────────────────────
+   Four links, an avatar and the wordmark have to share ~350px: nothing may wrap onto a
+   second line, and the keyboard hint goes — a phone has no Ctrl K to teach.      */
+
+.room-topline-link,
+.room-back {
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .room-topline {
+    gap: 12px;
+  }
+
+  .room-topline-nav {
+    gap: 14px;
+  }
+
+  .room-kbd--key {
+    display: none;
+  }
+
+  .room-wordmark {
+    font-size: 19px;
+  }
+}
+
+/* ── All notes ────────────────────────────────────────────────────────────── */
+
+.room-notes-course {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── A course's Files ─────────────────────────────────────────────────────── */
+
+.room-files {
+  margin-top: 10px;
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+}
+
+.room-files-group + .room-files-group {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--room-rule);
+}
+
+.room-files-note {
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--room-ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.35s var(--room-ease);
+}
+
+.room-files-note:hover {
+  color: var(--room-accent-on-paper);
+}
+
+.room-files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.room-files-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(31, 38, 34, 0.08);
+  cursor: pointer;
+}
+
+.room-files-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* A touch screen has no N key to press. */
+@media (hover: none) {
+  .room-new-note .room-stamp {
+    display: none;
+  }
+}
+
+/* ── Sage (step 7) ────────────────────────────────────────────────────────────
+   A paper panel over the right rail — never over the sheet you are writing on
+   (dualmode.md §5). Fixed, so it stays beside the page as you scroll. Below 1100px the
+   rail sits under the paper, so the panel rises from the bottom instead.          */
+
+.room-sage {
+  position: fixed;
+  top: 92px;
+  right: var(--room-gutter);
+  z-index: 25;
+  width: 364px;
+  max-height: calc(100vh - 116px);
+  overflow-y: auto;
+  padding: 22px 24px 20px;
+}
+
+.room-sage-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.room-sage-close {
+  font-family: inherit;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--room-ink-faint);
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.room-sage-close:hover {
+  color: var(--room-ink);
+}
+
+.room-sage-versions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin-top: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--room-rule);
+  border-bottom: 1px solid var(--room-rule);
+}
+
+.room-sage-plan {
+  margin-top: 12px;
+}
+
+.room-sage-link {
+  font: inherit;
+  font-weight: 600;
+  color: var(--room-accent-on-paper);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.room-sage-run {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 20px;
+}
+
+.room-sage-note {
+  margin: 14px 0 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--room-ink-soft);
+}
+
+.room-sage-note.is-error {
+  color: var(--room-accent-on-paper);
+}
+
+.room-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.room-field--area {
+  display: block;
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+@media (max-width: 1100px) {
+  .room-sage {
+    top: auto;
+    bottom: 16px;
+    left: var(--room-gutter);
+    right: var(--room-gutter);
+    width: auto;
+    max-height: 70vh;
+  }
+}
+
+/* ── The note on a phone ──────────────────────────────────────────────────────
+   The editor's top line carries Sage, ··· and the save status; on a phone the page links
+   step aside for them, and the status moves onto the paper under the course name. The
+   paper's gutter narrows (the + and § tools move with it), the title shrinks, and the
+   format strip scrolls sideways instead of stacking three rows deep.             */
+
+.room-saved--inline {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .room-topline--tools .room-topline-link--page,
+  .room-topline--tools .room-saved {
+    display: none;
+  }
+
+  .room-saved--inline {
+    display: inline;
+  }
+
+  .room-page {
+    padding: 26px 18px 24px 44px;
+  }
+
+  .room-gutter-tools {
+    left: -38px;
+  }
+
+  .room-page-title {
+    font-size: 32px;
+  }
+
+  .room-strip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .room-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .room-strip-group {
+    flex: none;
+  }
+}

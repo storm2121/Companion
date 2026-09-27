@@ -15,6 +15,7 @@ import {
 import { doc, onSnapshot, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, clearFirestoreOfflineCache, db } from '../firebase';
 import { THEME_DEFAULT_MODE, THEME_PRESETS } from '../themePresets';
+import { DESIGN_DEFAULT_MODE, resolveDesignMode } from '../designModes';
 import { DEFAULT_TEMPLATE_ID } from '../data/noteTemplates';
 import {
   AUTH_EMAIL_STORAGE_KEY,
@@ -44,6 +45,14 @@ export const AuthProvider = ({ children }) => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [statusMessage, setStatusMessage] = useState('');
+  // A design switch, applied the instant it is pressed. `from` is what the profile said at
+  // that moment; once the profile says anything else (the write landed, or another device
+  // changed it) the switch has done its job and the profile is the truth again.
+  //
+  // Without it, the switch raced its own write: the page re-rendered before the profile
+  // listener reported the new value, so /dashboard still read the OLD design — and
+  // switching back to classic from the room would have bounced straight back.
+  const [designSwitch, setDesignSwitch] = useState(null);
 
   useEffect(() => {
     setPersistence(auth, browserLocalPersistence).catch((err) => {
@@ -92,6 +101,7 @@ export const AuthProvider = ({ children }) => {
               major: '',
               profileComplete: false,
               themeMode: THEME_DEFAULT_MODE,
+              designMode: DESIGN_DEFAULT_MODE,
               noteTemplateDefault: DEFAULT_TEMPLATE_ID,
               createdAt: serverTimestamp(),
             };
@@ -261,6 +271,32 @@ export const AuthProvider = ({ children }) => {
     await updateDoc(doc(db, 'users', firebaseUser.uid), { themeMode });
   };
 
+  // The design this person uses. It decides what /dashboard, /settings and /class/:id
+  // render (see `designFor` in designModes.js); the <html data-design> attribute is still
+  // owned by the room's layout, which only mounts where the room renders.
+  const updateDesignMode = async (value) => {
+    if (!firebaseUser) throw new Error('No authenticated user.');
+    const next = resolveDesignMode(value);
+    setDesignSwitch({ to: next, from: profile?.designMode });
+    try {
+      await updateDoc(doc(db, 'users', firebaseUser.uid), { designMode: next });
+    } catch (err) {
+      setDesignSwitch(null);
+      throw err;
+    }
+  };
+
+  // The room's switches (mood, grain, hand-drawn, motion, radio). Merged rather than
+  // replaced so one toggle never clears the others.
+  const updateRoomPrefs = async (patch) => {
+    if (!firebaseUser) throw new Error('No authenticated user.');
+    await setDoc(
+      doc(db, 'users', firebaseUser.uid),
+      { roomPrefs: { ...(profile?.roomPrefs || {}), ...(patch || {}) } },
+      { merge: true },
+    );
+  };
+
   const updateNoteTemplateDefault = async (value) => {
     if (!firebaseUser) throw new Error('No authenticated user.');
     await updateDoc(doc(db, 'users', firebaseUser.uid), { noteTemplateDefault: value });
@@ -288,6 +324,11 @@ export const AuthProvider = ({ children }) => {
     completeEmailLinkSignIn,
     updateProfileData,
     updateThemeMode,
+    designMode: resolveDesignMode(
+      designSwitch && designSwitch.from === profile?.designMode ? designSwitch.to : profile?.designMode,
+    ),
+    updateDesignMode,
+    updateRoomPrefs,
     updateNoteTemplateDefault,
     applyThemeMode,
     logout,

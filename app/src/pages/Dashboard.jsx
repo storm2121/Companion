@@ -36,6 +36,7 @@ import {
   updateNote,
 } from '../services/library';
 import { useAuth } from '../context/authState';
+import { isCanvasNote } from '../designModes';
 import {
   DASHBOARD_RETURN_CLASS_KEY,
   TEMPLATE_DRAFT_STORAGE_KEY,
@@ -403,7 +404,10 @@ const Dashboard = () => {
       firebaseUser.uid,
       classId,
       (snapshot) => {
-        const items = snapshot.docs.map((docSnap) => toNoteMeta(docSnap));
+        // Classic shows canvas notes only. Filtered in JS, never in a Firestore
+        // query: notes written before the dual-design seam have no `format` field and
+        // a where() clause would not match them (dualmode.md §6.2).
+        const items = snapshot.docs.map((docSnap) => toNoteMeta(docSnap)).filter(isCanvasNote);
         const ordered = [...items].sort((a, b) => {
           const aHasOrder = Number.isFinite(a.order);
           const bHasOrder = Number.isFinite(b.order);
@@ -457,7 +461,7 @@ const Dashboard = () => {
       classes.map((c) => ({ id: c.id, name: c.name })),
     )
       .then((items) => {
-        if (!cancelled) setAllNotes(items);
+        if (!cancelled) setAllNotes(items.filter(isCanvasNote));
       })
       .catch((err) => console.error('Global notes fetch failed', err))
       .finally(() => {

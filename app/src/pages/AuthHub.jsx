@@ -29,6 +29,8 @@ const AuthHub = () => {
   useEffect(() => {
     if (loading) return;
     // Unverified accounts stay here so the confirm-your-address card can render.
+    // /dashboard renders whichever design this person picked (see `designFor`), so every
+    // arrival goes there and the design is decided at the route, not here.
     if (firebaseUser && emailVerified) {
       navigate(profileReady ? '/dashboard' : '/setup', { replace: true });
     }

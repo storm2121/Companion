@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { FaArrowLeft, FaCamera, FaCheck, FaDownload, FaMoon, FaSignOutAlt, FaSun, FaTrashAlt } from 'react-icons/fa';
+import { FaArrowLeft, FaCamera, FaCheck, FaDownload, FaMoon, FaRegLightbulb, FaSignOutAlt, FaSun, FaThLarge, FaTrashAlt } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/authState';
 import { exportUserData, fetchNoteTemplates } from '../services/library';
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
 import { THEME_DEFAULT_MODE, THEME_OPTIONS, THEME_PRESETS } from '../themePresets';
+import { DESIGN_OPTIONS, DESIGN_ROOM, resolveDesignMode } from '../designModes';
 import { DEFAULT_TEMPLATE_ID } from '../data/noteTemplates';
 import {
   AVATAR_MAX_BYTES,
@@ -22,6 +23,8 @@ const Settings = () => {
     profile,
     updateProfileData,
     updateThemeMode,
+    designMode,
+    updateDesignMode,
     updateNoteTemplateDefault,
     applyThemeMode,
     logout,
@@ -121,6 +124,12 @@ const Settings = () => {
     const next = normalizeThemeMode(mode);
     applyThemeMode(next);
     updateThemeMode(next).catch((err) => console.error(err));
+  };
+
+  // No navigation: /settings follows the preference, so choosing Room turns this very page
+  // into the room's settings where it stands.
+  const handleDesign = (mode) => {
+    updateDesignMode(resolveDesignMode(mode)).catch((err) => console.error(err));
   };
 
   const handleDefaultTemplate = (value) => {
@@ -254,6 +263,35 @@ const Settings = () => {
                   onClick={() => handleTheme(option.id)}
                 >
                   <span className="theme-card-icon">{isLight ? <FaSun /> : <FaMoon />}</span>
+                  <span className="theme-card-name">{option.label}</span>
+                  {active && <FaCheck className="theme-card-check" />}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Design */}
+        <section className="settings-card">
+          <h2>Design</h2>
+          <p className="settings-hint">
+            Room mode keeps your courses and starts with its own notes. Nothing you wrote
+            in the classic desk is moved or changed.
+          </p>
+          <div className="settings-themes">
+            {DESIGN_OPTIONS.map((option) => {
+              const active = resolveDesignMode(option.id) === designMode;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`theme-card ${active ? 'active' : ''}`}
+                  onClick={() => handleDesign(option.id)}
+                  title={option.blurb}
+                >
+                  <span className="theme-card-icon">
+                    {option.id === DESIGN_ROOM ? <FaRegLightbulb /> : <FaThLarge />}
+                  </span>
                   <span className="theme-card-name">{option.label}</span>
                   {active && <FaCheck className="theme-card-check" />}
                 </button>

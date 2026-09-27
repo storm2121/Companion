@@ -14,6 +14,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -30,6 +31,9 @@ const getNoteContentRef = (uid, classId, noteId) =>
   doc(db, 'users', uid, 'classes', classId, 'notes', noteId, 'content', NOTE_CONTENT_DOC_ID);
 
 const sanitizeBlocks = (blocks) => (Array.isArray(blocks) ? blocks : []);
+// Which design a note belongs to. Notes written before the dual-design seam carry no
+// `format` at all, and ABSENT MEANS 'canvas' — see designModes.js.
+const sanitizeNoteFormat = (value) => (value === 'page' ? 'page' : 'canvas');
 const sanitizeCanvasHeight = (value) => (Number.isFinite(value) ? value : DEFAULT_CANVAS_HEIGHT);
 
 // Storage model: blocks are kept as a map { [id]: block } plus an `order` array so
@@ -170,6 +174,7 @@ export const createNote = async (uid, classId, payload = {}) => {
     tags: payload.tags || [],
     pinned: payload.pinned || false,
     templateId: payload.templateId || '',
+    format: sanitizeNoteFormat(payload.format),
     order: Number.isFinite(payload.order) ? payload.order : Date.now(),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -507,8 +512,25 @@ export const setCalendarEvent = async (uid, event) => {
     color: event.color || '',
     note: (event.note || '').trim(),
     createdAt: event.createdAt || Date.now(),
+    // Room only: the course a thing belongs to ("Quiz 2 · Statistics"). Classic neither
+    // writes nor reads it, and never re-saves an existing event, so it cannot drop it.
+    ...(event.courseId ? { courseId: String(event.courseId) } : {}),
   };
   await updateDoc(doc(db, 'users', uid), { [`events.${id}`]: payload });
+  return id;
+};
+
+// Room quick-capture. Stored as a MAP ON THE PROFILE DOC, exactly like `events` — that
+// is deliberate: a new subcollection would need a firestore.rules entry and a deploy,
+// and the profile doc is already owner-writable.
+export const addInboxEntry = async (uid, text) => {
+  const clean = (text || '').trim();
+  if (!uid || !clean) return '';
+  const id =
+    globalThis.crypto?.randomUUID?.() || `inb-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  await updateDoc(doc(db, 'users', uid), {
+    [`inbox.${id}`]: { id, text: clean.slice(0, 2000), createdAt: Date.now() },
+  });
   return id;
 };
 
@@ -639,6 +661,136 @@ export const exportUserData = async (uid) => {
     out.classes.push(cls);
   }
   return out;
+};
+
+/* ── Room (lofi study room) note access ─────────────────────────────────────
+   Additive and room-only; classic never calls these.
+
+   Querying on `format` is SAFE here and only here. Classic must never do it, because
+   classic notes predate the field and "absent" means canvas. Every room note is born
+   with format:'page', so there is no missing-field case to lose. It also means the room
+   reads ONLY its own notes — before this, every visit to Home or a course read every
+   note in every course, classic ones included, and was billed for all of them. */
+
+// Live page notes for one course. A listener rather than a one-off read: with the
+// persistent cache, re-attaching resumes from a token and is billed only for changes, and
+// while offline it keeps serving the cached notes.
+export const listenToPageNotes = (uid, classId, onData, onError) =>
+  onSnapshot(
+    query(collection(db, 'users', uid, 'classes', classId, 'notes'), where('format', '==', 'page')),
+    onData,
+    onError,
+  );
+
+// Starts a page note WITHOUT waiting for the server. The id is generated on this device
+// and the batch lands in the local cache at once, so the note can be opened immediately —
+// online or not. (`createNote` awaits the commit, and with Firestore's offline queue that
+// promise only settles when the SERVER acknowledges: offline, "+ New note" hung forever.)
+// `saved` settles when the server has it, or rejects if it refuses.
+export const createPageNote = (uid, classId, payload = {}) => {
+  const noteRef = doc(collection(db, 'users', uid, 'classes', classId, 'notes'));
+  const contentRef = getNoteContentRef(uid, classId, noteRef.id);
+  const { map, order } = blocksArrayToMap(sanitizeBlocks(payload.blocks));
+  const batch = writeBatch(db);
+  batch.set(noteRef, {
+    title: payload.title || 'Untitled',
+    summary: '',
+    coverUrl: '',
+    tags: [],
+    pinned: false,
+    templateId: '',
+    format: 'page',
+    order: Date.now(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    contentUpdatedAt: serverTimestamp(),
+  });
+  batch.set(contentRef, {
+    blocks: map,
+    order,
+    canvasHeight: sanitizeCanvasHeight(undefined),
+    updatedAt: serverTimestamp(),
+  });
+  batch.update(doc(db, 'users', uid, 'classes', classId), { noteCount: increment(1) });
+  return { id: noteRef.id, saved: batch.commit() };
+};
+
+// Room page templates ("save this note's structure"). A map on the PROFILE doc, like
+// `events` and `inbox` — NOT the `noteTemplates` collection, which classic's template
+// picker lists: a page-shaped template there would create a broken canvas note.
+export const saveRoomTemplate = (uid, { name, blocks }) => {
+  const id =
+    globalThis.crypto?.randomUUID?.() || `tpl-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const saved = updateDoc(doc(db, 'users', uid), {
+    [`roomTemplates.${id}`]: {
+      id,
+      name: String(name || 'My template').trim().slice(0, 40) || 'My template',
+      blocks: Array.isArray(blocks) ? blocks : [],
+      createdAt: Date.now(),
+    },
+  });
+  return { id, saved };
+};
+
+export const deleteRoomTemplate = (uid, id) =>
+  updateDoc(doc(db, 'users', uid), { [`roomTemplates.${id}`]: deleteField() });
+
+// Inbox lines leave the map when filed or let go; undo writes the same entry back. Neither
+// is awaited by the room — both land in the local cache at once, online or not.
+export const deleteInboxEntry = (uid, id) =>
+  updateDoc(doc(db, 'users', uid), { [`inbox.${id}`]: deleteField() });
+
+export const restoreInboxEntry = (uid, entry) =>
+  updateDoc(doc(db, 'users', uid), {
+    [`inbox.${entry.id}`]: {
+      id: entry.id,
+      text: String(entry.text || '').slice(0, 2000),
+      createdAt: entry.createdAt || Date.now(),
+    },
+  });
+
+// Room course details — all OPTIONAL and additive (dualmode.md §6.1). Classic never reads
+// them, and a course without them is exactly the course it always was:
+//   schedule   { days: [0-6], time: 'HH:MM' | '' }  weekly meetings; the room's calendar
+//              derives its classes from this rather than storing dated events
+//   room, professor   plain strings
+// The room cleans the values before they get here (room/calendarDays.js).
+
+// Starts a course WITHOUT waiting for the server, like createPageNote: the id is made on
+// this device, so the desk shows it at once, online or not. Same fields createClass
+// writes, plus any details given.
+export const createCourse = (uid, { name, color, schedule, room, professor } = {}) => {
+  const cleanedName = String(name || '').trim();
+  const ref = doc(collection(db, 'users', uid, 'classes'));
+  const payload = {
+    name: cleanedName,
+    color,
+    code: cleanedName,
+    noteCount: 0,
+    order: Date.now(),
+    createdAt: serverTimestamp(),
+  };
+  if (schedule) payload.schedule = schedule;
+  if (room) payload.room = room;
+  if (professor) payload.professor = professor;
+  return { id: ref.id, saved: setDoc(ref, payload) };
+};
+
+// A course's name, colour and details in one write. An emptied detail is REMOVED rather
+// than stored blank, so "empty means absent" holds in the data as well as on screen.
+// Only the keys present in `changes` are touched.
+export const updateCourse = (uid, courseId, changes = {}) => {
+  const patch = {};
+  const name = typeof changes.name === 'string' ? changes.name.trim() : '';
+  if (name) {
+    patch.name = name;
+    patch.code = name;
+  }
+  if (changes.color) patch.color = changes.color;
+  ['schedule', 'room', 'professor'].forEach((key) => {
+    if (key in changes) patch[key] = changes[key] || deleteField();
+  });
+  return updateDoc(doc(db, 'users', uid, 'classes', courseId), patch);
 };
 
 export const createNoteTemplate = async (uid, payload = {}) => {
