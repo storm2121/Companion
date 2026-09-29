@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/authState';
 import {
   deleteNoteVersion,
@@ -79,15 +78,29 @@ const SagePanel = ({
   tags = [],
   onAddTag,
 }) => {
-  const navigate = useNavigate();
   const { firebaseUser, profile, updateRoomPrefs } = useAuth();
   const uid = firebaseUser?.uid;
 
-  // The standing instructions from the You page, and the extras last used.
+  // The standing instructions (also on the You page) and the extras last used. How Sage
+  // talks, what the notes are about and anything else to tell it are edited right here,
+  // folded away until wanted; every change is saved as it is made.
   const standing = profile?.roomPrefs?.sage || {};
   const voice = SAGE_VOICES.some((item) => item.id === standing.voice) ? standing.voice : 'buddy';
-  const topic = typeof standing.topic === 'string' ? standing.topic : '';
-  const comment = typeof standing.comment === 'string' ? standing.comment : '';
+  const [topic, setTopic] = useState(() => (typeof standing.topic === 'string' ? standing.topic : ''));
+  const [comment, setComment] = useState(() => (typeof standing.comment === 'string' ? standing.comment : ''));
+  const [instructionsOpen, setInstructionsOpen] = useState(false);
+  // Every save carries what is typed right now: two saves in one moment (a field's blur,
+  // then a click on a voice) must not each copy the old instructions over the other.
+  const typed = () => ({ topic: topic.trim().slice(0, 120), comment: comment.trim().slice(0, 500) });
+  const saveInstructions = (patch = {}) => {
+    const next = { ...standing, ...typed(), ...patch };
+    const same = ['voice', 'topic', 'comment', 'addons'].every(
+      (key) => JSON.stringify(next[key] ?? null) === JSON.stringify(standing[key] ?? null),
+    );
+    if (same) return;
+    updateRoomPrefs?.({ sage: next })?.catch?.((err) => console.error('Could not save Sage’s instructions', err));
+  };
+  const saveTyped = () => saveInstructions();
 
   const [goals, setGoals] = useState(['polish']);
   const [extras, setExtras] = useState(() =>
@@ -118,7 +131,10 @@ const SagePanel = ({
   const section = sections.length > 1 ? sections.find((item) => item.id === focusSection) || sections[0] : null;
   const sectionId = scope === 'section' && section ? section.id : '';
 
-  const mode = describeSageRun(goals, extras).mode;
+  // As the server decides it (functions/lib/pageSage.js pageMode): a note to Sage lets a
+  // quick edit add blocks too, since it may ask for something new.
+  const baseMode = describeSageRun(goals, extras).mode;
+  const mode = baseMode === 'patch' && comment.trim() ? 'reflow' : baseMode;
   const outgoing = useMemo(() => toPageBlocks(sageScope(blocks, sectionId)), [blocks, sectionId]);
   const cost = sageRunWeight(
     outgoing.map((block) => ({ type: block.type === 'image' ? 'image' : 'text', value: block.value, title: block.label })),
@@ -153,13 +169,8 @@ const SagePanel = ({
     // Only when the counter we can see says so: with no counter, the server decides.
     if (usage && balance.left <= 0) return say('No Sage runs left today. More at 01:00.', true);
 
-    // The extras picked here are remembered for next time.
-    const saved = Array.isArray(standing.addons) ? standing.addons : [];
-    if (extras.join() !== saved.join()) {
-      updateRoomPrefs?.({ sage: { ...standing, addons: extras } })?.catch?.((err) =>
-        console.error('Could not remember the extras', err),
-      );
-    }
+    // What is typed, and the extras picked here (remembered for next time), in ONE save.
+    saveInstructions({ addons: extras });
 
     setMessage(null);
     setPhrase(0);
@@ -207,7 +218,8 @@ const SagePanel = ({
       setMessage({
         text: applied.note || sageSummary(applied),
         says: Boolean(applied.note),
-        stamp: applied.note ? sageSummary(applied) : '',
+        // No note, tags or sections come from a server that predates the page path.
+        stamp: [applied.note ? sageSummary(applied) : '', result?.format === 'page' ? '' : 'Older Sage'].filter(Boolean).join(' · '),
         tags: suggested,
       });
     } catch (err) {
@@ -273,9 +285,9 @@ const SagePanel = ({
   if (!open) return null;
 
   const standingLine = [
-    SAGE_VOICES.find((item) => item.id === voice)?.line || '',
-    topic ? `about ${topic}` : '',
-    comment ? `“${shorten(comment, 50)}”` : '',
+    SAGE_VOICES.find((item) => item.id === voice)?.label || '',
+    topic.trim() ? `about ${shorten(topic.trim(), 28)}` : '',
+    comment.trim() ? 'with your note' : '',
   ]
     .filter(Boolean)
     .join(' · ');
@@ -328,12 +340,28 @@ const SagePanel = ({
       )}
 
       <p className="room-form-label">What should it do</p>
-      <div className="room-days">
-        {SAGE_GOALS.map((goal) => (
-          <Chip key={goal.id} selected={goals.includes(goal.id)} onClick={() => toggleGoal(goal.id)} title={goal.hint}>
-            {goal.label}
-          </Chip>
-        ))}
+      <div className="room-sage-goals">
+        {SAGE_GOALS.map((goal) => {
+          const on = goals.includes(goal.id);
+          return (
+            <button
+              key={goal.id}
+              type="button"
+              role="checkbox"
+              aria-checked={on}
+              className={`room-sage-goal${on ? ' is-on' : ''}`}
+              onClick={() => toggleGoal(goal.id)}
+            >
+              <span className="room-sage-check" aria-hidden="true">
+                {on ? '✓' : ''}
+              </span>
+              <span className="room-sage-goal-text">
+                <span className="room-sage-goal-name">{goal.label}</span>
+                <span className="room-sage-goal-hint">{goal.hint}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <button
@@ -362,18 +390,64 @@ const SagePanel = ({
           ))}
         </div>
       )}
-      <p className="room-setting-copy room-sage-plan">{PLAN[mode]}</p>
+      <button
+        type="button"
+        className="room-sage-more"
+        onClick={() => {
+          if (instructionsOpen) saveTyped();
+          setInstructionsOpen((shown) => !shown);
+        }}
+        aria-expanded={instructionsOpen}
+      >
+        <span className="room-form-label">Instructions</span>
+        <span className="room-sage-more-list">{standingLine}</span>
+        <span className="room-sage-more-mark" aria-hidden="true">
+          {instructionsOpen ? '−' : '+'}
+        </span>
+      </button>
+      {instructionsOpen && (
+        <div className="room-sage-instructions">
+          <p className="room-sage-field-label">How Sage talks to you</p>
+          <div className="room-days">
+            {SAGE_VOICES.map((item) => (
+              <Chip
+                key={item.id}
+                selected={voice === item.id}
+                onClick={() => saveInstructions({ voice: item.id })}
+                title={item.hint}
+              >
+                {item.label}
+              </Chip>
+            ))}
+          </div>
+          <label className="room-sage-field">
+            <span className="room-sage-field-label">What your notes are about</span>
+            <input
+              className="room-field"
+              value={topic}
+              onChange={(event) => setTopic(event.target.value)}
+              onBlur={saveTyped}
+              placeholder="Second-year computer science"
+              maxLength={120}
+            />
+          </label>
+          <label className="room-sage-field">
+            <span className="room-sage-field-label">Anything else Sage should know</span>
+            <textarea
+              className="room-field room-field--area"
+              value={comment}
+              onChange={(event) => setComment(event.target.value)}
+              onBlur={saveTyped}
+              placeholder="Explain things the way I would need them for the exam"
+              maxLength={500}
+              rows={3}
+            />
+          </label>
+          <p className="room-sage-field-note">Kept for every run, and on the You page too.</p>
+        </div>
+      )}
 
-      <p className="room-setting-copy room-sage-standing">
-        {standingLine} ·{' '}
-        <button
-          type="button"
-          className="room-sage-link"
-          onClick={() => navigate('/room/you', { state: { open: 'sage' } })}
-        >
-          Change
-        </button>
-      </p>
+      <p className="room-setting-copy room-sage-plan">{PLAN[mode]}</p>
 
       <div className="room-sage-run">
         <Pill

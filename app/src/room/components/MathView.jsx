@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { formulaRows } from '../mathText';
 
 // A formula, typeset. KaTeX (and its stylesheet and fonts) load the first time any math is
 // shown — only inside the room's editor, so nothing else ever downloads them. Fonts are
@@ -6,7 +7,8 @@ import { useEffect, useRef } from 'react';
 //
 // The element has no React children: its content is written here, first as the plain
 // source (while KaTeX loads, or if it cannot), then as KaTeX's output. One line of source
-// is one displayed line. `trust: false` keeps \href and friends out.
+// is one displayed line — except an environment written over several lines, which stays
+// one formula (mathText.js). `trust: false` keeps \href and friends out.
 
 let katexLoading = null;
 const loadKatex = () => {
@@ -31,9 +33,7 @@ const MathView = ({ tex, className = '', placeholder = '' }) => {
   useEffect(() => {
     const host = ref.current;
     if (!host) return undefined;
-    const lines = String(tex || '')
-      .split('\n')
-      .filter((line) => line.trim());
+    const lines = formulaRows(tex);
     if (!lines.length) {
       host.textContent = placeholder;
       host.classList.add('is-empty');

@@ -29,6 +29,7 @@ import {
   railBlocksOf,
   stripHtml,
 } from './pageBlocks.js';
+import { cleanTex, restoreTex } from './mathText.js';
 
 // The callable refuses more than this many blocks in one call (MAX_BLOCKS server-side).
 export const SAGE_MAX_BLOCKS = 160;
@@ -109,7 +110,8 @@ const titled = (title, html, level = 3) => {
 const reshape = (original, entry, withTitle = false) => {
   if (typeof entry?.value !== 'string' || original.type === BLOCK_IMAGE) return original;
   const value = entry.value;
-  if (original.type === BLOCK_CODE || original.type === BLOCK_MATH) return { ...original, value: htmlToLines(value) };
+  if (original.type === BLOCK_MATH) return { ...original, value: cleanTex(htmlToLines(restoreTex(value))) };
+  if (original.type === BLOCK_CODE) return { ...original, value: htmlToLines(value) };
   if (original.type === BLOCK_CALLOUT) {
     return { ...original, label: String(entry.title || '').trim() || original.label, value };
   }
@@ -130,7 +132,7 @@ export const blockForRole = (role, title, value) => {
     return { ...createBlock(BLOCK_CALLOUT), label: label || 'Example', value: html };
   }
   if (role === 'formula') {
-    const plain = htmlToLines(html);
+    const plain = cleanTex(htmlToLines(restoreTex(html)));
     // A "formula" that is really prose or a list stays text.
     if (plain && plain.length <= 240 && !/<(?:ul|ol|table)[\s>]/i.test(html)) {
       return { ...createBlock(BLOCK_MATH), value: plain };
@@ -181,11 +183,14 @@ const editPage = (page, result, { reshapeOne, buildNew, anchorOf, top = '' }) =>
 
   let added = 0;
   const lastAfter = new Map();
+  // "end" — the page path's word for the very end of the run (a quiz, key terms).
+  const endId = page[page.length - 1]?.id || '';
   (Array.isArray(result.added) ? result.added : []).forEach((entry) => {
     if (!String(entry?.value || '').trim()) return;
     const fresh = buildNew(entry);
-    const hit = byId.get(anchorOf(entry));
-    const anchor = hit ? hit.parent || anchorOf(entry) : top;
+    const wanted = anchorOf(entry);
+    const hit = wanted === 'end' ? null : byId.get(wanted);
+    const anchor = wanted === 'end' && endId ? endId : hit ? hit.parent || wanted : top;
     const after = lastAfter.get(anchor) ?? anchor;
     const at = after ? next.findIndex((block) => block.id === after) + 1 : 0;
     next = [...next.slice(0, at), fresh, ...next.slice(at)];
@@ -283,7 +288,8 @@ const plainValue = (value) => {
 const reshapePage = (original, entry) => {
   if (typeof entry?.value !== 'string' || original.type === BLOCK_IMAGE) return original;
   const value = entry.value;
-  if (original.type === BLOCK_CODE || original.type === BLOCK_MATH) return { ...original, value: plainValue(value) };
+  if (original.type === BLOCK_MATH) return { ...original, value: cleanTex(plainValue(restoreTex(value))) };
+  if (original.type === BLOCK_CODE) return { ...original, value: plainValue(value) };
   if (original.type === BLOCK_CALLOUT) {
     return { ...original, label: String(entry.label || '').trim() || original.label, value };
   }
@@ -298,14 +304,15 @@ export const blockForPageEntry = (entry) => {
     return { ...createBlock(BLOCK_CALLOUT), label: String(entry.label || '').trim() || 'Note', value };
   }
   if (entry?.type === 'code') return { ...createBlock(BLOCK_CODE), lang: entry.lang || '', value: plainValue(value) };
-  if (entry?.type === 'math') return { ...createBlock(BLOCK_MATH), value: plainValue(value) };
+  if (entry?.type === 'math') return { ...createBlock(BLOCK_MATH), value: cleanTex(plainValue(restoreTex(value))) };
   if (entry?.type === 'checklist') return { ...createBlock(BLOCK_CHECKLIST), value: asTaskList(value) };
   return { ...createBlock(BLOCK_TEXT), value };
 };
 
 const PAGE = {
   reshapeOne: reshapePage,
-  buildNew: blockForPageEntry,
+  // An added block may open a section of its own (a genuinely new topic).
+  buildNew: (entry) => ({ ...blockForPageEntry(entry), section: entry?.section === true }),
   anchorOf: (entry) => entry.after,
   continued: reshapePage,
   isPair: (entry, block) => entry.pair === true && block.type === BLOCK_TEXT,

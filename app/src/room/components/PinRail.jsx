@@ -3,6 +3,8 @@ import Paper from './Paper';
 import { IMAGE_ACCEPT } from '../../utils/imageUpload';
 import { aspectOf } from '../imageScale';
 import { tiltForKey } from '../roomPrefs';
+import { imageTilt } from '../pageImages';
+import { TiltIcon } from './primitives';
 import { createBoardMotion } from '../boardMotion';
 import {
   BOARD_TAIL,
@@ -70,6 +72,9 @@ const engineFor = (ref) => {
 const setBoardHeight = (ref, height) => {
   if (ref.current) ref.current.style.height = height ? `${height}px` : '';
 };
+
+// A board photo's tilt: the one you gave it, else the slight one its id always gets.
+const tiltOf = (pin) => (Number.isFinite(pin?.tilt) ? pin.tilt : tiltForKey(pin?.id));
 
 const PinRail = ({
   sections,
@@ -423,7 +428,7 @@ const PinRail = ({
               onLostPointerCapture={cancel}
               onKeyDown={keyboard(pin)}
             >
-              <Paper className="room-hang-card" tilt={tiltForKey(pin.id)}>
+              <Paper className="room-hang-card" tilt={tiltOf(pin)}>
                 {pin.value && (
                   // Lazy: a photo far down the board is not fetched until you scroll near
                   // it. Safe now that layout never waits on an image to know its size.
@@ -446,6 +451,28 @@ const PinRail = ({
               >
                 ×
               </button>
+
+              {/* Tilt it like a print pinned to the board. Its own tilt until you set one. */}
+              <span className="room-hang-tilt">
+                <button
+                  type="button"
+                  className="room-hang-btn"
+                  onClick={() => onChangePins?.([{ id: pin.id, tilt: imageTilt(tiltOf(pin) - 1.5) }])}
+                  aria-label="Tilt this photo left"
+                  title="Tilt left"
+                >
+                  <TiltIcon />
+                </button>
+                <button
+                  type="button"
+                  className="room-hang-btn"
+                  onClick={() => onChangePins?.([{ id: pin.id, tilt: imageTilt(tiltOf(pin) + 1.5) }])}
+                  aria-label="Tilt this photo right"
+                  title="Tilt right"
+                >
+                  <TiltIcon flip />
+                </button>
+              </span>
 
               <span
                 className="room-hang-grip"

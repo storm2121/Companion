@@ -80,3 +80,25 @@ export const PencilRule = ({ width = '100%', opacity = 1, className = '' }) => (
     </svg>
   </div>
 );
+
+// A small curved arrow: tilt left; `flip` for tilt right. Photos on the page and on the board.
+export const TiltIcon = ({ flip = false }) => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 14 14"
+    focusable="false"
+    aria-hidden="true"
+    style={flip ? { transform: 'scaleX(-1)' } : undefined}
+  >
+    <path d="M3.2 5.2 A4.6 4.6 0 1 1 3.4 9.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+    <path
+      d="M1.6 2.8 L3.2 5.4 L5.9 4.2"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      fill="none"
+    />
+  </svg>
+);

@@ -3400,12 +3400,23 @@ html[data-design='room'] .room-tag-input:focus-visible {
   margin: 0;
 }
 
+/* Sage's own line: a warm tinted slip, signed with a small stamp — no accent bar. */
 .room-sage-note.is-sage {
   margin-top: 16px;
-  padding: 12px 14px 12px 16px;
-  border-left: 2px solid var(--room-accent-on-paper);
-  border-radius: 0 var(--room-r-btn) var(--room-r-btn) 0;
-  background: rgba(201, 121, 47, 0.07);
+  padding: 12px 14px 12px;
+  border-radius: var(--room-r-btn);
+  background: rgba(201, 121, 47, 0.08);
+}
+
+.room-sage-note.is-sage::before {
+  content: 'Sage';
+  display: block;
+  margin-bottom: 4px;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--room-accent-on-paper);
 }
 
 .room-sage-note.is-sage .room-sage-says {
@@ -3482,4 +3493,324 @@ html[data-design='room'] .room-tag-input:focus-visible {
 .room-col-x,
 .room-plus-menu {
   user-select: none;
+}
+
+/* ── Long lists scroll in place ───────────────────────────────────────────────
+   A menu of every course (Move, File into…) and a desk of many courses used to grow the
+   page instead. Both scroll inside themselves now, with the room's quiet scrollbar — on
+   paper the thumb is ink, not the ground's light edge, or it would vanish. */
+
+.room-paper,
+.room-menu {
+  --scroll-thumb: var(--room-hairline);
+  --scroll-thumb-hover: var(--room-ink-faint);
+}
+
+.room-menu {
+  max-height: min(46vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The desk's shelf: about two and a half rows, the sheets fading out at the edges so it
+   reads as "there is more". Padding inside keeps the sheets' shadows and tilts from being
+   clipped; the equal negative margin keeps the grid where it was. */
+.room-course-grid.is-shelf {
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 18px 34px;
+  margin: -14px -18px -34px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 34px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 34px), transparent 100%);
+}
+
+/* ── Photos on the page ───────────────────────────────────────────────────────
+   Uploaded, sized by the corner grip (a share of the page width) and tilted a few degrees
+   like a print stuck onto the paper. The controls are the board's: round paper buttons
+   inside the photo, shown on hover or keyboard focus. */
+
+.room-image {
+  position: relative;
+  margin: 6px 0;
+}
+
+.room-image-frame {
+  position: relative;
+  margin: 0 auto;
+  max-width: 100%;
+  transition: transform 0.25s var(--room-ease);
+}
+
+.room-image.is-resizing .room-image-frame {
+  transition: none;
+}
+
+.room-image-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(31, 38, 34, 0.16);
+  -webkit-user-drag: none;
+}
+
+.room-image-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.2s var(--room-ease);
+}
+
+.room-image-btn,
+.room-image-grip,
+.room-hang-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--room-r-round);
+  background: var(--room-paper);
+  color: var(--room-ink);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.room-image-btn--text {
+  padding: 0 10px;
+  border-radius: var(--room-r-pill);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.room-image-btn:hover,
+.room-hang-btn:hover {
+  color: var(--room-accent-on-paper);
+}
+
+.room-image-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.room-image-grip {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 0.2s var(--room-ease);
+}
+
+.room-image:hover .room-image-tools,
+.room-image:hover .room-image-grip,
+.room-image:focus-within .room-image-tools,
+.room-image:focus-within .room-image-grip,
+.room-image.is-resizing .room-image-grip {
+  opacity: 1;
+}
+
+.room-image-drop {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 26px 20px;
+  border: var(--room-border) dashed var(--room-hairline);
+  border-radius: var(--room-r-paper);
+  color: var(--room-ink-soft);
+  text-align: center;
+}
+
+.room-image-drop p {
+  margin: 0;
+  font-size: 15px;
+}
+
+.room-image.is-over .room-image-drop {
+  border-color: var(--room-accent-on-paper);
+  background: rgba(201, 121, 47, 0.06);
+}
+
+.room-image-note {
+  max-width: 62ch;
+  margin: 10px auto 0;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--room-ink-soft);
+}
+
+.room-image-note.is-error {
+  color: var(--room-accent-on-paper);
+}
+
+.room-image-note button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--room-accent-on-paper);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* The board's tilt buttons, top-left inside the photo (× is top-right, the grip bottom-right). */
+.room-hang-tilt {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.2s var(--room-ease);
+}
+
+.room-hang-btn {
+  min-width: 24px;
+  height: 24px;
+}
+
+.room-hang:hover .room-hang-tilt,
+.room-hang:focus-within .room-hang-tilt {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .room-image-tools,
+  .room-image-grip,
+  .room-hang-tilt {
+    opacity: 1;
+  }
+}
+
+/* ── Sage's panel, easier to read ─────────────────────────────────────────────
+   Goals are rows with their hint in plain sight — a chip and a tooltip hid what each one
+   does. Instructions fold like the extras; opened, they are three plain fields. */
+
+.room-sage {
+  width: 384px;
+}
+
+.room-sage .room-setting-copy {
+  font-size: 14.5px;
+}
+
+.room-sage-goals {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.room-sage-goal {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: var(--room-border) solid var(--room-hairline);
+  border-radius: var(--room-r-btn);
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  color: var(--room-ink);
+  cursor: pointer;
+  transition: border-color 0.2s var(--room-ease), background 0.2s var(--room-ease);
+}
+
+.room-sage-goal:hover {
+  border-color: var(--room-ink-faint);
+}
+
+.room-sage-goal.is-on {
+  border-color: var(--room-ink);
+  background: rgba(31, 38, 34, 0.04);
+}
+
+.room-sage-check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: var(--room-border) solid var(--room-ink-faint);
+  border-radius: 6px 5px 7px 5px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.room-sage-goal.is-on .room-sage-check {
+  border-color: var(--room-ink);
+  background: var(--room-ink);
+  color: var(--room-paper);
+}
+
+.room-sage-goal-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.room-sage-goal-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.room-sage-goal-hint {
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--room-ink-soft);
+}
+
+.room-sage-instructions {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: var(--room-r-btn);
+  background: rgba(31, 38, 34, 0.035);
+}
+
+.room-sage-instructions .room-days {
+  margin-top: 0;
+}
+
+.room-sage-field {
+  display: grid;
+  gap: 6px;
+}
+
+.room-sage-field-label {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--room-ink);
+}
+
+.room-sage-field .room-field {
+  font-size: 14.5px;
+}
+
+.room-sage-field-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--room-ink-faint);
+}
+
+@media (max-width: 1100px) {
+  .room-sage {
+    width: auto;
+  }
 }

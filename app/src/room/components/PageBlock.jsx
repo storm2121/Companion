@@ -15,6 +15,7 @@ import {
 import { SHORTCUT_HINTS } from '../shortcutPatterns';
 import { RoomBlockShortcuts, setShortcutHandlers } from './blockShortcuts';
 import MathBlock from './MathBlock';
+import PageImage from './PageImage';
 import { clearPendingFocus, focusWhenMounted, isPendingFocus } from '../focusQueue';
 import { pasteProps } from '../pasteClean';
 
@@ -179,25 +180,7 @@ const BlockBody = ({ block, accent, onChange, onFocus, inColumn = false }) => {
     );
   }
 
-  if (block.type === BLOCK_IMAGE) {
-    return (
-      <div className="room-image">
-        {block.value ? (
-          <img src={block.value} alt={block.alt || ''} loading="lazy" decoding="async" />
-        ) : (
-          <div className="room-scene-inner">Paste an image address below.</div>
-        )}
-        <input
-          className="room-field"
-          value={block.value || ''}
-          onChange={(e) => patch({ value: e.target.value })}
-          onFocus={() => onFocus?.(null)}
-          placeholder="Image address"
-          aria-label="Image address"
-        />
-      </div>
-    );
-  }
+  if (block.type === BLOCK_IMAGE) return <PageImage block={block} onChange={onChange} onFocus={onFocus} />;
 
   return (
     <div className={block.type === BLOCK_CHECKLIST ? 'room-checklist' : undefined}>

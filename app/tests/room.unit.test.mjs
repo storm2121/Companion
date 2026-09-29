@@ -95,6 +95,8 @@ import {
 import { shortcutFor, SHORTCUT_HINTS } from '../src/room/shortcutPatterns.js';
 import { Fragment, Schema, Slice } from '@tiptap/pm/model';
 import { cleanPastedText, clipboardFragment, isFromProseMirror, keptStyle, tidyPastedSlice } from '../src/room/pasteClean.js';
+import { imageSize, imageTilt, isUploadedImage } from '../src/room/pageImages.js';
+import { cleanTex, formulaRows } from '../src/room/mathText.js';
 import { fillSnippet, MATH_GROUPS } from '../src/room/mathSymbols.js';
 
 // ── The board (railLayout.js) ─────────────────────────────────────────────────
@@ -1427,3 +1429,62 @@ test('paste: Chrome on Windows wraps every copy in a page — only the fragment 
     ['text', 'hardBreak', 'text'],
   );
 });
+
+// ── Photos on the page, math text, and Sage's new placements ──────────────────
+
+test('page photos: a share of the page width and a small tilt, never past their limits', () => {
+  assert.equal(imageSize(undefined), 100); // nothing set: the full width
+  assert.equal(imageSize(60), 60);
+  assert.equal(imageSize(3), 25);
+  assert.equal(imageSize(180), 100);
+  assert.equal(imageTilt(undefined), 0);
+  assert.equal(imageTilt(-1.53), -1.5);
+  assert.equal(imageTilt(40), 6);
+  assert.equal(imageTilt(-40), -6);
+  assert.equal(isUploadedImage('https://firebasestorage.googleapis.com/v0/b/x/o/notes%2Fa.webp?alt=media'), true);
+  assert.equal(isUploadedImage('https://example.com/cat.png'), false); // a link from before uploads
+  assert.equal(isUploadedImage(''), false);
+});
+
+test('math: an environment written over several lines stays one formula; delimiters and broken escapes are fixed', () => {
+  assert.deepEqual(formulaRows('a = b\n\nc = d'), ['a = b', 'c = d']);
+  assert.deepEqual(formulaRows(String.raw`\begin{aligned}` + '\n' + String.raw`x &= 1 \\` + '\n' + String.raw`y &= 2` + '\n' + String.raw`\end{aligned}` + '\nz = 3'), [
+    String.raw`\begin{aligned}` + '\n' + String.raw`x &= 1 \\` + '\n' + String.raw`y &= 2` + '\n' + String.raw`\end{aligned}`,
+    'z = 3',
+  ]);
+  assert.deepEqual(formulaRows(String.raw`\begin{cases} x`), [String.raw`\begin{cases} x`]); // never dropped
+  // \frac, \theta, \beta, \rho parsed as JSON's \f, \t, \b, \r — put back.
+  assert.equal(cleanTex('\frac{1}{2} + \theta + \beta + \rho'), String.raw`\frac{1}{2} + \theta + \beta + \rho`);
+  // \nabla and \neq parsed as a newline — put back; a real newline between formulas stays.
+  assert.equal(cleanTex('\nabla f \neq 0\nx = 1'), String.raw`\nabla f \neq 0` + '\nx = 1');
+  // Delimiters come off.
+  assert.equal(cleanTex('$$x^2$$\n' + String.raw`\[ y \]` + '\n' + String.raw`\(z\)` + '\n$w$'), 'x^2\ny\nz\nw');
+});
+
+test('sage page back: "end" lands at the very end, in order, and an added block can open a section', () => {
+  const applied = applySageResult(SAGE_TWO, {
+    format: 'page',
+    mode: 'reflow',
+    changed: [],
+    added: [
+      { after: 'end', type: 'callout', label: 'Test yourself', value: '<ol><li>Why?</li></ol>' },
+      { after: 'end', type: 'callout', label: 'Answers', value: '<ol><li>Because.</li></ol>' },
+      { after: 't1', type: 'text', value: '<h2>A new topic</h2><p>Heaps.</p>', section: true },
+      { after: 't1', type: 'math', value: '\frac{a}{b}' },
+    ],
+  });
+  const page = applied.blocks.filter((block) => !block.rail);
+  assert.deepEqual(page.slice(-2).map((block) => block.label), ['Test yourself', 'Answers']);
+  const topic = page.find((block) => block.type === 'text' && /A new topic/.test(block.value));
+  assert.equal(topic.section, true);
+  assert.equal(page.find((block) => block.type === 'math').value, String.raw`\frac{a}{b}`);
+  // Scoped to a section, "end" is that section's end — not the page's.
+  const scoped = applySageResult(
+    SAGE_TWO,
+    { format: 'page', mode: 'reflow', changed: [], added: [{ after: 'end', type: 'text', value: '<p>last in §1</p>' }] },
+    { sectionId: 't1' },
+  );
+  const ids = scoped.blocks.map((block) => (block.value === '<p>last in §1</p>' ? 'NEW' : block.id));
+  assert.deepEqual(ids, ['t1', 'c1', 'NEW', 's2', 's3', 'r1']);
+});
+

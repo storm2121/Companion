@@ -64,7 +64,9 @@ const RoomHome = () => {
             <PencilRule opacity={0.5} />
           </div>
 
-          <div className="room-course-grid">
+          {/* Past two rows the courses scroll inside their own shelf rather than stretching
+              the desk: the day's status and "Where you left off" stay within reach. */}
+          <div className={`room-course-grid${courses.length > 6 ? ' is-shelf' : ''}`}>
             {courses.map((course, i) => {
               const meta = courseMeta(course);
               return (

@@ -192,6 +192,9 @@ const FIELDS = [
   'y',
   'w',
   'ar',
+  // A photo on the page: its width as a share of the page (pageImages.js) and its tilt.
+  'size',
+  'tilt',
   'colA',
   'colB',
 ];

@@ -454,14 +454,16 @@ const sanitizeSageLayoutResult = (result, originalBlocks) => {
   return { mode: 'layout', blocks };
 };
 
-const callDeepSeek = async (system, user, maxTokens) => {
+// `parse` reads the answer text; the room's page path passes its own, which repairs LaTeX
+// backslashes (lib/pageSage.js). Classic's calls leave it out and keep JSON.parse.
+const callDeepSeek = async (system, user, maxTokens, parse) => {
   // Without a signal, a provider that accepts the connection and then stalls holds this
   // instance until Cloud Run kills it at timeoutSeconds -- five minutes of billed compute
   // and a five-minute spinner, with no log saying why.
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
   try {
-    return await requestDeepSeek(controller.signal, system, user, maxTokens);
+    return await requestDeepSeek(controller.signal, system, user, maxTokens, parse);
   } catch (err) {
     if (err instanceof HttpsError) throw err;
     // `providerFault` marks the failures that are ours, not the caller's: the handler
@@ -484,7 +486,7 @@ const callDeepSeek = async (system, user, maxTokens) => {
   }
 };
 
-const requestDeepSeek = async (signal, system, user, maxTokens) => {
+const requestDeepSeek = async (signal, system, user, maxTokens, parse = JSON.parse) => {
   const res = await fetch(DEEPSEEK_URL, {
     signal,
     method: 'POST',
@@ -551,11 +553,11 @@ const requestDeepSeek = async (signal, system, user, maxTokens) => {
     });
   }
   try {
-    return JSON.parse(content);
+    return parse(content);
   } catch {
     const stripped = content.replace(/^```(json)?/m, '').replace(/```\s*$/m, '').trim();
     try {
-      return JSON.parse(stripped);
+      return parse(stripped);
     } catch {
       throw unusable('Sage returned an unusable result — please try again.');
     }
@@ -618,7 +620,7 @@ const runPageSage = async (uid, data) => {
       'This note is too long for Sage in one pass — run it on one section at a time.',
     );
   }
-  const mode = pageSage.pageMode(choices.goals, choices.extras);
+  const mode = pageSage.pageMode(choices.goals, choices.extras, choices.comment);
   const weight = sageRunWeight(pageSage.weightBlocks(blocks), mode);
   const charge = await enforceDailyCap(uid, { weight, allowOverdraft: true });
   await enforceGlobalSageCap();
@@ -629,6 +631,7 @@ const runPageSage = async (uid, data) => {
       pageSage.buildPagePrompt(mode, choices),
       payload,
       mode === 'layout' ? MAX_TOKENS_LAYOUT : MAX_TOKENS_PATCH,
+      pageSage.parseAnswer,
     );
     result = JSON.stringify(answer).length > MAX_RESULT_CHARS ? null : pageSage.sanitizePageResult(answer, blocks, mode);
     if (!result) throw unusableResult();

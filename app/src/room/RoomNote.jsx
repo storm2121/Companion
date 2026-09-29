@@ -24,6 +24,7 @@ import PageBlock from './components/PageBlock';
 import FormatStrip from './components/FormatStrip';
 import MathStrip from './components/MathStrip';
 import { MathToolContext } from './mathContext';
+import { PageImageContext } from './pageImageContext';
 import { focusWhenMounted } from './focusQueue';
 import { SHORTCUT_HINTS } from './shortcutPatterns';
 import PinRail from './components/PinRail';
@@ -653,6 +654,25 @@ const RoomNote = ({ courseId, noteId }) => {
     [firebaseUser, noteId, scheduleSave],
   );
 
+  // A photo placed ON the page (components/PageImage.jsx): the board's scale, check and
+  // upload, handed back to the block rather than pinned. Same storage path as the board's,
+  // so the delete cascade and the orphan clean-up already cover it.
+  const uploadPageImage = useCallback(
+    async (file) => {
+      if (!firebaseUser) throw new Error('Not signed in');
+      const ready = await prepareImage(file);
+      validateImageFile(ready.file, { maxBytes: NOTE_IMAGE_MAX_BYTES, label: 'Image' });
+      const ref = storageRef(
+        storage,
+        `notes/${firebaseUser.uid}/${noteId}/${createImageObjectName(ready.file, 'page')}`,
+      );
+      await uploadBytes(ref, ready.file, { contentType: ready.file.type, cacheControl: IMMUTABLE_CACHE });
+      return { url: await getDownloadURL(ref), ar: aspectOf(ready.width, ready.height) };
+    },
+    [firebaseUser, noteId],
+  );
+  const imageTools = useMemo(() => ({ upload: uploadPageImage, online }), [uploadPageImage, online]);
+
   /* ── Everything else ──────────────────────────────────────────────────── */
 
   // Only when it changed: this ran on every blur, so clicking into the title and out
@@ -894,6 +914,7 @@ const RoomNote = ({ courseId, noteId }) => {
 
   return (
     <MathToolContext.Provider value={setMathTool}>
+    <PageImageContext.Provider value={imageTools}>
     <RoomShell
       back={course?.name || 'Course'}
       onBack={() => navigate(`/room/course/${courseId}`)}
@@ -1175,6 +1196,7 @@ const RoomNote = ({ courseId, noteId }) => {
         </div>
       </Overlay>
     </RoomShell>
+    </PageImageContext.Provider>
     </MathToolContext.Provider>
   );
 };

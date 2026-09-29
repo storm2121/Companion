@@ -420,6 +420,9 @@ test('Sage page path: the mode follows the goals the same way classic does', () 
   assert.equal(pageSage.pageMode(['polish'], ['tldr']), 'reflow');
   assert.equal(pageSage.pageMode(['examples'], []), 'reflow');
   assert.equal(pageSage.pageMode(['simplify', 'restructure'], ['tldr']), 'layout');
+  // A note to Sage may ask for something new, so a quick edit may add too.
+  assert.equal(pageSage.pageMode(['polish'], [], 'add a section on heaps'), 'reflow');
+  assert.equal(pageSage.pageMode(['polish'], [], '   '), 'patch');
   // The same weights as classic: a rebuild of the same note costs double.
   const weight = (mode) =>
     serverUsage.sageRunWeight(pageSage.weightBlocks([{ id: 'a', type: 'text', value: 'x'.repeat(13000) }]), mode);
@@ -529,3 +532,37 @@ test('Sage page path: an answer can only touch what was sent, in shapes the room
   // A rebuild with no words in it is refused rather than applied.
   assert.equal(pageSage.sanitizePageResult({ blocks: [{ id: 'p', type: 'image' }] }, sent, 'layout'), null);
 });
+
+test('Sage page path: LaTeX with single backslashes still reads, and comes back as LaTeX', () => {
+  // \alpha is not a JSON escape: this answer would not parse at all without the repair.
+  const answer = pageSage.parseAnswer(
+    String.raw`{"added":[{"after":"end","type":"math","value":"\alpha + \frac{1}{2}","section":true}],"note":"ok"}`,
+  );
+  const sent = pageSage.readPageBlocks([{ id: 'a', type: 'text', value: '<p>x</p>' }]);
+  const clean = pageSage.sanitizePageResult({ changed: [], ...answer }, sent, 'reflow');
+  assert.deepEqual(clean.added[0], {
+    after: 'end',
+    type: 'math',
+    value: String.raw`\alpha + \frac{1}{2}`,
+    section: true,
+  });
+  // Properly escaped JSON is read exactly as written.
+  assert.equal(pageSage.parseAnswer('{"v":"\\\\frac{1}{2}"}').v, String.raw`\frac{1}{2}`);
+  // Fenced answers are read too; hopeless ones still throw (and are refunded upstream).
+  assert.equal(pageSage.parseAnswer('```json\n{"a":1}\n```').a, 1);
+  assert.throws(() => pageSage.parseAnswer('not json'));
+  // An "after" that is neither a sent id nor "end" means the top.
+  const top = pageSage.sanitizePageResult({ changed: [], added: [{ after: 'zz', type: 'text', value: '<p>t</p>' }] }, sent, 'reflow');
+  assert.equal(top.added[0].after, '');
+  assert.equal(top.added[0].section, false);
+});
+
+test('Sage page path: the prompt teaches KaTeX in JSON, the quiz and "end"', () => {
+  const prompt = pageSage.buildPagePrompt('reflow', pageSage.readPageChoices({ goals: ['examples'], extras: ['questions'] }));
+  assert.ok(prompt.includes(String.raw`"\\frac{1}{2}" is right`));
+  assert.ok(prompt.includes('Never put LaTeX inside HTML'));
+  assert.ok(prompt.includes('"Answers"'));
+  assert.ok(prompt.includes('"end"'));
+  assert.ok(prompt.includes('OPENS A NEW SECTION'));
+});
+
