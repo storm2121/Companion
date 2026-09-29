@@ -8,45 +8,45 @@ import {
   saveNoteVersion,
   updateNote,
 } from '../../services/library';
-import {
-  callSageImprove,
-  describeSageRun,
-  MAX_SAGE_ADDONS,
-  readSageBalance,
-  SAGE_ADDONS,
-  SAGE_PHRASES,
-  sageDayKey,
-  sageRunWeight,
-} from '../../services/sage';
+import { describeSageRun, readSageBalance, sageDayKey, sageRunWeight } from '../../services/sage';
+import { cleanTags } from '../noteTags';
 import { fromStored, toStored } from '../pageBlocks';
-import { applySageResult, hasSageText, SAGE_MAX_BLOCKS, sageSummary, toSageBlocks } from '../sageBridge';
+import {
+  applySageResult,
+  hasSageText,
+  SAGE_MAX_BLOCKS,
+  sageScope,
+  sageSummary,
+  toPageBlocks,
+  toSageBlocks,
+} from '../sageBridge';
+import { callRoomSage } from '../sageCall';
+import { SAGE_EXTRAS, SAGE_GOALS, SAGE_PHRASES, SAGE_VOICES, CLASSIC_ADDONS } from '../sageChoices';
 import Paper from './Paper';
 import { Chip, Pill, Segmented } from './primitives';
 
-// Sage in the room (step 7; dualmode.md §5). A paper panel over the right rail — never over
-// the sheet you are writing on. Goals are chips, the plan is one line, the allowance is a
-// mono stamp, Run is the amber pill; add-ons, the topic and a free request are standing
-// instructions on the You page. The same callable as classic, reached through the room's
-// translation layer (sageBridge.js), so nothing on the server changed.
+// Sage in the room (dualmode.md §5). A paper panel over the right rail — never over the
+// sheet you are writing on. What to do is a row of chips, what else a second row, the plan
+// is one line, the allowance a mono stamp, Run the amber pill. The voice, the topic and a
+// standing request live on the You page.
 //
-// Versions work exactly as classic's: the note as it was before Sage's first run is kept in
-// a named slot beside the content (`content/original`), and "Before / After" swaps them.
+// It talks back. The page path (functions/lib/pageSage.js) answers in the room's own block
+// types and adds a short note from Sage — what it did and one thing worth knowing about
+// this note — plus a few tags it would file the note under, one click each to add.
+//
+// "This section" sends just the section you are in: faster, cheaper, and the rest of the
+// page is left alone.
+//
+// Versions work as classic's do: the note as it was before Sage's first run is kept in a
+// named slot beside the content (`content/original`), and "Before / After" swaps them.
 //
 // The panel stays mounted while the note is open (it only HIDES when closed), so a run you
 // start carries on and lands even if you close the panel to keep writing.
 
-const GOALS = [
-  { id: 'polish', label: 'Fix mistakes', hint: 'Typos, grammar, punctuation — your wording stays' },
-  { id: 'simplify', label: 'Simplify wording', hint: 'Long sentences, said plainly' },
-  { id: 'examples', label: 'Add examples', hint: 'A concrete example after each idea' },
-  { id: 'restructure', label: 'Rebuild the page', hint: 'Reorders the page and gives it headings' },
-];
-
-// The plan, in the room's words (the server decides the same mode from the same selection).
 const PLAN = {
-  patch: 'Quick edit. Only the blocks that need it change.',
-  reflow: 'Edit and add. Rewrites what it touches and adds blocks where they belong.',
-  layout: 'Rebuild. Reorders the whole page. Photos on the board stay where they are.',
+  patch: 'Quick edit — only the blocks that need it change.',
+  reflow: 'Edit and add — new blocks land right where they belong.',
+  layout: 'Rebuild — the whole thing, reorganised. Board photos stay put.',
 };
 
 const CANVAS_HEIGHT = 720;
@@ -60,6 +60,8 @@ const readable = (err) => {
   return message;
 };
 
+const shorten = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
 const SagePanel = ({
   open,
   onClose,
@@ -72,25 +74,33 @@ const SagePanel = ({
   versions,
   onVersions,
   online,
+  sections = [],
+  focusSection = '',
+  tags = [],
+  onAddTag,
 }) => {
   const navigate = useNavigate();
-  const { firebaseUser, profile } = useAuth();
+  const { firebaseUser, profile, updateRoomPrefs } = useAuth();
   const uid = firebaseUser?.uid;
 
+  // The standing instructions from the You page, and the extras last used.
+  const standing = profile?.roomPrefs?.sage || {};
+  const voice = SAGE_VOICES.some((item) => item.id === standing.voice) ? standing.voice : 'buddy';
+  const topic = typeof standing.topic === 'string' ? standing.topic : '';
+  const comment = typeof standing.comment === 'string' ? standing.comment : '';
+
   const [goals, setGoals] = useState(['polish']);
+  const [extras, setExtras] = useState(() =>
+    (Array.isArray(standing.addons) ? standing.addons : []).filter((id) => SAGE_EXTRAS.some((extra) => extra.id === id)).slice(0, 3),
+  );
+  const [scope, setScope] = useState('note');
+  // The extras fold into one line until asked for: eight chips would crowd the panel.
+  const [extrasOpen, setExtrasOpen] = useState(false);
   const [busy, setBusy] = useState('');
   const [phrase, setPhrase] = useState(0);
   const [message, setMessage] = useState(null);
   const [usage, setUsage] = useState(null);
   const [confirmKeep, setConfirmKeep] = useState(false);
-
-  // The standing instructions from the You page.
-  const standing = profile?.roomPrefs?.sage || {};
-  const addons = (Array.isArray(standing.addons) ? standing.addons : [])
-    .filter((id) => SAGE_ADDONS.some((addon) => addon.id === id))
-    .slice(0, MAX_SAGE_ADDONS);
-  const topic = typeof standing.topic === 'string' ? standing.topic : '';
-  const comment = typeof standing.comment === 'string' ? standing.comment : '';
 
   useEffect(() => {
     if (!uid) return undefined;
@@ -100,55 +110,89 @@ const SagePanel = ({
   // The status line while Sage works: the goal's own phrases, one every couple of seconds.
   useEffect(() => {
     if (!busy || busy === 'switch') return undefined;
-    const timer = setInterval(() => setPhrase((n) => n + 1), 2200);
+    const timer = setInterval(() => setPhrase((n) => n + 1), 2000);
     return () => clearInterval(timer);
   }, [busy]);
 
-  const mode = describeSageRun(goals, addons).mode;
-  const outgoing = useMemo(() => toSageBlocks(blocks), [blocks]);
-  const cost = sageRunWeight(outgoing, mode);
+  // "This section" is offered once there is more than one; it follows the caret.
+  const section = sections.length > 1 ? sections.find((item) => item.id === focusSection) || sections[0] : null;
+  const sectionId = scope === 'section' && section ? section.id : '';
+
+  const mode = describeSageRun(goals, extras).mode;
+  const outgoing = useMemo(() => toPageBlocks(sageScope(blocks, sectionId)), [blocks, sectionId]);
+  const cost = sageRunWeight(
+    outgoing.map((block) => ({ type: block.type === 'image' ? 'image' : 'text', value: block.value, title: block.label })),
+    mode,
+  );
   const balance = readSageBalance(usage);
   const phrases = SAGE_PHRASES[busy] || SAGE_PHRASES.default;
   // A version switch also holds the panel busy, but it is not Sage thinking.
   const thinking = Boolean(busy) && busy !== 'switch';
 
-  const toggleGoal = (id) =>
-    setGoals((prev) => (prev.includes(id) ? prev.filter((goal) => goal !== id) : [...prev, id]));
+  const toggle = (setter, limit) => (id) =>
+    setter((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id].slice(-limit)));
+  const toggleGoal = toggle(setGoals, 4);
+  const toggleExtra = toggle(setExtras, 3);
 
   const say = (text, error = false) => setMessage({ text, error });
 
   const run = async () => {
     if (busy || !uid) return;
     if (!online) return say('Sage needs a connection.', true);
-    if (!goals.length && !addons.length) return say('Pick at least one thing for Sage to do.', true);
+    if (!goals.length && !extras.length) return say('Pick at least one thing for Sage to do.', true);
     const before = getBlocks();
-    const sending = toSageBlocks(before);
-    if (!hasSageText(sending)) return say('Write a little first — Sage needs something to work with.', true);
-    if (sending.length > SAGE_MAX_BLOCKS) {
-      return say('This note has too many blocks for one pass — split it into two notes.', true);
+    const scoped = sageScope(before, sectionId);
+    const page = toPageBlocks(scoped);
+    const classic = toSageBlocks(scoped);
+    if (!hasSageText(classic)) {
+      return say(sectionId ? 'This section is nearly empty — nothing for Sage yet.' : 'Write a little first — Sage needs something to work with.', true);
+    }
+    if (page.length > SAGE_MAX_BLOCKS) {
+      return say('Too many blocks for one pass — try it one section at a time.', true);
     }
     // Only when the counter we can see says so: with no counter, the server decides.
     if (usage && balance.left <= 0) return say('No Sage runs left today. More at 01:00.', true);
 
+    // The extras picked here are remembered for next time.
+    const saved = Array.isArray(standing.addons) ? standing.addons : [];
+    if (extras.join() !== saved.join()) {
+      updateRoomPrefs?.({ sage: { ...standing, addons: extras } })?.catch?.((err) =>
+        console.error('Could not remember the extras', err),
+      );
+    }
+
     setMessage(null);
     setPhrase(0);
-    setBusy(goals[0] || 'default');
+    setBusy(goals.includes('restructure') ? 'restructure' : goals[0] || 'default');
     try {
-      const result = await callSageImprove({
-        styles: goals,
+      const result = await callRoomSage({
+        format: 'page',
+        goals,
+        extras,
+        voice,
+        page,
+        section: sectionId ? section.title : '',
+        tags,
         noteTitle,
-        blocks: sending,
-        canvasHeight: CANVAS_HEIGHT,
-        addons,
         topic,
         comment,
+        // Classic's fields, for a server that predates the page path (see sageCall.js).
+        styles: goals,
+        styleId: goals[0] || 'polish',
+        addons: extras.filter((id) => CLASSIC_ADDONS.includes(id)),
+        blocks: classic,
+        canvasHeight: CANVAS_HEIGHT,
       });
       if (result?.usage) setUsage({ date: sageDayKey(), count: result.usage.count, cap: result.usage.cap });
       // Applied to the page as it is NOW, so what you typed while Sage worked survives.
-      const applied = applySageResult(getBlocks(), result, { sent: new Set(sending.map((block) => block.id)) });
+      const applied = applySageResult(getBlocks(), result, {
+        sent: new Set(page.map((block) => block.id)),
+        sectionId,
+      });
       if (!applied) throw new Error('Sage returned an unusable result — please try again.');
+      const suggested = cleanTags(applied.tags).filter((tag) => !tags.includes(tag));
       if (!applied.changed && !applied.added) {
-        say('Sage read it through and found nothing worth changing.');
+        setMessage({ text: applied.note || 'Sage read it through and found nothing worth changing.', says: Boolean(applied.note), tags: suggested });
         return;
       }
       // The note as it was is banked once, before the first run that changes anything.
@@ -160,7 +204,12 @@ const SagePanel = ({
       updateNote(uid, courseId, noteId, { sageHasVersions: true, sageView: 'improved' }).catch((err) =>
         console.error('Could not mark the Sage version', err),
       );
-      say(sageSummary(applied));
+      setMessage({
+        text: applied.note || sageSummary(applied),
+        says: Boolean(applied.note),
+        stamp: applied.note ? sageSummary(applied) : '',
+        tags: suggested,
+      });
     } catch (err) {
       console.error('Sage failed', err);
       say(readable(err), true);
@@ -216,16 +265,23 @@ const SagePanel = ({
     }
   };
 
+  const takeTag = (tag) => {
+    onAddTag?.(tag);
+    setMessage((prev) => (prev ? { ...prev, tags: (prev.tags || []).filter((item) => item !== tag) } : prev));
+  };
+
   if (!open) return null;
 
-  const addonLabels = addons.map((id) => SAGE_ADDONS.find((addon) => addon.id === id)?.label).filter(Boolean);
   const standingLine = [
-    addonLabels.length ? addonLabels.join(', ') : '',
-    topic ? `topic: ${topic}` : '',
-    comment ? `“${comment.length > 60 ? `${comment.slice(0, 60)}…` : comment}”` : '',
+    SAGE_VOICES.find((item) => item.id === voice)?.line || '',
+    topic ? `about ${topic}` : '',
+    comment ? `“${shorten(comment, 50)}”` : '',
   ]
     .filter(Boolean)
     .join(' · ');
+  const extrasLine = extras.length
+    ? extras.map((id) => SAGE_EXTRAS.find((extra) => extra.id === id)?.label).filter(Boolean).join(', ')
+    : 'nothing extra';
 
   const costLine =
     balance.left <= 0
@@ -240,7 +296,7 @@ const SagePanel = ({
           ×
         </button>
       </div>
-      <p className="room-setting-copy">Improves the writing. Whatever it changes, you can put back.</p>
+      <p className="room-setting-copy">Your note, but better to study from. Anything it changes, you can put back.</p>
 
       {versions.has && (
         <div className="room-sage-versions">
@@ -258,29 +314,64 @@ const SagePanel = ({
         </div>
       )}
 
+      {section && (
+        <div className="room-sage-scope">
+          <Segmented
+            options={[
+              { id: 'note', label: 'Whole note' },
+              { id: 'section', label: `§${section.index} ${shorten(section.title, 22)}` },
+            ]}
+            value={scope}
+            onChange={setScope}
+          />
+        </div>
+      )}
+
       <p className="room-form-label">What should it do</p>
       <div className="room-days">
-        {GOALS.map((goal) => (
-          <Chip
-            key={goal.id}
-            selected={goals.includes(goal.id)}
-            onClick={() => toggleGoal(goal.id)}
-            title={goal.hint}
-          >
+        {SAGE_GOALS.map((goal) => (
+          <Chip key={goal.id} selected={goals.includes(goal.id)} onClick={() => toggleGoal(goal.id)} title={goal.hint}>
             {goal.label}
           </Chip>
         ))}
       </div>
+
+      <button
+        type="button"
+        className="room-sage-more"
+        onClick={() => setExtrasOpen((shown) => !shown)}
+        aria-expanded={extrasOpen}
+      >
+        <span className="room-form-label">And also</span>
+        <span className="room-sage-more-list">{extrasLine}</span>
+        <span className="room-sage-more-mark" aria-hidden="true">
+          {extrasOpen ? '−' : '+'}
+        </span>
+      </button>
+      {extrasOpen && (
+        <div className="room-days">
+          {SAGE_EXTRAS.map((extra) => (
+            <Chip
+              key={extra.id}
+              selected={extras.includes(extra.id)}
+              onClick={() => toggleExtra(extra.id)}
+              title={extra.hint}
+            >
+              {extra.label}
+            </Chip>
+          ))}
+        </div>
+      )}
       <p className="room-setting-copy room-sage-plan">{PLAN[mode]}</p>
 
-      <p className="room-setting-copy">
-        {standingLine ? `Also: ${standingLine}. ` : 'No standing instructions. '}
+      <p className="room-setting-copy room-sage-standing">
+        {standingLine} ·{' '}
         <button
           type="button"
           className="room-sage-link"
           onClick={() => navigate('/room/you', { state: { open: 'sage' } })}
         >
-          {standingLine ? 'Change' : 'Add some'}
+          Change
         </button>
       </p>
 
@@ -288,7 +379,7 @@ const SagePanel = ({
         <Pill
           variant="primary"
           onClick={run}
-          disabled={Boolean(busy) || !online || (!goals.length && !addons.length)}
+          disabled={Boolean(busy) || !online || (!goals.length && !extras.length)}
         >
           {thinking ? phrases[phrase % phrases.length] : 'Run'}
         </Pill>
@@ -296,9 +387,20 @@ const SagePanel = ({
       </div>
 
       {message && (
-        <p className={`room-sage-note${message.error ? ' is-error' : ''}`} role="status">
-          {message.text}
-        </p>
+        <div className={`room-sage-note${message.error ? ' is-error' : ''}${message.says ? ' is-sage' : ''}`} role="status">
+          <p className="room-sage-says">{message.text}</p>
+          {message.stamp && <p className="room-stamp room-sage-stamp">{message.stamp}</p>}
+          {message.tags?.length > 0 && onAddTag && (
+            <div className="room-sage-tags">
+              <span className="room-stamp">File it under</span>
+              {message.tags.map((tag) => (
+                <button key={tag} type="button" className="room-tag-suggest" onClick={() => takeTag(tag)}>
+                  + #{tag}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </Paper>
   );

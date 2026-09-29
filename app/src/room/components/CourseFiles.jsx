@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/authState';
-import { getNote } from '../../services/library';
+import { getNoteAsOf } from '../../services/library';
 import { photosOf } from '../pageBlocks';
 import { noteTime } from '../roomData';
 import { Overlay } from './Overlay';
@@ -10,9 +10,9 @@ import { Overlay } from './Overlay';
 // this is every photo on the course's notes (board, page and columns), grouped by note,
 // newest note first. A photo opens the note it lives on.
 //
-// Reading: each note's content comes through the cache-first `getNote`, a few at a time,
-// and is kept for the rest of the visit stamped with when the note last changed — so
-// reopening Files reads only what changed since.
+// Reading: each note's content comes through `getNoteAsOf` — this device's copy unless the
+// note changed since, then the server's — a few at a time, and is kept for the rest of the
+// visit stamped with when the note last changed, so reopening Files reads only what changed.
 
 // noteId -> { stamp, photos }
 const seen = new Map();
@@ -43,7 +43,7 @@ const FilesBody = ({ course, notes, onClose }) => {
     });
     Promise.all(
       batch.map((note) =>
-        getNote(uid, courseId, note.id)
+        getNoteAsOf(uid, courseId, note.id, note.stamp)
           .then((full) => ({ note, photos: photosOf(full?.blocks || []) }))
           .catch(() => ({ note, photos: null })),
       ),

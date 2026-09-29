@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/authState';
 import { deleteCalendarEvent, setCalendarEvent } from '../services/library';
 import RoomShell from './RoomShell';
@@ -8,7 +8,9 @@ import { Chip, Dot, Pill } from './components/primitives';
 import { Overlay } from './components/Overlay';
 import {
   addDays,
+  breakOn,
   calendarSummary,
+  cleanBreaks,
   cleanTime,
   dayEntries,
   isYmd,
@@ -25,6 +27,7 @@ import {
 import { useRoomCourses } from './roomData';
 import { tiltFor, useMinuteClock } from './roomPrefs';
 import { offerUndo } from './roomUndo';
+import { usePageActions } from './roomCommands';
 
 // Calendar — design 6d. "A journal, not a grid."
 //
@@ -152,11 +155,81 @@ const EventForm = ({ draft, courses, uid, onClose }) => {
   );
 };
 
+/* ── A break ──────────────────────────────────────────────────────────────── */
+
+const shortDate = (key) => {
+  const date = parseYmd(key);
+  return `${date.getDate()} ${MONTH_NAMES[date.getMonth()].slice(0, 3)}`;
+};
+
+// "12–16 Oct" · "21 Oct" · "28 Dec – 3 Jan"
+const breakSpan = (entry) => {
+  if (entry.from === entry.until) return shortDate(entry.from);
+  const a = parseYmd(entry.from);
+  const b = parseYmd(entry.until);
+  return a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear()
+    ? `${a.getDate()}–${shortDate(entry.until)}`
+    : `${shortDate(entry.from)} – ${shortDate(entry.until)}`;
+};
+
+const BreakForm = ({ draft, onSave, onClose }) => {
+  const [name, setName] = useState(draft.name || '');
+  const [from, setFrom] = useState(draft.from || '');
+  const [until, setUntil] = useState(draft.until || '');
+
+  const save = (event) => {
+    event.preventDefault();
+    if (!isYmd(from)) return;
+    onSave({ id: draft.id, name: name.trim().slice(0, 60), from, until: isYmd(until) ? until : from });
+    onClose();
+  };
+
+  return (
+    <form onSubmit={save}>
+      <input
+        className="room-field"
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        placeholder="Fall break, the holidays…"
+        aria-label="What is it called"
+        maxLength={60}
+        autoFocus
+      />
+      <div className="room-form-pair">
+        <label className="room-form-field">
+          <span className="room-form-label">First day</span>
+          <input type="date" className="room-field" value={from} onChange={(event) => setFrom(event.target.value)} required />
+        </label>
+        <label className="room-form-field">
+          <span className="room-form-label">Last day</span>
+          <input
+            type="date"
+            className="room-field"
+            value={until}
+            min={from || undefined}
+            onChange={(event) => setUntil(event.target.value)}
+          />
+        </label>
+      </div>
+      <p className="room-setting-copy" style={{ marginTop: 16 }}>
+        No classes show on these days. What you added yourself still does.
+      </p>
+      <div className="room-seg" style={{ marginTop: 20 }}>
+        <Pill variant="primary" type="submit" disabled={!isYmd(from)}>
+          {draft.id ? 'Save' : 'Add it'}
+        </Pill>
+        <Pill onClick={onClose}>Cancel</Pill>
+      </div>
+    </form>
+  );
+};
+
 /* ── The page ─────────────────────────────────────────────────────────────── */
 
 const RoomCalendar = () => {
   const navigate = useNavigate();
-  const { firebaseUser, profile } = useAuth();
+  const location = useLocation();
+  const { firebaseUser, profile, updateRoomPrefs } = useAuth();
   const { courses } = useRoomCourses();
   const now = useMinuteClock();
   const todayKey = ymd(now);
@@ -165,13 +238,59 @@ const RoomCalendar = () => {
   const [mode, setMode] = useState('journal');
   // A day picked in the dot-month or the month view: always drawn as a strip, and scrolled to.
   const [jump, setJump] = useState({ key: '', seq: 0 });
-  const [draft, setDraft] = useState(null);
+  // ⌘K's "Add something to the calendar", run from another page, arrives with `state.add`.
+  const [draft, setDraft] = useState(() => (location.state?.add ? { date: todayKey } : null));
+  const [breakDraft, setBreakDraft] = useState(null);
+
+  // Read once, then dropped — Back, or a reload, must not open the form again.
+  useEffect(() => {
+    if (location.state?.add) navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [location.state, location.pathname, location.search, navigate]);
+
+  // What ⌘K offers here. "add-event" replaces the room-wide one, which would navigate here.
+  usePageActions(() => [
+    {
+      id: 'add-event',
+      label: 'Add something today',
+      hint: 'Calendar',
+      keywords: ['new', 'event', 'exam', 'quiz', 'deadline', 'reminder', 'due'],
+      run: () => setDraft({ date: todayKey }),
+    },
+    {
+      id: 'add-break',
+      label: 'Add a break',
+      hint: 'Calendar',
+      keywords: ['holiday', 'vacation', 'no', 'classes', 'off'],
+      run: () => setBreakDraft({}),
+    },
+    {
+      id: 'calendar-view',
+      label: mode === 'month' ? 'Show the journal' : 'Show the whole month',
+      keywords: ['view', 'grid', 'list', 'month', 'journal'],
+      run: () => setMode(mode === 'month' ? 'journal' : 'month'),
+    },
+  ]);
 
   const events = useMemo(
     () => Object.values(profile?.events || {}).filter((event) => event && isYmd(event.date)),
     [profile?.events],
   );
-  const entriesOf = useCallback((key) => dayEntries(key, { courses, events }), [courses, events]);
+  const breaks = useMemo(() => cleanBreaks(profile?.roomPrefs?.breaks), [profile?.roomPrefs?.breaks]);
+  const entriesOf = useCallback((key) => dayEntries(key, { courses, events, breaks }), [courses, events, breaks]);
+  const breakOf = useCallback((key) => breakOn(breaks, key), [breaks]);
+
+  // Breaks are a short list on roomPrefs. Not awaited: the change lands locally at once.
+  const writeBreaks = (next) =>
+    updateRoomPrefs({ breaks: next }).catch((err) => console.error('Could not save the breaks', err));
+  const saveBreak = (entry) => {
+    const id = entry.id || globalThis.crypto?.randomUUID?.() || `brk-${Date.now()}`;
+    writeBreaks([...breaks.filter((item) => item.id !== id), { ...entry, id }]);
+  };
+  const removeBreak = (entry) => {
+    const before = breaks;
+    writeBreaks(before.filter((item) => item.id !== entry.id));
+    offerUndo({ message: `${entry.name || 'Break'} removed`, undo: () => writeBreaks(before) });
+  };
 
   const { year, month } = view;
   const isThisMonth = year === now.getFullYear() && month === now.getMonth();
@@ -187,8 +306,8 @@ const RoomCalendar = () => {
   const to = isThisMonth && twoWeeks > monthEnd ? twoWeeks : monthEnd;
 
   const rows = useMemo(
-    () => journalRows(from, to, entriesOf, [todayKey, jump.key].filter(Boolean)),
-    [from, to, entriesOf, todayKey, jump.key],
+    () => journalRows(from, to, entriesOf, [todayKey, jump.key].filter(Boolean), breakOf),
+    [from, to, entriesOf, todayKey, jump.key, breakOf],
   );
 
   const summary = isThisMonth
@@ -317,6 +436,28 @@ const RoomCalendar = () => {
             </Pill>
           </div>
           <p className="room-page-note">Classes come from your courses. Times show only if you set them.</p>
+
+          <div className="room-breaks">
+            <p className="room-stamp">Breaks</p>
+            {breaks.map((entry) => (
+              <p key={entry.id} className="room-break">
+                <button type="button" className="room-break-name" onClick={() => setBreakDraft(entry)}>
+                  {entry.name || 'Break'} · {breakSpan(entry)}
+                </button>
+                <button
+                  type="button"
+                  className="room-break-x"
+                  onClick={() => removeBreak(entry)}
+                  aria-label={`Remove ${entry.name || 'this break'}`}
+                >
+                  ×
+                </button>
+              </p>
+            ))}
+            <button type="button" className="room-inline-action" onClick={() => setBreakDraft({})}>
+              + Add a break
+            </button>
+          </div>
         </div>
 
         {/* ── Right: the journal, or the wall calendar ── */}
@@ -333,7 +474,7 @@ const RoomCalendar = () => {
               if (row.type === 'quiet') {
                 return (
                   <p key={`q-${row.keys[0]}`} className="room-quiet">
-                    {quietLine(row.keys)}
+                    {quietLine(row.keys, row.breakName)}
                   </p>
                 );
               }
@@ -385,6 +526,7 @@ const RoomCalendar = () => {
                     onClick={() => jumpTo(key)}
                   >
                     <span className="room-month-num">{parseYmd(key).getDate()}</span>
+                    {breakOf(key) && <span className="room-month-break">{breakOf(key).name || 'Break'}</span>}
                     {entries.slice(0, MAX_IN_CELL).map((entry) => (
                       <span key={entry.id} className={`room-month-entry${entry.kind === 'event' ? ' is-tag' : ''}`}>
                         {entry.kind === 'class' && <Dot size={7} color={entry.color} />}
@@ -401,6 +543,14 @@ const RoomCalendar = () => {
           </Paper>
         )}
       </div>
+
+      <Overlay
+        open={Boolean(breakDraft)}
+        onClose={() => setBreakDraft(null)}
+        title={breakDraft?.id ? 'This break' : 'A break'}
+      >
+        {breakDraft && <BreakForm draft={breakDraft} onSave={saveBreak} onClose={() => setBreakDraft(null)} />}
+      </Overlay>
 
       <Overlay open={Boolean(draft)} onClose={() => setDraft(null)} title={draft?.event ? 'Change it' : 'Add something'}>
         {draft && (

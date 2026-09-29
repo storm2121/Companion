@@ -12,6 +12,19 @@ import {
   COLUMN_BLOCK_TYPES,
   createBlock,
 } from '../pageBlocks';
+import { SHORTCUT_HINTS } from '../shortcutPatterns';
+import { RoomBlockShortcuts, setShortcutHandlers } from './blockShortcuts';
+import MathBlock from './MathBlock';
+import { clearPendingFocus, focusWhenMounted, isPendingFocus } from '../focusQueue';
+import { pasteProps } from '../pasteClean';
+
+// Which room block a text-block shortcut turns into (shortcutPatterns.js).
+const SHORTCUT_TYPE = {
+  code: BLOCK_CODE,
+  math: BLOCK_MATH,
+  callout: BLOCK_CALLOUT,
+  columns: BLOCK_TWO_COLUMN,
+};
 
 // One block in the page. Rich types host a TipTap editor built from the SHARED schema
 // (`components/editor/extensions.js`) — contextweb calls that the single source of truth,
@@ -25,7 +38,7 @@ import {
 // contain code, a checklist or a callout — not just prose. Columns never nest another
 // two-column: that is the one type `COLUMN_BLOCK_TYPES` leaves out.
 
-const RichText = ({ value, onChange, onFocus, placeholder, className = '' }) => {
+const RichText = ({ value, onChange, onFocus, placeholder, className = '', shortcuts, autoFocus = false }) => {
   const aliveRef = useRef(true);
   // The HTML this editor currently shows. Typing updates it on the way OUT, so the value
   // that comes back in from the parent matches and is ignored; a value that differs came
@@ -33,9 +46,13 @@ const RichText = ({ value, onChange, onFocus, placeholder, className = '' }) => 
   // this the editor only ever read `value` once, at mount: Sage's rewrite reached the saved
   // note but not the screen, and the next keystroke wrote the old text back over it.
   const shownRef = useRef(value || '');
+  // A paste from outside the app arrives without its source's fonts, colours and empty
+  // lines (pasteClean.js). One set per editor: its hooks note where each paste came from.
+  const [paste] = useState(pasteProps);
   const editor = useEditor({
-    extensions: buildEditorExtensions(),
+    extensions: [...buildEditorExtensions(), RoomBlockShortcuts],
     content: value || '',
+    autofocus: autoFocus ? 'end' : false,
     onUpdate: ({ editor: instance }) => {
       if (!aliveRef.current) return;
       const html = instance.getHTML();
@@ -53,6 +70,7 @@ const RichText = ({ value, onChange, onFocus, placeholder, className = '' }) => 
         class: `room-prose ${className}`.trim(),
         'data-placeholder': placeholder || '',
       },
+      ...paste,
     },
   });
 
@@ -62,6 +80,11 @@ const RichText = ({ value, onChange, onFocus, placeholder, className = '' }) => 
       aliveRef.current = false;
     };
   }, []);
+
+  // The block's shortcut handlers, current as of this render, for the input rules to use.
+  useEffect(() => {
+    setShortcutHandlers(editor, shortcuts);
+  }, [editor, shortcuts]);
 
   useEffect(() => {
     const next = value || '';
@@ -76,8 +99,31 @@ const RichText = ({ value, onChange, onFocus, placeholder, className = '' }) => 
 
 // The body of any single block. Shared by top-level blocks and column children, which is
 // what lets a column hold the same things the page can.
-const BlockBody = ({ block, accent, onChange, onFocus }) => {
+const BlockBody = ({ block, accent, onChange, onFocus, inColumn = false }) => {
   const patch = (fields) => onChange?.({ ...block, ...fields });
+  // Read, not consumed, while rendering; cleared once this block has mounted.
+  const autoFocus = isPendingFocus(block.id);
+  useEffect(() => {
+    clearPendingFocus(block.id);
+  });
+
+  // Markdown-style shortcuts, for a plain text block only. A column cannot hold another
+  // two-column block, and a column child never opens a section.
+  const shortcuts = {
+    allow: (kind) =>
+      block.type === BLOCK_TEXT && !(inColumn && (kind === 'columns' || kind === 'section' || kind === 'divider')),
+    apply: (kind, match) => {
+      // § toggles; --- is a divider, so it only ever starts one.
+      if (kind === 'section' || kind === 'divider') {
+        onChange?.({ ...block, value: '', section: kind === 'divider' ? true : !block.section });
+        return;
+      }
+      const next = { ...createBlock(SHORTCUT_TYPE[kind]), id: block.id, section: Boolean(block.section) };
+      if (kind === 'code' && match?.[1]) next.lang = match[1].toLowerCase();
+      focusWhenMounted(kind === 'columns' ? next.colA[0].id : block.id);
+      onChange?.(next);
+    },
+  };
 
   if (block.type === BLOCK_CALLOUT) {
     return (
@@ -97,13 +143,18 @@ const BlockBody = ({ block, accent, onChange, onFocus }) => {
           onChange={(value) => patch({ value })}
           onFocus={onFocus}
           placeholder="What was said"
+          autoFocus={autoFocus}
         />
       </div>
     );
   }
 
-  if (block.type === BLOCK_CODE || block.type === BLOCK_MATH) {
-    const isCode = block.type === BLOCK_CODE;
+  if (block.type === BLOCK_MATH) {
+    return <MathBlock block={block} onChange={onChange} onFocus={onFocus} autoFocus={autoFocus} />;
+  }
+
+  if (block.type === BLOCK_CODE) {
+    const isCode = true;
     return (
       <div className="room-code">
         {isCode && (
@@ -122,6 +173,7 @@ const BlockBody = ({ block, accent, onChange, onFocus }) => {
           placeholder={isCode ? 'Paste or write code' : 'Write the expression'}
           rows={Math.max(3, (block.value || '').split('\n').length)}
           spellCheck={false}
+          autoFocus={autoFocus}
         />
       </div>
     );
@@ -154,6 +206,8 @@ const BlockBody = ({ block, accent, onChange, onFocus }) => {
         onChange={(value) => patch({ value })}
         onFocus={onFocus}
         placeholder="Write something"
+        shortcuts={block.type === BLOCK_TEXT ? shortcuts : undefined}
+        autoFocus={autoFocus}
       />
     </div>
   );
@@ -166,7 +220,9 @@ const Column = ({ items, accent, onChange, onFocus, label }) => {
     onChange(items.map((item) => (item.id === next.id ? next : item)));
 
   const addChild = (type) => {
-    onChange([...items, createBlock(type)]);
+    const child = createBlock(type);
+    focusWhenMounted(child.id);
+    onChange([...items, child]);
     setAdding(false);
   };
 
@@ -184,7 +240,7 @@ const Column = ({ items, accent, onChange, onFocus, label }) => {
           >
             ×
           </button>
-          <BlockBody block={child} accent={accent} onChange={patchChild} onFocus={onFocus} />
+          <BlockBody block={child} accent={accent} onChange={patchChild} onFocus={onFocus} inColumn />
         </div>
       ))}
 
@@ -198,6 +254,7 @@ const Column = ({ items, accent, onChange, onFocus, label }) => {
               onClick={() => addChild(type.id)}
             >
               {type.label}
+              {SHORTCUT_HINTS[type.id] && <span className="room-chip-hint">{SHORTCUT_HINTS[type.id]}</span>}
             </button>
           ))}
         </div>

@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineBoolean, defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const { applyCharge, sageRunWeight } = require('./lib/usage');
+const pageSage = require('./lib/pageSage');
 const { randomUUID } = require('node:crypto');
 
 admin.initializeApp();
@@ -598,6 +599,49 @@ const DELETE_CALLABLE_OPTIONS = {
   enforceAppCheck: ENFORCE_APP_CHECK,
 };
 
+// The room's page notes (lib/pageSage.js). The same allowance, caps, provider and refunds
+// as classic's run below — only the prompt and the answer's shape differ, and a failure to
+// use the answer is refunded like any other provider fault.
+const runPageSage = async (uid, data) => {
+  const choices = pageSage.readPageChoices(data);
+  if (!choices.goals.length && !choices.extras.length) {
+    throw new HttpsError('invalid-argument', 'Pick at least one thing for Sage to do.');
+  }
+  // `page` holds the room's own blocks; `blocks` in the same request is classic's translation
+  // of them, sent so a server without this path could still answer (see room/sageCall.js).
+  const blocks = pageSage.readPageBlocks(data.page);
+  if (!blocks) throw new HttpsError('invalid-argument', 'Sage received an invalid set of blocks.');
+  const payload = pageSage.pagePayload(choices, blocks);
+  if (payload.length > MAX_PAYLOAD_CHARS) {
+    throw new HttpsError(
+      'invalid-argument',
+      'This note is too long for Sage in one pass — run it on one section at a time.',
+    );
+  }
+  const mode = pageSage.pageMode(choices.goals, choices.extras);
+  const weight = sageRunWeight(pageSage.weightBlocks(blocks), mode);
+  const charge = await enforceDailyCap(uid, { weight, allowOverdraft: true });
+  await enforceGlobalSageCap();
+
+  let result;
+  try {
+    const answer = await callDeepSeek(
+      pageSage.buildPagePrompt(mode, choices),
+      payload,
+      mode === 'layout' ? MAX_TOKENS_LAYOUT : MAX_TOKENS_PATCH,
+    );
+    result = JSON.stringify(answer).length > MAX_RESULT_CHARS ? null : pageSage.sanitizePageResult(answer, blocks, mode);
+    if (!result) throw unusableResult();
+  } catch (err) {
+    if (err?.details?.providerFault) {
+      await refundDailyCap(uid, 'sageUsage', weight);
+      await refundDailyCap('_global');
+    }
+    throw err;
+  }
+  return { ...result, usage: { count: charge.count, cap: DAILY_CAP, weight, remaining: charge.remaining } };
+};
+
 exports.sageImprove = onCall(
   {
     region: 'europe-west1',
@@ -620,6 +664,8 @@ exports.sageImprove = onCall(
   },
   async (request) => {
     const uid = requireAuiUser(request);
+    // The room's page notes take their own path; everything below is classic's, unchanged.
+    if (request.data?.format === 'page') return runPageSage(uid, request.data);
     const { styleId, styles, noteTitle, blocks, addons, topic, comment } = request.data || {};
     // Goals are multi-select; legacy clients may still send a single styleId.
     const requested = Array.isArray(styles) ? styles : styleId ? [styleId] : [];

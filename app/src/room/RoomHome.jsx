@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/authState';
 import RoomShell from './RoomShell';
@@ -7,7 +7,7 @@ import CaptureScrap from './components/CaptureScrap';
 import CourseSheet from './components/CourseSheet';
 import SceneSlot from './components/SceneSlot';
 import { Dot, PencilRule } from './components/primitives';
-import { courseMeta } from './calendarDays';
+import { cleanBreaks, courseMeta } from './calendarDays';
 import { deskClock, deskStatus, noteStamp, timeOfDayWord, useRoomDesk } from './roomData';
 import { tiltFor, useMinuteClock } from './roomPrefs';
 
@@ -28,6 +28,7 @@ const RoomHome = () => {
   const now = useMinuteClock();
   const firstName = (profile?.displayName || '').trim().split(' ')[0] || 'there';
   const colorOf = (classId) => courses.find((c) => c.id === classId)?.color;
+  const breaks = useMemo(() => cleanBreaks(profile?.roomPrefs?.breaks), [profile?.roomPrefs?.breaks]);
 
   return (
     <RoomShell>
@@ -39,7 +40,7 @@ const RoomHome = () => {
             {timeOfDayWord(now)}, {firstName}.
           </h1>
           <p className="room-status room-rise" style={{ animationDelay: '0.14s' }}>
-            {deskStatus({ courses, recent, now })}
+            {deskStatus({ courses, recent, now, breaks })}
           </p>
 
           <SceneSlot stagger={3} />

@@ -7,6 +7,7 @@
 // The attributes must sit above body, exactly like the existing data-theme.
 
 import { useEffect, useMemo, useState } from 'react';
+import { rememberMood } from '../designModes';
 
 /* ── Mood ─────────────────────────────────────────────────────────────────────
    'clock' resolves against the hour; 'lamp' and 'rain' pin it. Two states of one
@@ -123,6 +124,8 @@ export const useRoomAtmosphere = (stored) => {
 
   useEffect(() => {
     setRoomAttributes(mood, prefs);
+    // So the next reload's first paint is this mood's ground (public/boot.js).
+    rememberMood(mood);
   }, [mood, prefs]);
 
   return { mood, prefs };

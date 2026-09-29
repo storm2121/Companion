@@ -136,7 +136,8 @@ export const sectionsOf = (blocks = []) => {
       const fromColumns = [...(block.colA || []), ...(block.colB || [])]
         .map((child) => firstLineOf(child.value))
         .find(Boolean);
-      const text = firstLineOf(block.value) || fromColumns || '';
+      // A section that opens with a formula is called that — not its LaTeX source.
+      const text = block.type === BLOCK_MATH ? 'Formula' : firstLineOf(block.value) || fromColumns || '';
       const title = text.split(/[.;:—]/)[0].slice(0, 44).trim();
       return { id: block.id, index: n, title: title || `Section ${n}` };
     });

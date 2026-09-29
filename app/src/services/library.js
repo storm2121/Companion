@@ -6,6 +6,7 @@ import {
   doc,
   getDoc,
   getDocFromCache,
+  getDocFromServer,
   getDocs,
   increment,
   onSnapshot,
@@ -321,6 +322,69 @@ export const getNote = async (uid, classId, noteId) => {
   }
 
   return normalizeMergedNote(meta, contentData || {});
+};
+
+/* ── The room's reads of one note ─────────────────────────────────────────────
+   `getNote` reads cache-first. Nothing listens to a note's CONTENT doc, though, so once a
+   device has a copy it never refreshes: a note edited on another device — or at another
+   address, since localhost and the deployed site each keep their own cache — kept opening
+   in its old version, and the first save wrote that old version's block order back over
+   the newer one. `getNote` itself is classic's and stays as it is.                    */
+
+const SERVER_WAIT_MS = 3500;
+const WAITED = Symbol('waited');
+
+// The server's copy, merged; null when the note is gone. Throws when there is no server.
+const readNoteFromServer = async (uid, classId, noteId) => {
+  const [noteSnap, contentSnap] = await Promise.all([
+    getDocFromServer(getNoteRef(uid, classId, noteId)),
+    getDocFromServer(getNoteContentRef(uid, classId, noteId)),
+  ]);
+  if (!noteSnap.exists()) return null;
+  // No content doc: an old canvas note, which getNote knows how to migrate.
+  if (!contentSnap.exists()) return getNote(uid, classId, noteId);
+  return normalizeMergedNote(noteSnap.data(), contentSnap.data());
+};
+
+// For an editor: the server's copy whenever it answers within a moment, this device's copy
+// when it does not (offline, or a slow connection) — so a note still opens at once with no
+// connection. `later`, when set, is the server's answer still on its way; the caller may
+// use it if nothing has been typed yet. Reading from the server also refreshes the cache.
+export const getNoteFresh = async (uid, classId, noteId, { waitMs = SERVER_WAIT_MS } = {}) => {
+  const cached = async () => ({ note: await getNote(uid, classId, noteId), fresh: false, later: null });
+  if (globalThis.navigator?.onLine === false) return cached();
+  const server = readNoteFromServer(uid, classId, noteId);
+  let timer;
+  const waited = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(WAITED), waitMs);
+  });
+  try {
+    const first = await Promise.race([server, waited]);
+    if (first !== WAITED) return { note: first, fresh: true, later: null };
+  } catch {
+    return cached();
+  } finally {
+    clearTimeout(timer);
+  }
+  return { ...(await cached()), later: server.catch(() => undefined) };
+};
+
+// For lists that know when a note's content last changed — its meta's `contentUpdatedAt`,
+// which the room's note listeners keep live: this device's copy when it is at least that
+// new, the server's when it is older. A server read only for a note that changed elsewhere.
+export const getNoteAsOf = async (uid, classId, noteId, stampMs = 0) => {
+  if (stampMs) {
+    const contentRef = getNoteContentRef(uid, classId, noteId);
+    try {
+      const cachedContent = await getDocFromCache(contentRef);
+      const at = cachedContent.exists() ? cachedContent.get('updatedAt')?.toMillis?.() || 0 : 0;
+      // 0 = a save from this device the server has not stamped yet: this copy is the newest.
+      if (at && at < stampMs) await getDocFromServer(contentRef);
+    } catch {
+      // Not on this device, or no connection: getNote reads what it can.
+    }
+  }
+  return getNote(uid, classId, noteId);
 };
 
 export const updateNote = async (uid, classId, noteId, payload) => {

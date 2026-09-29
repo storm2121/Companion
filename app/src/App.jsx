@@ -1,8 +1,8 @@
-import { Component, lazy, Suspense } from 'react';
+import { Component, lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './context/authState';
-import { DESIGN_ROOM, designFor } from './designModes';
+import { clearBoot, DESIGN_ROOM, designFor, rememberDesign } from './designModes';
 import ProtectedRoute from './components/ProtectedRoute';
 import ScreenLoader from './components/ui/ScreenLoader';
 import AuthHub from './pages/AuthHub';
@@ -102,13 +102,34 @@ class RoomLoadBoundary extends Component {
 const DesignLayout = () => {
   const { designMode } = useAuth();
   const { pathname } = useLocation();
-  return designFor(pathname, designMode) === DESIGN_ROOM ? (
+  const design = designFor(pathname, designMode);
+
+  // What this device should paint first next time (public/boot.js).
+  useEffect(() => {
+    rememberDesign(designMode);
+  }, [designMode]);
+
+  // Classic takes over here; the room clears the boot marks itself once its own ground is up.
+  useEffect(() => {
+    if (design !== DESIGN_ROOM) clearBoot();
+  }, [design]);
+
+  return design === DESIGN_ROOM ? (
     <RoomLoadBoundary>
       <RoomLayout />
     </RoomLoadBoundary>
   ) : (
     <Outlet />
   );
+};
+
+// Pages outside the signed-in layout (sign-in, setup) are classic's: a device that booted in
+// the room's colours hands them back their own.
+const ClassicPage = ({ children }) => {
+  useEffect(() => {
+    clearBoot();
+  }, []);
+  return children;
 };
 
 // A page both designs have. Which one this address shows follows the preference.
@@ -126,14 +147,16 @@ const App = () => {
         <Routes>
           {/* The sign-in form answers on both paths: "/" as it always has, and "/login"
               because that is where ProtectedRoute sends a signed-out visitor. */}
-          <Route path="/" element={<AuthHub />} />
-          <Route path="/login" element={<AuthHub />} />
-          <Route path="/auth/complete" element={<AuthComplete />} />
+          <Route path="/" element={<ClassicPage><AuthHub /></ClassicPage>} />
+          <Route path="/login" element={<ClassicPage><AuthHub /></ClassicPage>} />
+          <Route path="/auth/complete" element={<ClassicPage><AuthComplete /></ClassicPage>} />
           <Route
             path="/setup"
             element={
               <ProtectedRoute>
-                <ProfileSetup />
+                <ClassicPage>
+                  <ProfileSetup />
+                </ClassicPage>
               </ProtectedRoute>
             }
           />

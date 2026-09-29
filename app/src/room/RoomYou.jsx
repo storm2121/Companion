@@ -16,7 +16,9 @@ import Paper from './components/Paper';
 import { Pill, Segmented, Toggle } from './components/primitives';
 import { Overlay } from './components/Overlay';
 import SageInstructions from './components/SageInstructions';
-import { SAGE_ADDONS } from '../services/sage';
+import { downloadBytes, exportMarkdown } from './exportMarkdown';
+import { sayInRoom } from './roomUndo';
+import { SAGE_VOICES } from './sageChoices';
 import { IMMUTABLE_CACHE, prepareImage } from './imageScale';
 import { useRoomCourses } from './roomData';
 import { MOOD_OPTIONS, MOTION_CALM, MOTION_STILL, resolveRoomPrefs } from './roomPrefs';
@@ -45,14 +47,12 @@ const termLabel = (date = new Date()) => {
   return `${season} ${date.getFullYear()}`;
 };
 
-// "Go deeper, TL;DR on top · about second-year CS" — or nothing, when nothing is set.
+// "Talks like a coach · about second-year CS" — or nothing, when nothing is set.
 const sageLine = (sage) => {
   if (!sage || typeof sage !== 'object') return '';
-  const addons = (Array.isArray(sage.addons) ? sage.addons : [])
-    .map((id) => SAGE_ADDONS.find((addon) => addon.id === id)?.label)
-    .filter(Boolean);
+  const voice = SAGE_VOICES.find((item) => item.id === sage.voice);
   return [
-    addons.join(', '),
+    voice ? `Talks like ${voice.id === 'quiet' ? 'it has somewhere to be' : `a ${voice.label.toLowerCase()}`}` : '',
     sage.topic ? `about ${sage.topic}` : '',
     sage.comment ? 'plus a note to Sage' : '',
   ]
@@ -81,6 +81,8 @@ const RoomYou = () => {
   const [major, setMajor] = useState(profile?.major || '');
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // The Markdown export's progress: '' when idle, else "12 of 40".
+  const [packing, setPacking] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
   // A note's Sage panel sends you here to change the instructions — arrive with them open.
   const [sageOpen, setSageOpen] = useState(() => location.state?.open === 'sage');
@@ -166,6 +168,33 @@ const RoomYou = () => {
     }
   };
 
+  // Design 6e's export: Markdown, one folder per course, photos packed where the storage
+  // allows it (otherwise linked). Reads everything from the server, so it needs a connection.
+  const handleMarkdown = async () => {
+    if (!firebaseUser || packing || exporting) return;
+    if (!navigator.onLine) {
+      sayInRoom('Exporting needs a connection');
+      return;
+    }
+    setPacking('Gathering…');
+    try {
+      const result = await exportMarkdown(firebaseUser.uid, {
+        onProgress: ({ done, total }) => setPacking(`${done} of ${total}`),
+      });
+      downloadBytes(result.bytes, `Companion ${new Date().toISOString().slice(0, 10)}.zip`);
+      const photos = result.photosPacked
+        ? ` · ${result.photosPacked} ${result.photosPacked === 1 ? 'photo' : 'photos'} inside`
+        : '';
+      const links = result.photosLinked ? ` · ${result.photosLinked} linked` : '';
+      sayInRoom(`Exported ${result.notes} ${result.notes === 1 ? 'note' : 'notes'}${photos}${links}`);
+    } catch (err) {
+      console.error('Markdown export failed', err);
+      sayInRoom('The export did not finish — try again');
+    } finally {
+      setPacking('');
+    }
+  };
+
   const row = (label, copy, control) => (
     <div className="room-setting-row">
       <div style={{ minWidth: 0 }}>
@@ -244,17 +273,32 @@ const RoomYou = () => {
           {row(
             'Sage',
             sageLine(profile?.roomPrefs?.sage) ||
-              'Standing instructions for every run — extra jobs, the topic, a note to Sage.',
+              'How it talks to you, what your notes are about, anything it should always keep in mind.',
             <button type="button" className="room-you-action" onClick={() => setSageOpen(true)}>
               Instructions
             </button>,
           )}
           {row(
             'Export everything',
-            'Every course, note and template, as one JSON file.',
-            <button type="button" className="room-you-action" onClick={handleExport} disabled={exporting}>
-              {exporting ? 'Preparing…' : 'Download'}
-            </button>,
+            'Markdown, one folder per course, photos included where they can be. Or the whole account as one JSON file.',
+            <span className="room-you-actions">
+              <button
+                type="button"
+                className="room-you-action"
+                onClick={handleMarkdown}
+                disabled={Boolean(packing) || exporting}
+              >
+                {packing || 'Markdown'}
+              </button>
+              <button
+                type="button"
+                className="room-you-action"
+                onClick={handleExport}
+                disabled={exporting || Boolean(packing)}
+              >
+                {exporting ? 'Preparing…' : 'JSON'}
+              </button>
+            </span>,
           )}
 
           <p className="room-you-group">This account</p>

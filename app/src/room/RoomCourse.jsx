@@ -9,11 +9,13 @@ import { Dot, Pill } from './components/primitives';
 import { MenuCard } from './components/Overlay';
 import CourseSheet from './components/CourseSheet';
 import CourseFiles from './components/CourseFiles';
+import SheetTags from './components/SheetTags';
 import { courseMeta } from './calendarDays';
 import { noteStamp, sortCourseNotes, useRoomDesk } from './roomData';
 import { tiltFor } from './roomPrefs';
 import { markGone, offerUndo, sayInRoom, unmarkGone } from './roomUndo';
 import { MOD_KEY } from './platform';
+import { usePageActions } from './roomCommands';
 
 // Course — design 6b. See a course's notes and start a new one.
 //
@@ -218,6 +220,27 @@ const RoomCourse = () => {
     return () => document.removeEventListener('keydown', onKey);
   }, [newNote]);
 
+  // What ⌘K offers here. "new-note" replaces the room-wide "New note in …" of the same id.
+  usePageActions(() =>
+    course
+      ? [
+          { id: 'new-note', label: 'New note here', hint: course.name, keywords: ['create', 'add', 'write'], run: newNote },
+          {
+            id: 'course-edit',
+            label: 'Edit this course',
+            keywords: ['rename', 'colour', 'color', 'schedule', 'time', 'room', 'professor', 'details'],
+            run: () => setSheetOpen(true),
+          },
+          ...(own.length
+            ? [
+                { id: 'course-files', label: "See this course's photos", keywords: ['files', 'images', 'pictures'], run: () => setFilesOpen(true) },
+                { id: 'course-select', label: 'Select notes', keywords: ['move', 'delete', 'many'], run: () => setSelecting(true) },
+              ]
+            : []),
+        ]
+      : [],
+  );
+
   const meta = [course ? courseMeta(course, { professor: true }) : '', own.length ? plural(own.length, 'note') : '']
     .filter(Boolean)
     .join(' · ');
@@ -303,6 +326,7 @@ const RoomCourse = () => {
               {note.title}
             </h3>
             {note.summary && <p className="room-course-meta">{note.summary}</p>}
+            <SheetTags tags={note.tags} />
           </Paper>
         ))}
       </div>

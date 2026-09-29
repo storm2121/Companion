@@ -1,32 +1,28 @@
 import { useState } from 'react';
 import { useAuth } from '../../context/authState';
-import { MAX_SAGE_ADDONS, SAGE_ADDONS } from '../../services/sage';
+import { SAGE_VOICES } from '../sageChoices';
 import { Overlay } from './Overlay';
 import { Chip, Pill } from './primitives';
 
-// Sage's standing instructions (design 6e: "Sage's instructions live on the You page").
-// What a run should ALSO do (the add-ons, three at most — the server's own limit), what the
-// notes are about, and anything else to tell it. The note's Sage panel picks the goals;
-// these ride along with every run. Stored on `roomPrefs.sage`, so they follow you.
+// Sage's standing instructions (design 6e: "Sage's instructions live on the You page"):
+// how it talks to you, what your notes are about, and anything else it should always keep
+// in mind. What to do — and what else — is picked in the note's Sage panel, which also
+// remembers the extras you used last. Stored on `roomPrefs.sage`, so they follow you.
 
 const Form = ({ onClose }) => {
   const { profile, updateRoomPrefs } = useAuth();
   const saved = profile?.roomPrefs?.sage || {};
-  const [addons, setAddons] = useState(() =>
-    (Array.isArray(saved.addons) ? saved.addons : []).filter((id) => SAGE_ADDONS.some((addon) => addon.id === id)),
+  const [voice, setVoice] = useState(() =>
+    SAGE_VOICES.some((item) => item.id === saved.voice) ? saved.voice : 'buddy',
   );
   const [topic, setTopic] = useState(typeof saved.topic === 'string' ? saved.topic : '');
   const [comment, setComment] = useState(typeof saved.comment === 'string' ? saved.comment : '');
 
-  const full = addons.length >= MAX_SAGE_ADDONS;
-  const toggle = (id) =>
-    setAddons((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id].slice(0, MAX_SAGE_ADDONS)));
-
-  // Not awaited: the preference lands in the local cache at once.
+  // Not awaited: the preference lands in the local cache at once. The extras are kept.
   const save = (event) => {
     event.preventDefault();
     updateRoomPrefs({
-      sage: { addons, topic: topic.trim().slice(0, 120), comment: comment.trim().slice(0, 500) },
+      sage: { ...saved, voice, topic: topic.trim().slice(0, 120), comment: comment.trim().slice(0, 500) },
     }).catch((err) => console.error('Could not save Sage’s instructions', err));
     onClose();
   };
@@ -34,24 +30,21 @@ const Form = ({ onClose }) => {
   return (
     <form onSubmit={save}>
       <p className="room-setting-copy" style={{ fontSize: 15 }}>
-        Every Sage run in the room uses these. What it should do is picked in the note; this is
-        what it should always keep in mind.
+        Every Sage run in the room uses these. After each run Sage leaves you a line about
+        what it did — this is how it says it.
       </p>
 
-      <p className="room-form-label">Also do — three at most</p>
+      <p className="room-form-label">How Sage talks</p>
       <div className="room-days">
-        {SAGE_ADDONS.map((addon) => (
-          <Chip
-            key={addon.id}
-            selected={addons.includes(addon.id)}
-            onClick={() => toggle(addon.id)}
-            disabled={full && !addons.includes(addon.id)}
-            title={addon.hint}
-          >
-            {addon.label}
+        {SAGE_VOICES.map((item) => (
+          <Chip key={item.id} selected={voice === item.id} onClick={() => setVoice(item.id)} title={item.hint}>
+            {item.label}
           </Chip>
         ))}
       </div>
+      <p className="room-setting-copy room-sage-voice-hint">
+        {SAGE_VOICES.find((item) => item.id === voice)?.hint}
+      </p>
 
       <label className="room-form-field">
         <span className="room-form-label">What your notes are about</span>

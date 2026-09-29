@@ -69,7 +69,7 @@ Companion/
 │  ├─ database.rules.json    Realtime DB rules (locked; RTDB unused)
 │  └─ firestore.indexes.json (no custom indexes)
 ├─ README.md                 project overview
-└─ todo.md                   backlog
+└─ todo.md                   roadmap
 ```
 
 ---
@@ -327,8 +327,7 @@ firebase deploy --only functions                   # Sage + deletion backend
   enforced in `firestore.rules`, `storage.rules`, and every callable (`requireAuiUser`) —
   the client-side gates in `AuthContext` / `ProtectedRoute` / `AuthHub` are UX, not the
   boundary. Email-link sign-in satisfies verification implicitly.
-- **App Check is staged** behind the `ENFORCE_APP_CHECK` deploy parameter and is not yet
-  enforced; see [`todo.md`](../todo.md).
+- App Check support is built in, behind the `ENFORCE_APP_CHECK` deploy parameter.
 - Callables carry `maxInstances` ceilings, and both Sage and the delete callables are
   metered per user per day in server-only counter collections.
 - `npm run lint`, the production build, unit tests, and Firebase Rules tests pass locally.
@@ -337,5 +336,5 @@ firebase deploy --only functions                   # Sage + deletion backend
 - `react-rnd` is intentionally pinned to `10.5.2`. Version `10.5.3` currently pulls a
   `react-draggable` build that references Node's `process` global in the browser and prevents
   note canvases from opening under Vite.
-- Remaining work and design decisions are tracked in [`todo.md`](../todo.md).
+- What is planned next is in [`todo.md`](../todo.md).
 - No license is attached — the code is published to be read, not reused.

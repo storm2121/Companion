@@ -132,7 +132,7 @@ const FormatStrip = ({ editor: given, onLink, onNewSection, sectionOn, onFind })
           type="button"
           className={`room-strip-btn ${sectionOn ? 'is-on' : ''}`}
           onClick={() => onNewSection?.()}
-          title={sectionOn ? 'Stop starting a section here' : 'Start a new section here'}
+          title={sectionOn ? 'Stop starting a section here' : 'Start a new section here — or type --- in an empty block'}
         >
           § Section
         </button>

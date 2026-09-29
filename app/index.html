@@ -5,6 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/images/crest-placeholder.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Companion</title>
+    <!-- The room's ground from the very first paint, on a device that last showed the room
+         (see public/boot.js). Tokens only, so the room's own styles take over unchanged. -->
+    <script src="/boot.js"></script>
+    <style>
+      html[data-boot='room'] { --bg: #1f2622; --glow: transparent; color-scheme: dark; background: var(--bg); }
+      html[data-boot='room'][data-boot-mood='day'] { --bg: #d6dde0; color-scheme: light; }
+      html[data-boot='room'] body { background: var(--bg); }
+      /* Classic's loading card stays unseen while the room boots: just the room's ground. */
+      html[data-boot='room'] .gate-shell:has(.screen-loader) { visibility: hidden; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

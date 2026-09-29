@@ -16,7 +16,7 @@ import {
   settleRail,
 } from '../src/room/railLayout.js';
 import { releaseVelocity, SETTLE_TIME, smoothDamp } from '../src/room/boardMotion.js';
-import { designFor, resolveDesignMode } from '../src/designModes.js';
+import { DESIGN_DEFAULT_MODE, designFor, resolveDesignMode } from '../src/designModes.js';
 import { findInText, findLabel, locateOffset, stepIndex } from '../src/room/noteFind.js';
 import {
   instantiate,
@@ -42,8 +42,10 @@ import {
   toStored,
 } from '../src/room/pageBlocks.js';
 import {
+  breakOn,
   calendarSummary,
   classStatus,
+  cleanBreaks,
   cleanSchedule,
   courseMeta,
   dayEntries,
@@ -54,7 +56,18 @@ import {
   quietLine,
   scheduleLine,
 } from '../src/room/calendarDays.js';
-import { fold, indexedText, searchDesk } from '../src/room/deskSearch.js';
+import { courseFromPath, fold, indexedText, matchActions, searchDesk } from '../src/room/deskSearch.js';
+import {
+  cleanTag,
+  cleanTags,
+  hasTag,
+  splitTags,
+  suggestTags,
+  tagCounts,
+  TAGS_PER_NOTE,
+  withoutTag,
+  withTags,
+} from '../src/room/noteTags.js';
 import { inboxLines, titleFromLine } from '../src/room/inboxLines.js';
 import {
   applySageResult,
@@ -62,9 +75,27 @@ import {
   blockForRole,
   hasSageText,
   htmlToLines,
+  sageScope,
   sageSummary,
+  sectionBounds,
+  toPageBlocks,
   toSageBlocks,
 } from '../src/room/sageBridge.js';
+import {
+  canvasToMarkdown,
+  crc32,
+  htmlToMarkdown,
+  noteToMarkdown,
+  pageToMarkdown,
+  safeName,
+  storedBlocks,
+  uniqueNamer,
+  zipFiles,
+} from '../src/room/markdownExport.js';
+import { shortcutFor, SHORTCUT_HINTS } from '../src/room/shortcutPatterns.js';
+import { Fragment, Schema, Slice } from '@tiptap/pm/model';
+import { cleanPastedText, clipboardFragment, isFromProseMirror, keptStyle, tidyPastedSlice } from '../src/room/pasteClean.js';
+import { fillSnippet, MATH_GROUPS } from '../src/room/mathSymbols.js';
 
 // ── The board (railLayout.js) ─────────────────────────────────────────────────
 
@@ -658,7 +689,7 @@ test('search: titles first, then bodies, courses by name; empty query finds noth
 
   assert.deepEqual(searchDesk({ query: 'resume', courses, notes, texts }).notes.map((hit) => hit.note.id), ['n3']);
   assert.deepEqual(searchDesk({ query: 'data', courses, notes, texts }).courses.map((c) => c.id), ['c1']);
-  assert.deepEqual(searchDesk({ query: '   ', courses, notes, texts }), { courses: [], notes: [] });
+  assert.deepEqual(searchDesk({ query: '   ', courses, notes, texts }), { courses: [], notes: [], tags: [] });
   // A body not read yet simply does not match — yet.
   assert.deepEqual(searchDesk({ query: 'faster', courses, notes, texts: new Map() }).notes, []);
 });
@@ -863,4 +894,536 @@ test('sage back, rebuild: a block written while Sage was working is kept, not lo
   const applied = applySageResult(now, { mode: 'layout', blocks: [{ ref: 'a', id: 't1', title: '', value: '<p>kept</p>', role: 'concept' }] }, { sent });
   const page = applied.blocks.filter((b) => !b.rail).map((b) => b.id);
   assert.deepEqual(page, ['t1', 'i1', 'late']);
+});
+
+// ── Markdown export (markdownExport.js) ───────────────────────────────────────
+
+test('markdown: the editor HTML reads as plain Markdown — marks, links, code, breaks', () => {
+  assert.equal(
+    htmlToMarkdown('<h2>Trees</h2><p>A <strong>bold</strong> and <em>it</em> word, <s>gone</s>, <code>x_y</code>, <a href="https://e.x">link</a>.</p>'),
+    '## Trees\n\nA **bold** and *it* word, ~~gone~~, `x_y`, [link](https://e.x).',
+  );
+  assert.equal(htmlToMarkdown('<p>a &lt; b &amp; c*d</p>'), 'a < b & c\\*d');
+  assert.equal(htmlToMarkdown('<p>line one<br>line two</p>'), 'line one  \nline two');
+  assert.equal(htmlToMarkdown('<blockquote><p>quoted</p></blockquote>'), '> quoted');
+  assert.equal(htmlToMarkdown('<pre><code>def f():\n    return 1</code></pre>'), '```\ndef f():\n    return 1\n```');
+  assert.equal(htmlToMarkdown('<p><strong>bold </strong>after</p>'), '**bold** after');
+});
+
+test('markdown: lists nest, ordered lists keep their start, task lists keep their ticks', () => {
+  assert.equal(
+    htmlToMarkdown('<ul><li><p>one</p></li><li><p>two</p><ul><li><p>deep</p></li></ul></li></ul><ol start="3"><li><p>c</p></li><li><p>d</p></li></ol>'),
+    '- one\n- two\n  - deep\n\n3. c\n4. d',
+  );
+  // The HTML TipTap writes for a task list, label and checkbox included.
+  assert.equal(
+    htmlToMarkdown('<ul data-type="taskList"><li data-checked="true" data-type="taskItem"><label><input type="checkbox" checked="checked"><span></span></label><div><p>read ch 4</p></div></li><li data-type="taskItem" data-checked="false"><p>set 2</p></li></ul>'),
+    '- [x] read ch 4\n- [ ] set 2',
+  );
+  assert.equal(
+    htmlToMarkdown('<table><tbody><tr><th><p>Term</p></th><th><p>Meaning</p></th></tr><tr><td><p>BST</p></td><td><p>a | tree</p></td></tr></tbody></table>'),
+    '| Term | Meaning |\n| --- | --- |\n| BST | a \\| tree |',
+  );
+});
+
+test('markdown: a room page — every block type, columns in order, board photos last and top-down', () => {
+  const photo = (url) => url.replace('https://x/', 'photos/');
+  const md = pageToMarkdown(
+    [
+      { id: 't', type: 'text', section: true, value: '<h2>Trees</h2><p>Short.</p>' },
+      { id: 'c', type: 'callout', label: 'Prof said', value: '<p>On the midterm.</p>' },
+      { id: 'k', type: 'code', lang: 'python', value: 'x = 1' },
+      { id: 'm', type: 'math', value: 'O(log n)' },
+      { id: 'w', type: 'twoColumn', colA: [{ id: 'a', type: 'text', value: '<p>left</p>' }], colB: [{ id: 'b', type: 'text', value: '<p>right</p>' }] },
+      { id: 'i', type: 'image', value: 'https://x/p.webp', alt: 'board' },
+      { id: 'r2', type: 'image', rail: true, value: 'https://x/low.webp', y: 300 },
+      { id: 'r1', type: 'image', rail: true, value: 'https://x/high.webp', y: 10 },
+    ],
+    photo,
+  );
+  assert.equal(
+    md,
+    [
+      '## Trees\n\nShort.',
+      '> **Prof said**\n>\n> On the midterm.',
+      '```python\nx = 1\n```',
+      '$$\nO(log n)\n$$',
+      'left\n\nright',
+      '![board](photos/p.webp)',
+      '## Photos',
+      '![](photos/high.webp)',
+      '![](photos/low.webp)',
+    ].join('\n\n'),
+  );
+});
+
+test('markdown: a classic note reads top to bottom, left to right, without its default titles', () => {
+  assert.equal(
+    canvasToMarkdown([
+      { type: 'text', title: 'Text 2', value: '<p>second</p>', x: 0, y: 200 },
+      { type: 'text', title: 'Key idea', value: '<p>first</p>', x: 700, y: 10 },
+      { type: 'text', title: '', value: '<p>beside</p>', x: 10, y: 10 },
+      { type: 'image', value: 'https://x/c.png', x: 0, y: 400 },
+    ]),
+    'beside\n\n### Key idea\n\nfirst\n\nsecond\n\n![](https://x/c.png)',
+  );
+});
+
+test('markdown: a whole note file, from either schema the note may be stored in', () => {
+  assert.deepEqual(
+    storedBlocks({ content: { blocks: { b: { id: 'b' }, a: { id: 'a' }, z: { id: 'z' } }, order: ['a', 'b'] } }).map((b) => b.id),
+    ['a', 'b', 'z'],
+  );
+  assert.deepEqual(storedBlocks({ content: null, blocks: [{ id: 'legacy' }] }).map((b) => b.id), ['legacy']);
+  const when = new Date(2026, 8, 26).getTime();
+  const page = { title: 'Binary search trees', format: 'page', kind: 'Lecture', updatedAtMs: when, content: { blocks: { t: { id: 't', type: 'text', value: '<p>Hi</p>' } }, order: ['t'] } };
+  assert.equal(noteToMarkdown(page, 'Paradigm'), '# Binary search trees\n\n*Paradigm · Lecture · updated 26 Sep 2026*\n\nHi\n');
+  const classic = { title: 'Old', updatedAtMs: when, content: { blocks: { t: { id: 't', type: 'text', value: '<p>Canvas</p>', x: 0, y: 0 } }, order: ['t'] } };
+  assert.equal(noteToMarkdown(classic, 'Paradigm'), '# Old\n\n*Paradigm · classic desk · updated 26 Sep 2026*\n\nCanvas\n');
+});
+
+test('markdown: file names every system accepts, and no two alike in a folder', () => {
+  assert.equal(safeName('a/b:c*?'), 'a-b-c--');
+  assert.equal(safeName('notes. '), 'notes');
+  assert.equal(safeName('CON'), 'CON-');
+  assert.equal(safeName('   '), 'Untitled');
+  assert.equal(safeName('a\u0001b'), 'ab');
+  const name = uniqueNamer();
+  assert.equal(name('Paradigm', 'Notes', '.md'), 'Paradigm/Notes.md');
+  assert.equal(name('Paradigm', 'Notes', '.md'), 'Paradigm/Notes (2).md');
+  assert.equal(name('Paradigm', 'notes', '.md'), 'Paradigm/notes (3).md');
+  assert.equal(name('', 'Inbox', '.md'), 'Inbox.md');
+});
+
+test('zip: CRC-32 is the standard one, and the archive is laid out as the format says', () => {
+  const encode = (text) => new TextEncoder().encode(text);
+  assert.equal(crc32(encode('123456789')), 0xcbf43926);
+  const bytes = zipFiles([
+    { path: 'A/x.md', data: 'hello' },
+    { path: 'b.txt', data: new Uint8Array([1, 2, 3]) },
+  ]);
+  const view = new DataView(bytes.buffer);
+  assert.equal(view.getUint32(0, true), 0x04034b50);
+  assert.equal(view.getUint32(14, true), crc32(encode('hello')));
+  assert.equal(new TextDecoder().decode(bytes.slice(30, 36)), 'A/x.md');
+  const end = bytes.length - 22;
+  assert.equal(view.getUint32(end, true), 0x06054b50);
+  assert.equal(view.getUint16(end + 10, true), 2);
+  assert.equal(view.getUint32(end + 16, true), 79); // the central directory starts after both entries
+  assert.equal(view.getUint32(end + 12, true), 103);
+  assert.equal(bytes.length, 204);
+});
+
+test('breaks: a break silences every class on its days, and the journal says which break it is', () => {
+  const breaks = cleanBreaks([
+    { id: 'fall', name: 'Fall break', from: '2026-10-16', until: '2026-10-12' }, // reversed on purpose
+    { id: 'one', from: '2026-10-21' }, // a one-day break, unnamed
+    { from: 'soon' }, // not a date: dropped
+  ]);
+  assert.deepEqual(breaks.map((b) => [b.id, b.from, b.until]), [['fall', '2026-10-12', '2026-10-16'], ['one', '2026-10-21', '2026-10-21']]);
+  assert.equal(breakOn(breaks, '2026-10-14').name, 'Fall break');
+  assert.equal(breakOn(breaks, '2026-10-17'), null);
+
+  // Monday 12 Oct has Data Structures and Linear Algebra — not during the break.
+  assert.deepEqual(dayEntries('2026-10-12', { courses: COURSES, breaks }), []);
+  const kept = dayEntries('2026-10-12', { courses: COURSES, breaks, events: [{ id: 'e', date: '2026-10-12', title: 'Essay due' }] });
+  assert.deepEqual(kept.map((e) => e.title), ['Essay due']);
+
+  const entriesOf = (key) => dayEntries(key, { courses: COURSES, breaks });
+  const rows = journalRows('2026-10-09', '2026-10-19', entriesOf, [], (key) => breakOn(breaks, key));
+  const quiet = rows.filter((row) => row.type === 'quiet');
+  // Sat–Sun before the break, the break itself (weekend included), then back to classes.
+  assert.deepEqual(quiet.map((row) => [row.keys[0], row.keys.at(-1), row.breakName]), [
+    ['2026-10-10', '2026-10-11', null],
+    ['2026-10-12', '2026-10-16', 'Fall break'],
+    ['2026-10-17', '2026-10-18', null],
+  ]);
+  assert.equal(quietLine(quiet[1].keys, quiet[1].breakName), 'Monday 12 to Friday 16 — Fall break, no classes.');
+  assert.equal(quietLine(['2026-10-21'], ''), 'Wednesday 21 — a break, no classes.');
+
+  // Home says so, and still finds the next class after it.
+  assert.equal(
+    classStatus({ courses: COURSES, now: new Date(2026, 9, 14, 10, 0), breaks }),
+    'Fall break — no classes today. Linear Algebra is next, Monday morning. Nothing before then.',
+  );
+});
+
+test('design default: a NEW account starts in the room; a profile with no preference stays classic', () => {
+  // DESIGN_DEFAULT_MODE only seeds new profiles. Pre-seam profiles carry no designMode and
+  // have always used classic — they must not be moved.
+  assert.equal(DESIGN_DEFAULT_MODE, 'room');
+  assert.equal(resolveDesignMode(undefined), 'classic');
+  assert.equal(resolveDesignMode(DESIGN_DEFAULT_MODE), 'room');
+  assert.equal(designFor('/dashboard', undefined), 'classic');
+  assert.equal(designFor('/dashboard', DESIGN_DEFAULT_MODE), 'room');
+});
+
+// ── Shortcuts and the math toolbar ────────────────────────────────────────────
+
+test('shortcuts: each room block has its marker, finished by a space; ordinary text is left alone', () => {
+  assert.equal(shortcutFor('``` ').kind, 'code');
+  assert.equal(shortcutFor('```python ').match[1], 'python');
+  assert.equal(shortcutFor('$$ ').kind, 'math');
+  assert.equal(shortcutFor('>> ').kind, 'callout');
+  assert.equal(shortcutFor('|| ').kind, 'columns');
+  assert.equal(shortcutFor('§ ').kind, 'section');
+  assert.equal(shortcutFor('---').kind, 'divider'); // fires on the third dash, like a rule
+  assert.equal(shortcutFor('--- '), null);
+  // TipTap's own quote rule keeps "> "; nothing here claims it, or text that merely starts alike.
+  assert.equal(shortcutFor('> '), null);
+  assert.equal(shortcutFor('$$x '), null);
+  assert.equal(shortcutFor('```'), null); // no space yet
+  assert.deepEqual(Object.keys(SHORTCUT_HINTS).sort(), ['callout', 'checklist', 'code', 'math', 'twoColumn']);
+});
+
+test('math toolbar: a snippet takes the selection in its first slot and parks the caret in the next', () => {
+  assert.deepEqual(fillSnippet(String.raw`\frac{#}{#}`), { text: String.raw`\frac{}{}`, caret: 6 });
+  assert.deepEqual(fillSnippet(String.raw`\frac{#}{#}`, 'a+b'), { text: String.raw`\frac{a+b}{}`, caret: 11 });
+  assert.deepEqual(fillSnippet(String.raw`\alpha `), { text: String.raw`\alpha `, caret: 7 });
+  assert.deepEqual(fillSnippet('^{#}', 'n'), { text: '^{n}', caret: 4 });
+  // Never a wall of buttons: every group stays small.
+  MATH_GROUPS.forEach((group) => assert.ok(group.items.length <= 18, group.id));
+});
+
+// ── Tags and ⌘K actions ───────────────────────────────────────────────────────
+
+test('tags: one spelling everywhere — lower-case, one word, any script', () => {
+  assert.equal(cleanTag('#Week 3!'), 'week-3');
+  assert.equal(cleanTag('  ##Mid--Term  '), 'mid-term');
+  assert.equal(cleanTag('Été'), 'été');
+  assert.equal(cleanTag('تاريخ'), 'تاريخ');
+  assert.equal(cleanTag('ask_prof'), 'ask_prof');
+  assert.equal(cleanTag('!!!'), '');
+  assert.equal(cleanTag(null), '');
+  assert.ok(cleanTag('x'.repeat(60)).length <= 24);
+  // Cut to length, it never ends on a hyphen.
+  assert.ok(!cleanTag('abcdefghijklmnopqrstuvw xyz').endsWith('-'));
+});
+
+test('tags: a note keeps each tag once, in order, and only so many', () => {
+  assert.deepEqual(cleanTags(['Exam', 'exam', '#EXAM', ' week 3 ', '', null]), ['exam', 'week-3']);
+  assert.deepEqual(cleanTags('not a list'), []);
+  const many = Array.from({ length: 30 }, (_, i) => `t${i}`);
+  assert.equal(cleanTags(many).length, TAGS_PER_NOTE);
+  // A comma or a hash ends a tag; a space stays inside one.
+  assert.deepEqual(splitTags('exam, week 3 #proofs'), ['exam', 'week-3', 'proofs']);
+  assert.deepEqual(withTags(['exam'], 'Exam, proofs'), ['exam', 'proofs']);
+  assert.deepEqual(withoutTag(['exam', 'proofs'], '#Exam'), ['proofs']);
+  assert.equal(hasTag({ tags: ['Week 3'] }, '#week-3'), true);
+  assert.equal(hasTag({ tags: ['exam'] }, ''), false);
+});
+
+test('tags: the ones in use, most used first, and suggestions that start as typed', () => {
+  const notes = [{ tags: ['exam', 'proofs'] }, { tags: ['exam'] }, { tags: ['week-3', 'exam'] }, {}];
+  assert.deepEqual(tagCounts(notes), [
+    { tag: 'exam', count: 3 },
+    { tag: 'proofs', count: 1 },
+    { tag: 'week-3', count: 1 },
+  ]);
+  const known = ['exam', 'proofs', 'week-3', 'example-sheet'];
+  // Starts-with before contains; never one the note has, never the text itself.
+  assert.deepEqual(suggestTags('ex', known, []), ['exam', 'example-sheet']);
+  assert.deepEqual(suggestTags('ex', known, ['exam']), ['example-sheet']);
+  assert.deepEqual(suggestTags('oof', known, []), ['proofs']);
+  assert.deepEqual(suggestTags('exam', known, []), ['example-sheet']);
+  assert.deepEqual(suggestTags('', known, ['exam'], 2), ['proofs', 'week-3']);
+});
+
+test('search: tags answer "#" queries, and a plain word finds a tagged note after the titles', () => {
+  const notes = [
+    { id: 'n1', classId: 'c1', title: 'Hashing', tags: ['exam'] },
+    { id: 'n2', classId: 'c1', title: 'Trees', tags: ['exam', 'week-3'] },
+    { id: 'n3', classId: 'c2', title: 'Exam logistics', tags: [] },
+    { id: 'n4', classId: 'c2', title: 'Essay', tags: ['examples'] },
+  ];
+  const courses = [{ id: 'c1', name: 'Exam prep' }];
+
+  const hash = searchDesk({ query: '#ex', courses, notes });
+  assert.deepEqual(hash.tags, [
+    { tag: 'exam', count: 2 },
+    { tag: 'examples', count: 1 },
+  ]);
+  assert.deepEqual(hash.notes.map((hit) => [hit.note.id, hit.tag]), [['n1', 'exam'], ['n2', 'exam'], ['n4', 'examples']]);
+  assert.deepEqual(hash.courses, []);
+  // A bare "#" lists every tag and no notes.
+  assert.equal(searchDesk({ query: '#', notes }).notes.length, 0);
+  assert.equal(searchDesk({ query: '#', notes }).tags.length, 3);
+
+  const word = searchDesk({ query: 'exam', courses, notes });
+  assert.deepEqual(word.notes.map((hit) => [hit.note.id, hit.where]), [['n3', 'title'], ['n1', 'tag'], ['n2', 'tag'], ['n4', 'tag']]);
+  assert.deepEqual(word.courses.map((course) => course.id), ['c1']);
+});
+
+test('actions: every typed word starts a word of the label or keywords; label matches rank first', () => {
+  const actions = [
+    { id: 'cal', label: 'Open the calendar', keywords: ['schedule', 'exams'] },
+    { id: 'new', label: 'New note in Statistics', keywords: ['create'] },
+    { id: 'rain', label: 'Switch to the rain mood', keywords: ['day', 'light'] },
+    { id: 'event', label: 'Add something to the calendar', keywords: ['new', 'exam'] },
+  ];
+  const ids = (query) => matchActions(query, actions).map((hit) => hit.action.id);
+  assert.deepEqual(ids('cal'), ['cal', 'event']);
+  assert.deepEqual(ids('new no stat'), ['new']);
+  assert.deepEqual(ids('new'), ['new', 'event']);
+  assert.deepEqual(ids('light'), ['rain']);
+  assert.deepEqual(ids('xyz'), []);
+  assert.deepEqual(ids('   '), []);
+  // Found through the label: strong. Only through the keywords: weak, listed after notes.
+  assert.deepEqual(matchActions('new', actions).map((hit) => hit.strong), [true, false]);
+  assert.equal(matchActions('exams', actions)[0].strong, false);
+  assert.equal(matchActions('cal', actions, 1).length, 1);
+});
+
+test('actions: the course a room address is about', () => {
+  assert.equal(courseFromPath('/room/course/c1'), 'c1');
+  assert.equal(courseFromPath('/room/note/c2/n9'), 'c2');
+  assert.equal(courseFromPath('/room/note/a%20b/n9'), 'a b');
+  assert.equal(courseFromPath('/room/calendar'), '');
+  assert.equal(courseFromPath('/room'), '');
+  assert.equal(courseFromPath(undefined), '');
+});
+
+// ── Sage, the room's page path (client side) ─────────────────────────────────
+
+// Two sections: §1 opens at t1, §2 at s2.
+const SAGE_TWO = [
+  ...SAGE_PAGE.slice(0, 2),
+  { id: 's2', type: 'text', section: true, value: '<h2>Rotations</h2><p>Left and right.</p>' },
+  { id: 's3', type: 'text', value: '<p>The double ones.</p>' },
+  SAGE_PAGE.at(-1),
+];
+
+test('sage page out: every block goes as its own type; code and math as plain text; the board never goes', () => {
+  const out = toPageBlocks(SAGE_PAGE);
+  assert.deepEqual(
+    out.map((b) => [b.id, b.type]),
+    [
+      ['t1', 'text'],
+      ['c1', 'callout'],
+      ['k1', 'code'],
+      ['m1', 'math'],
+      ['x1', 'checklist'],
+      ['wa', 'text'],
+      ['wb', 'text'],
+      ['i1', 'image'],
+    ],
+  );
+  assert.deepEqual(out[2], { id: 'k1', type: 'code', lang: 'python', value: 'if a < b:\n    return a' });
+  assert.equal(out[1].label, 'Prof said');
+  assert.deepEqual(out[7], { id: 'i1', type: 'image' }); // no address
+});
+
+test('sage scope: a section runs from its opening block to the next one', () => {
+  assert.deepEqual(sectionBounds(SAGE_TWO, ''), [0, 5]);
+  assert.deepEqual(sectionBounds(SAGE_TWO.slice(0, 4), 's2'), [2, 4]);
+  assert.deepEqual(sectionBounds(SAGE_TWO.slice(0, 4), 't1'), [0, 2]);
+  assert.equal(sectionBounds(SAGE_TWO, 'gone'), null);
+  assert.deepEqual(sageScope(SAGE_TWO, 's2').map((b) => b.id), ['s2', 's3']);
+  assert.deepEqual(sageScope(SAGE_TWO).map((b) => b.id), ['t1', 'c1', 's2', 's3']); // never the board
+});
+
+test('sage page back, quick edit: code stays literal, a callout takes its new label, the note and tags ride along', () => {
+  const applied = applySageResult(SAGE_PAGE, {
+    format: 'page',
+    mode: 'patch',
+    changed: [
+      { id: 'k1', value: 'if a < b and c > d:\n    return a' },
+      { id: 'm1', value: '<p>O(\\log n)</p>' }, // HTML anyway → read as lines
+      { id: 'c1', value: '<p>Rotations ARE on it.</p>', label: 'Watch out' },
+    ],
+    note: 'Fixed the comparison.',
+    tags: ['bst'],
+  });
+  const byId = new Map(applied.blocks.map((b) => [b.id, b]));
+  assert.equal(byId.get('k1').value, 'if a < b and c > d:\n    return a');
+  assert.equal(byId.get('m1').value, 'O(\\log n)');
+  assert.equal(byId.get('c1').label, 'Watch out');
+  assert.equal(applied.note, 'Fixed the comparison.');
+  assert.deepEqual(applied.tags, ['bst']);
+  assert.equal(applied.changed, 3);
+});
+
+test('sage page back, additions: typed as asked; the top of a section is just under its heading', () => {
+  const tldr = { after: '', type: 'callout', label: 'TL;DR', value: '<ul><li>short</li></ul>' };
+  const whole = applySageResult(SAGE_TWO, {
+    format: 'page',
+    mode: 'reflow',
+    changed: [],
+    added: [tldr, { after: 't1', type: 'math', value: 'h = O(\\log n)' }],
+  });
+  assert.equal(whole.blocks[0].type, 'callout'); // the very top of the page
+  assert.equal(whole.blocks[0].section, true); // the page always opens a section
+  assert.equal(whole.blocks[2].type, 'math');
+  assert.equal(whole.blocks[2].value, 'h = O(\\log n)');
+
+  const section = applySageResult(SAGE_TWO, { format: 'page', mode: 'reflow', changed: [], added: [tldr] }, { sectionId: 's2' });
+  assert.deepEqual(
+    section.blocks.map((b) => b.id === 's2' || b.id === 's3' || b.id === 't1' || b.id === 'c1' || b.id === 'r1' ? b.id : b.type),
+    ['t1', 'c1', 's2', 'callout', 's3', 'r1'],
+  );
+  assert.equal(section.blocks[3].section, false); // §2 keeps its heading as its title
+});
+
+test('sage page back, rebuild: one section rebuilt in place — pairs tiled, the rest of the page untouched', () => {
+  const applied = applySageResult(
+    SAGE_TWO,
+    {
+      format: 'page',
+      mode: 'layout',
+      blocks: [
+        { id: 's2', type: 'text', value: '<h2>Rotations</h2><p>Left, right.</p>', section: true },
+        { id: null, type: 'text', value: '<p><b>LL</b> — single right</p>', pair: true },
+        { id: null, type: 'text', value: '<p><b>LR</b> — left, then right</p>', pair: true },
+        { id: null, type: 'code', lang: 'python', value: 'rotate_right(node)' },
+      ],
+      note: 'Paired the four cases.',
+    },
+    { sectionId: 's2', sent: new Set(['s2', 's3']) },
+  );
+  const ids = applied.blocks.map((b) => b.id);
+  assert.deepEqual(ids.slice(0, 3), ['t1', 'c1', 's2']); // §1 untouched, §2 still opens where it did
+  assert.equal(applied.blocks[3].type, 'twoColumn');
+  assert.equal(applied.blocks[4].type, 'code');
+  assert.equal(applied.blocks[4].lang, 'python');
+  assert.ok(!ids.includes('s3')); // Sage merged it away — it was sent, so that is its call
+  assert.equal(ids.at(-1), 'r1'); // the board rides along
+  assert.equal(applied.mode, 'layout');
+
+  // A section that vanished while Sage worked is not guessed at.
+  assert.equal(applySageResult(SAGE_TWO, { format: 'page', mode: 'layout', blocks: [] }, { sectionId: 'gone' }), null);
+});
+
+test('sage back: a classic answer still lands, and only inside the section it was asked about', () => {
+  const applied = applySageResult(
+    SAGE_TWO,
+    { mode: 'patch', changed: [{ id: 's3', value: '<p>The double ones, fixed.</p>' }, { id: 't1', value: '<p>outside</p>' }] },
+    { sectionId: 's2' },
+  );
+  const byId = new Map(applied.blocks.map((b) => [b.id, b]));
+  assert.equal(byId.get('s3').value, '<p>The double ones, fixed.</p>');
+  assert.equal(byId.get('t1').value, SAGE_TWO[0].value); // not in the section: left alone
+  assert.equal(applied.note, '');
+});
+
+// ── Paste from outside ─────────────────────────────────────────────────────────
+
+const pasteSchema = new Schema({
+  nodes: {
+    doc: { content: 'block+' },
+    paragraph: { group: 'block', content: 'inline*' },
+    bulletList: { group: 'block', content: 'listItem+' },
+    listItem: { content: 'paragraph block*' },
+    table: { group: 'block', content: 'tableRow+', tableRole: 'table', isolating: true },
+    tableRow: { content: 'tableCell+', tableRole: 'row' },
+    tableCell: { content: 'paragraph+', tableRole: 'cell', isolating: true },
+    text: { group: 'inline' },
+    hardBreak: { group: 'inline', inline: true },
+  },
+});
+const list = (...items) =>
+  pasteSchema.node('bulletList', null, items.map((kids) => pasteSchema.node('listItem', null, kids)));
+const table = (...cells) =>
+  pasteSchema.node('table', null, [pasteSchema.node('tableRow', null, cells.map((cell) => pasteSchema.node('tableCell', null, [cell])))]);
+const para = (...kids) =>
+  pasteSchema.node('paragraph', null, kids.map((kid) => (typeof kid === 'string' ? pasteSchema.text(kid) : kid)));
+const lineBreak = () => pasteSchema.node('hardBreak');
+const sliceOf = (...nodes) => Slice.maxOpen(Fragment.fromArray(nodes), false);
+const textsOf = (slice) => {
+  const out = [];
+  slice.content.forEach((node) => out.push(node.type.name === 'paragraph' ? node.textContent : node.type.name));
+  return out;
+};
+
+test('paste: only formatting the room can express survives, and only when it says something', () => {
+  assert.equal(keptStyle('font-size:11pt;font-family:Arial,sans-serif;color:#000000;font-weight:400;'), '');
+  assert.equal(keptStyle('font-weight: 700; color: rgb(55, 65, 81)'), 'font-weight: 700');
+  assert.equal(keptStyle('line-height:1.38; text-align: center'), 'text-align: center');
+  assert.equal(keptStyle('text-align: left'), ''); // the default says nothing
+  assert.equal(keptStyle('font-style: italic; text-decoration: underline'), 'font-style: italic; text-decoration: underline');
+  assert.equal(keptStyle('font-style: normal'), '');
+  assert.equal(keptStyle('FONT-WEIGHT: BOLD !important'), 'FONT-WEIGHT: BOLD !important');
+  // A normal weight says something only inside bold, where it un-bolds.
+  assert.equal(keptStyle('font-weight: 400'), '');
+  assert.equal(keptStyle('font-weight: 400', { insideBold: true }), 'font-weight: 400');
+  assert.equal(keptStyle(''), '');
+});
+
+test('paste: text keeps its lines but not the newlines at its ends; a ProseMirror copy is recognised', () => {
+  assert.equal(cleanPastedText('\r\npasted value\r\n\r\n'), 'pasted value');
+  assert.equal(cleanPastedText('a\r\nb\rc'), 'a\nb\nc');
+  assert.equal(cleanPastedText('    indented code\n'), '    indented code');
+  assert.equal(isFromProseMirror('<p data-pm-slice="1 1 []">mine</p>'), true);
+  assert.equal(isFromProseMirror('<meta charset="utf-8"><p>theirs</p>'), false);
+});
+
+test('paste: no empty lines around what was pasted, none in between, and a single line still joins its line', () => {
+  // Google Docs: the text, then a paragraph holding only its trailing <br>.
+  const docs = tidyPastedSlice(sliceOf(para('pasted value'), para(lineBreak())));
+  assert.deepEqual(textsOf(docs), ['pasted value']);
+  assert.equal(docs.openStart, 1); // still merges into the line the caret is on
+  assert.equal(docs.openEnd, 1);
+  // Word: &nbsp; paragraphs either side. Plain text: empty ones.
+  assert.deepEqual(textsOf(tidyPastedSlice(sliceOf(para(' '), para('pasted value'), para(' ')))), ['pasted value']);
+  assert.deepEqual(textsOf(tidyPastedSlice(sliceOf(para(), para('a'), para(), para('b'), para()))), ['a', 'b']);
+  // Breaks at a paragraph's edges go; a break inside one is the writer's.
+  const edges = tidyPastedSlice(sliceOf(para(lineBreak(), 'x', lineBreak())));
+  assert.equal(edges.content.firstChild.childCount, 1);
+  const inside = sliceOf(para('a', lineBreak(), 'b'));
+  assert.equal(tidyPastedSlice(inside), inside); // nothing to do: the very same slice
+  // Nothing but blank lines: nothing at all.
+  assert.equal(tidyPastedSlice(sliceOf(para(), para(lineBreak()))).size, 0);
+  // A table stays closed, as ProseMirror leaves any paste from outside.
+  const pastedTable = tidyPastedSlice(sliceOf(table(para('cell')), para()));
+  assert.deepEqual(textsOf(pastedTable), ['table']);
+  assert.equal(pastedTable.openStart, 0);
+});
+
+test('paste: no empty line survives any paste — around it, inside it, nested, invisible or made of breaks', () => {
+  // A selection dragged over a line took the empty lines around it along: the owner's case.
+  const dragged = tidyPastedSlice(new Slice(Fragment.fromArray([para(), para('pasted line'), para()]), 1, 1));
+  assert.deepEqual(textsOf(dragged), ['pasted line']);
+  assert.equal(dragged.openStart, 1); // joins the line it is pasted on, so no gap above or below
+  assert.equal(dragged.openEnd, 1);
+  // A line copied with its break (open start, closed empty end).
+  assert.deepEqual(textsOf(tidyPastedSlice(new Slice(Fragment.fromArray([para('x'), para()]), 1, 0))), ['x']);
+  // Several lines copied from a note that already had gaps: the gaps do not come along.
+  assert.deepEqual(textsOf(tidyPastedSlice(sliceOf(para('a'), para(), para(lineBreak()), para('b')))), ['a', 'b']);
+  // "Empty" lines that hold only an invisible character.
+  assert.deepEqual(textsOf(tidyPastedSlice(sliceOf(para('\u200b'), para('pasted'), para('\ufeff\u00a0')))), ['pasted']);
+  // A run of line breaks is an empty line: it collapses to one break; edge breaks go.
+  const runs = tidyPastedSlice(sliceOf(para('one', lineBreak(), lineBreak(), lineBreak(), 'two', lineBreak())));
+  assert.deepEqual(
+    runs.content.firstChild.content.content.map((node) => node.type.name),
+    ['text', 'hardBreak', 'text'],
+  );
+  // Inside a list: an empty item goes, a list with nothing left goes with it.
+  const listed = tidyPastedSlice(sliceOf(list([para('first')], [para()], [para('second')])));
+  assert.equal(listed.content.firstChild.childCount, 2);
+  assert.equal(tidyPastedSlice(sliceOf(list([para()]), para('after'))).content.childCount, 1);
+  // A table keeps its empty cells: they are its shape.
+  const cells = sliceOf(table(para('x'), para()));
+  assert.equal(tidyPastedSlice(cells), cells);
+});
+
+test('paste: Chrome on Windows wraps every copy in a page — only the fragment is the copy (the owner’s gaps)', () => {
+  // The owner's real clipboard, as the page receives it.
+  const wrapped =
+    '<html>\r\n<body>\r\n<!--StartFragment--><p data-pm-slice="1 1 []">only the ones at the edges go.</p><!--EndFragment-->\r\n</body>\r\n</html>';
+  assert.equal(clipboardFragment(wrapped), '<p data-pm-slice="1 1 []">only the ones at the edges go.</p>');
+  assert.equal(clipboardFragment('<p>no markers at all</p>'), '<p>no markers at all</p>');
+  assert.equal(clipboardFragment('<!--EndFragment--> backwards <!--StartFragment-->'), '<!--EndFragment--> backwards <!--StartFragment-->');
+  // What those newlines became before: line breaks loose at the top, beside the paragraph.
+  const loose = tidyPastedSlice(
+    new Slice(Fragment.fromArray([lineBreak(), lineBreak(), para('only'), lineBreak(), lineBreak()]), 0, 0),
+  );
+  assert.deepEqual(textsOf(loose), ['only']);
+  assert.equal(loose.openStart, 1); // and the line joins the one it is pasted on
+  // A break BETWEEN two pieces of copied text is the writer's own: kept, once.
+  const inline = tidyPastedSlice(
+    new Slice(Fragment.fromArray([pasteSchema.text('a'), lineBreak(), lineBreak(), pasteSchema.text('b')]), 0, 0),
+  );
+  assert.deepEqual(
+    inline.content.content.map((node) => node.type.name),
+    ['text', 'hardBreak', 'text'],
+  );
 });

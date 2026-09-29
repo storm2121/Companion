@@ -1,7 +1,7 @@
 import { Component, Suspense, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/authState';
-import { applyDesignMode, DESIGN_CLASSIC, DESIGN_ROOM } from '../designModes';
+import { applyDesignMode, clearBoot, DESIGN_CLASSIC, DESIGN_ROOM } from '../designModes';
 import { clearRoomAttributes, useRoomAtmosphere } from './roomPrefs';
 import { RoomCoursesContext, RoomNotesContext, useRoomDataSource } from './roomData';
 import { settleNow, undoNow, useRoomUndo } from './roomUndo';
@@ -107,6 +107,8 @@ const RoomLayout = () => {
 
   useEffect(() => {
     applyDesignMode(DESIGN_ROOM);
+    // The room's own ground is painting now; the boot-time stand-in can go.
+    clearBoot();
     return () => {
       applyDesignMode(DESIGN_CLASSIC);
       clearRoomAttributes();

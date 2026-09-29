@@ -15,6 +15,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { listenToClasses, listenToPageNotes } from '../services/library';
 import { classStatus } from './calendarDays';
+import { tagCounts } from './noteTags';
 import { useRoomUndo } from './roomUndo';
 
 export const noteTime = (note) => {
@@ -38,6 +39,8 @@ export const deskClock = (date = new Date()) =>
 // "Morning" / "Afternoon" / "Evening" — the greeting's first word.
 export const timeOfDayWord = (date = new Date()) => {
   const hour = date.getHours();
+  // Still up after midnight is still the evening; the morning starts at five.
+  if (hour < 5) return 'Evening';
   if (hour < 12) return 'Morning';
   if (hour < 17) return 'Afternoon';
   return 'Evening';
@@ -182,6 +185,14 @@ export const useRoomDesk = () => {
   return { courses: desk, notes, recent, loading };
 };
 
+// Every tag in use across the room's notes, most used first: [{ tag, count }]. Read from
+// the notes context directly, so only what shows tags re-renders when a note changes —
+// never the editor, which must not re-render on its own saves.
+export const useTagsInUse = () => {
+  const notes = useContext(RoomNotesContext);
+  return useMemo(() => tagCounts(notes), [notes]);
+};
+
 // A course's notes as the design orders them: pinned first, then newest first.
 export const sortCourseNotes = (notes = []) =>
   [...notes].sort(
@@ -194,9 +205,9 @@ export const sortCourseNotes = (notes = []) =>
 //
 // Takes `recent` — newest first — not the raw note list, which is in fetch order. Reading
 // `notes[0]` named whichever course happened to come back first.
-export const deskStatus = ({ courses, recent, now = new Date() }) => {
+export const deskStatus = ({ courses, recent, now = new Date(), breaks = [] }) => {
   if (!courses.length) return 'Nothing on the desk yet. Add a course to start.';
-  const today = classStatus({ courses, now });
+  const today = classStatus({ courses, now, breaks });
   if (today) return today;
   if (!recent.length) {
     return 'Your courses carried over. Nothing written here yet — this design keeps its own notes.';

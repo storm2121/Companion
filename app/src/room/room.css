@@ -251,7 +251,10 @@ html[data-design='room'][data-grain='off'] .room-grain {
 
 .room-topline {
   position: relative;
-  z-index: 3;
+  /* Above the sticky format strip (4) and the Sage panel (25), so the ··· menu that drops
+     from here is never painted under them; below the overlays (40). The grain sits outside
+     .room-content, so it stays on top of all of it. */
+  z-index: 30;
   height: 40px;
   display: flex;
   align-items: center;
@@ -2792,7 +2795,8 @@ html[data-design='room'] .room-field:focus-visible,
 html[data-design='room'] .room-search-input:focus-visible,
 html[data-design='room'] .room-scrap-input:focus-visible,
 html[data-design='room'] .room-page-title:focus-visible,
-html[data-design='room'] .room-find-input:focus-visible {
+html[data-design='room'] .room-find-input:focus-visible,
+html[data-design='room'] .room-tag-input:focus-visible {
   outline: none;
 }
 
@@ -3051,4 +3055,431 @@ html[data-design='room'] .room-find-input:focus-visible {
   .room-strip-group {
     flex: none;
   }
+}
+
+/* Two text actions in one setting row (Export: Markdown · JSON). */
+.room-you-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  flex: none;
+}
+
+/* ── Breaks (calendar, left column) ───────────────────────────────────────── */
+
+.room-breaks {
+  margin-top: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.room-break {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+}
+
+.room-break-name {
+  font: inherit;
+  font-size: 14px;
+  color: var(--room-on-ground-70);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.35s var(--room-ease);
+}
+
+.room-break-name:hover {
+  color: var(--room-on-ground);
+}
+
+.room-break-x {
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--room-on-ground-48);
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.room-break-x:hover {
+  color: var(--room-on-ground);
+}
+
+.room-month-break {
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--room-ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Math (KaTeX) ─────────────────────────────────────────────────────────────
+   Read: the formula, typeset and centred. Click it to edit: the LaTeX source above (the
+   code block's field), the live result below. While a formula has the caret, the sticky
+   toolbar is the math toolbar — one group of symbols at a time.                    */
+
+.room-math-open {
+  display: block;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--room-ink);
+  cursor: text;
+  text-align: center;
+  transition: background 0.25s var(--room-ease);
+}
+
+.room-math-open:hover {
+  background: rgba(31, 38, 34, 0.04);
+}
+
+.room-math-view {
+  overflow-x: auto;
+  color: var(--room-ink);
+  font-size: 17px;
+}
+
+.room-math-view.is-empty {
+  font-family: var(--room-mono);
+  font-size: 12.5px;
+  color: var(--room-ink-faint);
+  text-align: center;
+  padding: 8px 0;
+}
+
+.room-math-view .katex-display {
+  margin: 6px 0;
+}
+
+.room-math-preview {
+  margin-top: 8px;
+  padding: 4px 0 2px;
+  border-top: 1px dashed var(--room-rule);
+}
+
+.room-math-strip .room-math-tab {
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--room-on-ground-70);
+}
+
+.room-math-strip .room-math-tab.is-on {
+  color: var(--room-on-ground);
+  background: var(--room-edge-soft);
+}
+
+.room-math-sym {
+  min-width: 30px;
+  font-size: 15px;
+}
+
+/* The shortcut beside a block type in the + menu. */
+.room-chip-hint {
+  margin-left: 7px;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+/* ── Tags ─────────────────────────────────────────────────────────────────────
+   On the note (paper): small mono chips under the title. On a sheet in a grid: a line
+   of text. On All notes (the ground): one quiet line of tag links under the count.   */
+
+.room-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 12px;
+  min-height: 26px;
+}
+
+.room-tag {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--room-hairline);
+  border-radius: var(--room-r-chip);
+  background: rgba(31, 38, 34, 0.03);
+}
+
+.room-tag-name,
+.room-tag-x,
+.room-tag-add,
+.room-tag-suggest {
+  font-family: var(--room-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  min-height: 0;
+  background: none;
+  border: 0;
+  color: var(--room-ink-soft);
+  cursor: pointer;
+}
+
+.room-tag-name {
+  padding: 3px 3px 3px 9px;
+}
+
+.room-tag-name:hover {
+  color: var(--room-ink);
+}
+
+.room-tag-x {
+  padding: 3px 8px 3px 4px;
+  color: var(--room-ink-faint);
+}
+
+.room-tag-x:hover {
+  color: var(--room-accent-on-paper);
+}
+
+.room-tag-add {
+  padding: 3px 10px;
+  border: 1px dashed var(--room-hairline);
+  border-radius: var(--room-r-chip);
+  color: var(--room-ink-faint);
+}
+
+.room-tag-add:hover,
+.room-tag-add:focus-visible {
+  color: var(--room-ink);
+  border-color: var(--room-ink-faint);
+}
+
+/* No tags yet: "+ tag" keeps out of the way until the page is pointed at. Touch screens
+   have no hover, so there it simply stays. */
+@media (hover: hover) {
+  .room-tags.is-empty .room-tag-add {
+    opacity: 0;
+    transition: opacity 0.2s var(--room-ease);
+  }
+
+  .room-page:hover .room-tags.is-empty .room-tag-add,
+  .room-tags.is-empty .room-tag-add:focus-visible {
+    opacity: 1;
+  }
+}
+
+.room-tag-field {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.room-tag-hash {
+  font-family: var(--room-mono);
+  font-size: 12px;
+  color: var(--room-ink-faint);
+  margin-right: -5px;
+}
+
+.room-tag-input {
+  width: 13ch;
+  font-family: var(--room-mono);
+  font-size: 12px;
+  color: var(--room-ink);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--room-ink-faint);
+  border-radius: 0;
+  padding: 3px 2px;
+  min-height: 0;
+  outline: none;
+}
+
+.room-tag-input:focus {
+  border-bottom-color: var(--room-ink);
+}
+
+.room-tag-suggest {
+  padding: 3px 9px;
+  border-radius: var(--room-r-chip);
+  background: rgba(31, 38, 34, 0.05);
+}
+
+.room-tag-suggest:hover {
+  color: var(--room-ink);
+  background: rgba(31, 38, 34, 0.1);
+}
+
+.room-sheet-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 10px 0 0;
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  color: var(--room-ink-faint);
+}
+
+.room-tag-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 16px 0 0;
+  max-width: 760px;
+}
+
+.room-tag-link {
+  font-family: var(--room-mono);
+  font-size: 12.5px;
+  min-height: 0;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  color: var(--room-on-ground-70);
+  cursor: pointer;
+}
+
+.room-tag-link:hover {
+  color: var(--room-on-ground);
+}
+
+.room-tag-link.is-on {
+  color: var(--room-accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.room-tag-count {
+  margin-left: 5px;
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+/* ⌘K rows that DO something (›) or name a tag (#), in the place a course's dot sits. */
+.room-search-glyph {
+  flex: none;
+  width: 10px;
+  text-align: center;
+  font-family: var(--room-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-accent-on-paper);
+}
+
+.room-search-row.is-action .room-search-title {
+  font-weight: 500;
+}
+
+/* ── Sage, talking back ───────────────────────────────────────────────────────
+   After a run the panel shows Sage's own line — set like a margin note in the hand of
+   someone who read your page — with what changed as a stamp under it, and the tags it
+   would file the note under, one click each.                                      */
+
+.room-sage-scope {
+  margin-top: 16px;
+}
+
+.room-sage-standing {
+  margin-top: 10px;
+  font-size: 13.5px;
+}
+
+.room-sage-voice-hint {
+  margin-top: 8px;
+  font-size: 13.5px;
+}
+
+.room-sage-note .room-sage-says {
+  margin: 0;
+}
+
+.room-sage-note.is-sage {
+  margin-top: 16px;
+  padding: 12px 14px 12px 16px;
+  border-left: 2px solid var(--room-accent-on-paper);
+  border-radius: 0 var(--room-r-btn) var(--room-r-btn) 0;
+  background: rgba(201, 121, 47, 0.07);
+}
+
+.room-sage-note.is-sage .room-sage-says {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--room-ink);
+}
+
+.room-sage-stamp {
+  margin: 8px 0 0;
+}
+
+.room-sage-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 10px;
+}
+
+/* "And also: TL;DR on top, Quiz me  +" — the extras, folded into one line. */
+.room-sage-more {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  margin-top: 16px;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--room-ink-soft);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.room-sage-more .room-form-label {
+  margin: 0;
+  flex: none;
+}
+
+.room-sage-more-list {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-sage-more-mark {
+  flex: none;
+  font-family: var(--room-mono);
+  color: var(--room-accent-on-paper);
+}
+
+.room-sage-more + .room-days {
+  margin-top: 10px;
+}
+
+/* On a phone a result's title needs the room more than its course-and-date stamp does. */
+@media (max-width: 520px) {
+  .room-search-row .room-stamp {
+    max-width: 30%;
+  }
+}
+
+/* The page's own chrome is not text. A drag that runs from one block into the next is
+   copied by the BROWSER (no editor owns the whole selection), and it copied these glyphs
+   too — a pasted "+" line and a "§×" line between the paragraphs. */
+.room-gutter-tools,
+.room-block-tools,
+.room-section-mark,
+.room-col-x,
+.room-plus-menu {
+  user-select: none;
 }

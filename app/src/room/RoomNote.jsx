@@ -5,7 +5,7 @@ import { storage } from '../firebase';
 import { useAuth } from '../context/authState';
 import {
   deleteRoomTemplate,
-  getNote,
+  getNoteFresh,
   saveNoteContentDelta,
   saveRoomTemplate,
   setNotePinned,
@@ -22,8 +22,15 @@ import RoomShell from './RoomShell';
 import Paper from './components/Paper';
 import PageBlock from './components/PageBlock';
 import FormatStrip from './components/FormatStrip';
+import MathStrip from './components/MathStrip';
+import { MathToolContext } from './mathContext';
+import { focusWhenMounted } from './focusQueue';
+import { SHORTCUT_HINTS } from './shortcutPatterns';
 import PinRail from './components/PinRail';
 import SagePanel from './components/SagePanel';
+import NoteTags from './components/NoteTags';
+import { cleanTags, withTags } from './noteTags';
+import { usePageActions } from './roomCommands';
 import { Chip, Dot, PencilRule, Pill } from './components/primitives';
 import { MenuCard, Overlay } from './components/Overlay';
 import { aspectOf, IMMUTABLE_CACHE, prepareImage } from './imageScale';
@@ -32,7 +39,13 @@ import { useRoomCourses } from './roomData';
 import { clearMatches, collectMatches, findLabel, paintMatches, revealMatch, stepIndex } from './noteFind';
 import { instantiate, isBlankPage, PAGE_TEMPLATES, savedTemplates, structureOf } from './pageTemplates';
 import {
+  BLOCK_CALLOUT,
+  BLOCK_CHECKLIST,
+  BLOCK_CODE,
   BLOCK_IMAGE,
+  BLOCK_MATH,
+  BLOCK_TEXT,
+  BLOCK_TWO_COLUMN,
   BLOCK_TYPES,
   createBlock,
   createPin,
@@ -57,6 +70,25 @@ import {
 
 const SAVE_DEBOUNCE_MS = 900;
 const UNDO_MS = 6000;
+
+// ⌘K's "Insert …" actions: what each block is called there, and what else finds it.
+const INSERT_ACTIONS = [
+  { type: BLOCK_MATH, label: 'Insert a formula', keywords: ['math', 'equation', 'latex', 'katex', '$$'] },
+  { type: BLOCK_CODE, label: 'Insert code', keywords: ['snippet', 'program', '```'] },
+  { type: BLOCK_CALLOUT, label: 'Insert a callout', keywords: ['prof said', 'box', 'important', 'remember'] },
+  { type: BLOCK_CHECKLIST, label: 'Insert a checklist', keywords: ['todo', 'tasks', 'checkbox'] },
+  { type: BLOCK_TWO_COLUMN, label: 'Insert two columns', keywords: ['split', 'side by side', 'compare'] },
+  { type: BLOCK_TEXT, label: 'Insert text', keywords: ['paragraph', 'writing'] },
+];
+
+// The ··· menu's rows, as ⌘K finds them.
+const MENU_KEYWORDS = {
+  pin: ['pinned', 'top'],
+  pdf: ['print', 'download', 'save'],
+  find: ['search', 'ctrl f'],
+  structure: ['template', 'reuse'],
+  back: ['course', 'leave'],
+};
 
 const savedStamp = (date) =>
   `Saved ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
@@ -172,6 +204,7 @@ const BlockRow = memo(function BlockRow({
               onClick={() => onInsertAfter(block.id, type.id)}
             >
               {type.label}
+              {SHORTCUT_HINTS[type.id] && <span className="room-chip-hint">{SHORTCUT_HINTS[type.id]}</span>}
             </button>
           ))}
         </div>
@@ -193,6 +226,9 @@ const RoomNote = ({ courseId, noteId }) => {
   const [blocks, setBlocks] = useState([]);
   const [title, setTitle] = useState('');
   const [pinned, setPinned] = useState(false);
+  const [tags, setTags] = useState([]);
+  // Whether the tag field under the title is open — here so ⌘K's "Add a tag" can open it.
+  const [tagging, setTagging] = useState(false);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -202,6 +238,8 @@ const RoomNote = ({ courseId, noteId }) => {
   const [undo, setUndo] = useState(null);
   // Sage: whether its panel is showing, and whether this note has a "before Sage" version.
   const [sageOpen, setSageOpen] = useState(false);
+  // { id, insert } while a formula has the caret — the dock then shows the math toolbar.
+  const [mathTool, setMathTool] = useState(null);
   const [sageVersions, setSageVersions] = useState({ has: false, view: 'improved' });
 
   // Find in this note. Arriving from ⌘K search carries the query, so the note opens with
@@ -214,6 +252,10 @@ const RoomNote = ({ courseId, noteId }) => {
   // The current match lives here; `findState` only mirrors it for display. Painting from
   // inside a setState updater would be a side effect React may run twice.
   const findIndexRef = useRef(0);
+  // Bumped when search sends you here again: re-arming find must re-reveal the first match
+  // even when the query is the same one already open.
+  const [findArrival, setFindArrival] = useState(0);
+  const arrivalKeyRef = useRef(location.key);
   const pageRef = useRef(null);
 
   // Templates.
@@ -237,6 +279,9 @@ const RoomNote = ({ courseId, noteId }) => {
   // retry: that retry would be refused too, and schedule another — a loop outliving the page.
   const aliveRef = useRef(true);
   const savedTitleRef = useRef('');
+  // Whether anything has been written since the note opened — a late server copy may only
+  // replace a page nobody has touched.
+  const touchedRef = useRef(false);
   const sectionNodes = useRef(new Map());
 
   // Which § you are reading, for the outline. Tracked by an IntersectionObserver on a thin
@@ -267,30 +312,51 @@ const RoomNote = ({ courseId, noteId }) => {
     [sections],
   );
 
-  /* ── Load ─────────────────────────────────────────────────────────────── */
+  /* ── Load ───────────────────────────────────────────────────────────────────
+     From the server whenever it answers within a moment, from this device when it does
+     not (library.js `getNoteFresh`). The old cache-first read showed whatever this device
+     saw last, so a note edited on another device — or on the deployed site after editing on
+     localhost — opened in its old version here. A server answer that arrives after the
+     device's copy is on screen replaces it only if nothing has been written yet;
+     otherwise what is being written wins, and the status line says so.            */
   useEffect(() => {
     if (!firebaseUser || !courseId || !noteId) return undefined;
     let cancelled = false;
-    getNote(firebaseUser.uid, courseId, noteId)
-      .then((note) => {
+    const show = (note) => {
+      const loaded = (note.blocks || []).map(fromStored);
+      const next = loaded.length ? loaded : startingBlocks();
+      setBlocks(next);
+      savedTitleRef.current = note.title || 'Untitled';
+      setTitle(note.title === 'Untitled' ? '' : note.title || '');
+      setPinned(Boolean(note.pinned));
+      setTags(cleanTags(note.tags));
+      setSageVersions({
+        has: Boolean(note.sageHasVersions),
+        view: note.sageView === 'original' ? 'original' : 'improved',
+      });
+      lastSavedRef.current = snapshotOf(next);
+    };
+    // What the page was opened from, to tell whether a later answer says anything new.
+    const versionOf = (note) => JSON.stringify([note.title, note.blocks, note.tags, note.pinned]);
+    touchedRef.current = false;
+    getNoteFresh(firebaseUser.uid, courseId, noteId)
+      .then(({ note, later }) => {
         if (cancelled) return;
         if (!note) {
           setStatus('That note is gone');
           setLoading(false);
           return;
         }
-        const loaded = (note.blocks || []).map(fromStored);
-        const next = loaded.length ? loaded : startingBlocks();
-        setBlocks(next);
-        savedTitleRef.current = note.title || 'Untitled';
-        setTitle(note.title === 'Untitled' ? '' : note.title || '');
-        setPinned(Boolean(note.pinned));
-        setSageVersions({
-          has: Boolean(note.sageHasVersions),
-          view: note.sageView === 'original' ? 'original' : 'improved',
-        });
-        lastSavedRef.current = snapshotOf(next);
+        show(note);
         setLoading(false);
+        later?.then((fresh) => {
+          if (cancelled || !fresh || versionOf(fresh) === versionOf(note)) return;
+          if (touchedRef.current) {
+            setStatus('Changed on another device — reopen the note to see that version');
+            return;
+          }
+          show(fresh);
+        });
       })
       .catch((err) => {
         console.error('Could not open that note', err);
@@ -367,6 +433,7 @@ const RoomNote = ({ courseId, noteId }) => {
   }, []);
 
   const scheduleSave = useCallback(() => {
+    touchedRef.current = true;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(flush, SAVE_DEBOUNCE_MS);
   }, [flush]);
@@ -460,10 +527,13 @@ const RoomNote = ({ courseId, noteId }) => {
   // not a position in it.
   const insertAfter = useCallback(
     (id, type) => {
+      const fresh = createBlock(type);
+      // A new block is for writing in: its first field takes the caret when it mounts.
+      focusWhenMounted(type === BLOCK_TWO_COLUMN ? fresh.colA[0].id : fresh.id);
       setBlocks((prev) => {
         const at = prev.findIndex((block) => block.id === id);
         const next = [...prev];
-        next.splice(at < 0 ? prev.length : at + 1, 0, createBlock(type));
+        next.splice(at < 0 ? prev.length : at + 1, 0, fresh);
         return next;
       });
       setPlusAt(null);
@@ -597,6 +667,18 @@ const RoomNote = ({ courseId, noteId }) => {
     );
   };
 
+  // Tags are few and change one at a time, so each change is written as it happens — not
+  // awaited: it lands in the local cache at once, online or not.
+  const saveTags = (next) => {
+    setTags(next);
+    if (!firebaseUser) return;
+    updateNote(firebaseUser.uid, courseId, noteId, { tags: next }).catch((err) =>
+      console.error('Could not save the tags', err),
+    );
+  };
+
+  const openTag = (tag) => navigate(`/room/notes?tag=${encodeURIComponent(tag)}`);
+
   const applyLink = () => {
     const editor = activeEditor;
     const url = linkUrl.trim();
@@ -651,6 +733,21 @@ const RoomNote = ({ courseId, noteId }) => {
     return () => clearTimeout(timer);
   }, [findOpen, findQuery, blocks]);
 
+  // Search sending you to the note that is ALREADY open does not remount the editor (it is
+  // keyed by note), so the query that arrived with this navigation is armed here. The first
+  // arrival is handled by the state initialisers above; this is every one after it.
+  useEffect(() => {
+    const query = location.state?.find;
+    if (!query || arrivalKeyRef.current === location.key) return undefined;
+    arrivalKeyRef.current = location.key;
+    const frame = requestAnimationFrame(() => {
+      setFindQuery(String(query));
+      setFindOpen(true);
+      setFindArrival((n) => n + 1);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [location.key, location.state]);
+
   // A new query starts from its first match, and brings it into view — as does the note
   // finishing loading, for a query that arrived with it from search.
   useEffect(() => {
@@ -662,7 +759,7 @@ const RoomNote = ({ courseId, noteId }) => {
       revealMatch(matchesRef.current[0], prefersStill());
     }, 160);
     return () => clearTimeout(timer);
-  }, [findOpen, findQuery, loading]);
+  }, [findOpen, findQuery, loading, findArrival]);
 
   const openFind = () => {
     setFindOpen(true);
@@ -712,6 +809,20 @@ const RoomNote = ({ courseId, noteId }) => {
 
   const activeBlock = pageBlocks.find((item) => item.id === activeBlockId);
 
+  // The section the caret is in — else the one being read. It is what Sage's "This section"
+  // sends. A caret inside a column counts as being in the column's block.
+  const focusSection = useMemo(() => {
+    const at = pageBlocks.findIndex(
+      (item) =>
+        item.id === activeBlockId ||
+        (item.type === BLOCK_TWO_COLUMN && [...(item.colA || []), ...(item.colB || [])].some((child) => child.id === activeBlockId)),
+    );
+    for (let i = at; i >= 0; i -= 1) {
+      if (pageBlocks[i].section) return pageBlocks[i].id;
+    }
+    return currentSection || sections[0]?.id || '';
+  }, [pageBlocks, activeBlockId, currentSection, sections]);
+
   const menuItems = [
     {
       id: 'pin',
@@ -743,7 +854,46 @@ const RoomNote = ({ courseId, noteId }) => {
     { id: 'back', label: 'Back to the course', onSelect: () => navigate(`/room/course/${courseId}`) },
   ];
 
+  // What ⌘K offers while this note is open: Sage, tags, the ··· menu, and a new block
+  // after the one the caret was last in (or at the end).
+  usePageActions(() => {
+    if (loading) return [];
+    const insertTarget = pageBlocks.some((item) => item.id === activeBlockId)
+      ? activeBlockId
+      : pageBlocks[pageBlocks.length - 1]?.id;
+    return [
+      {
+        id: 'note-sage',
+        label: 'Ask Sage about this note',
+        keywords: ['ai', 'improve', 'tidy', 'organize', 'summarize', 'rewrite', 'fix'],
+        run: () => setSageOpen(true),
+      },
+      { id: 'note-tag', label: 'Add a tag', keywords: ['tags', 'label', '#'], run: () => setTagging(true) },
+      // Typing "#exam" in ⌘K offers "Tag this note #exam".
+      {
+        id: 'note-tag-with',
+        forTag: true,
+        label: 'Tag this note',
+        has: (tag) => tags.includes(tag),
+        run: (tag) => saveTags(withTags(tags, tag)),
+      },
+      ...menuItems.map((item) => ({
+        id: `note-${item.id}`,
+        label: item.label,
+        keywords: MENU_KEYWORDS[item.id],
+        run: item.onSelect,
+      })),
+      ...INSERT_ACTIONS.map((action) => ({
+        id: `note-insert-${action.type}`,
+        label: action.label,
+        keywords: ['add', 'block', 'new', ...action.keywords],
+        run: () => insertAfter(insertTarget, action.type),
+      })),
+    ].map((action) => ({ hint: 'This note', ...action }));
+  });
+
   return (
+    <MathToolContext.Provider value={setMathTool}>
     <RoomShell
       back={course?.name || 'Course'}
       onBack={() => navigate(`/room/course/${courseId}`)}
@@ -786,13 +936,17 @@ const RoomNote = ({ courseId, noteId }) => {
       <div className="room-note">
         <div className="room-note-main">
           <div className="room-strip-dock">
-            <FormatStrip
-              editor={activeEditor}
-              onLink={() => setLinkOpen(true)}
-              onNewSection={() => activeBlock && toggleSection(activeBlock)}
-              sectionOn={activeBlock?.section}
-              onFind={openFind}
-            />
+            {mathTool ? (
+              <MathStrip tool={mathTool} />
+            ) : (
+              <FormatStrip
+                editor={activeEditor}
+                onLink={() => setLinkOpen(true)}
+                onNewSection={() => activeBlock && toggleSection(activeBlock)}
+                sectionOn={activeBlock?.section}
+                onFind={openFind}
+              />
+            )}
             {findOpen && (
               <div className="room-find" role="search">
                 <input
@@ -853,7 +1007,10 @@ const RoomNote = ({ courseId, noteId }) => {
             <input
               className="room-page-title"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => {
+                touchedRef.current = true;
+                setTitle(e.target.value);
+              }}
               onBlur={saveTitle}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') e.currentTarget.blur();
@@ -861,6 +1018,15 @@ const RoomNote = ({ courseId, noteId }) => {
               placeholder="Untitled"
               aria-label="Note title"
             />
+            {!loading && (
+              <NoteTags
+                tags={tags}
+                onChange={saveTags}
+                onOpenTag={openTag}
+                adding={tagging}
+                onAdding={setTagging}
+              />
+            )}
             <div style={{ width: 64, marginTop: 18, color: 'var(--room-ink)' }}>
               <PencilRule />
             </div>
@@ -947,6 +1113,10 @@ const RoomNote = ({ courseId, noteId }) => {
         versions={sageVersions}
         onVersions={setSageVersions}
         online={online}
+        sections={sections}
+        focusSection={focusSection}
+        tags={tags}
+        onAddTag={(tag) => saveTags(withTags(tags, tag))}
       />
 
       {undo && (
@@ -1005,6 +1175,7 @@ const RoomNote = ({ courseId, noteId }) => {
         </div>
       </Overlay>
     </RoomShell>
+    </MathToolContext.Provider>
   );
 };
 

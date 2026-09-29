@@ -120,18 +120,44 @@ export const courseMeta = (course, { professor = false } = {}) =>
     .filter(Boolean)
     .join(' · ');
 
+/* ── Breaks ─────────────────────────────────────────────────────────────────
+   Stretches with no classes — a fall break, the holidays: `roomPrefs.breaks`, a short
+   list of { id, name, from, until }. A break silences every course's classes on its days;
+   the things you added yourself still show. A reversed range is put the right way round
+   and a one-day break may leave `until` out.                                       */
+
+export const cleanBreaks = (value) =>
+  (Array.isArray(value) ? value : [])
+    .filter((entry) => entry && isYmd(entry.from))
+    .map((entry) => {
+      const until = isYmd(entry.until) ? entry.until : entry.from;
+      const [from, to] = entry.from <= until ? [entry.from, until] : [until, entry.from];
+      return {
+        id: String(entry.id || `${from}_${to}`),
+        name: String(entry.name || '').trim().slice(0, 60),
+        from,
+        until: to,
+      };
+    })
+    .sort((a, b) => a.from.localeCompare(b.from));
+
+export const breakOn = (breaks, key) =>
+  (breaks || []).find((entry) => key >= entry.from && key <= entry.until) || null;
+
 /* ── One day ──────────────────────────────────────────────────────────────── */
 
 const byTime = (a, b) => (a.time || '99:99').localeCompare(b.time || '99:99');
 
 // Everything on one day: the classes that meet that weekday and what you added.
 // Timed entries come first, in time order; then untimed classes; then untimed things.
-export const dayEntries = (key, { courses = [], events = [] } = {}) => {
+// `breaks` should already be cleaned (cleanBreaks) — this runs for every day on screen.
+export const dayEntries = (key, { courses = [], events = [], breaks = [] } = {}) => {
   const byId = new Map(courses.map((course) => [course.id, course]));
+  const onBreak = Boolean(breakOn(breaks, key));
 
   const classes = courses.flatMap((course) => {
     const schedule = cleanSchedule(course.schedule);
-    if (!meetsOn(schedule, key)) return [];
+    if (onBreak || !meetsOn(schedule, key)) return [];
     return [
       {
         kind: 'class',
@@ -173,14 +199,20 @@ export const dayEntries = (key, { courses = [], events = [] } = {}) => {
 
 const JOURNAL_MAX_DAYS = 400;
 
-export const journalRows = (from, to, entriesOf, keep = []) => {
+// `breakOf(key)` names the break a day falls in, if any: a quiet run never mixes break
+// days with ordinary empty days, so each can say what it is.
+export const journalRows = (from, to, entriesOf, keep = [], breakOf = () => null) => {
   const rows = [];
   if (!isYmd(from) || !isYmd(to) || from > to) return rows;
   let quiet = [];
+  let quietBreak = null;
   let month = monthOf(from);
   const flush = () => {
-    if (quiet.length) rows.push({ type: 'quiet', keys: quiet });
+    if (quiet.length) {
+      rows.push({ type: 'quiet', keys: quiet, breakName: quietBreak ? quietBreak.name || '' : null });
+    }
     quiet = [];
+    quietBreak = null;
   };
   let key = from;
   for (let n = 0; key <= to && n < JOURNAL_MAX_DAYS; n += 1, key = addDays(key, 1)) {
@@ -194,6 +226,9 @@ export const journalRows = (from, to, entriesOf, keep = []) => {
       flush();
       rows.push({ type: 'day', key, entries });
     } else {
+      const off = breakOf(key);
+      if (quiet.length && (off?.id || null) !== (quietBreak?.id || null)) flush();
+      if (!quiet.length) quietBreak = off;
       quiet.push(key);
     }
   }
@@ -203,12 +238,14 @@ export const journalRows = (from, to, entriesOf, keep = []) => {
 
 // "Saturday 19 · Sunday 20 — weekend, nothing planned."
 // "Tuesday 22 to Thursday 24 — nothing planned."
-export const quietLine = (keys = []) => {
+// "Monday 12 to Friday 16 — Fall break, no classes."   (breakName: '' for an unnamed break)
+export const quietLine = (keys = [], breakName = null) => {
   if (!keys.length) return '';
   const span =
     keys.length <= 2
       ? keys.map(dayLabel).join(' · ')
       : `${dayLabel(keys[0])} to ${dayLabel(keys[keys.length - 1])}`;
+  if (breakName !== null) return `${span} — ${breakName || 'a break'}, no classes.`;
   return `${span} — ${keys.every(isWeekend) ? 'weekend, nothing planned' : 'nothing planned'}.`;
 };
 
@@ -305,13 +342,13 @@ const partOfDay = (time) => {
 const joinThen = (names) =>
   names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')}, then ${names[names.length - 1]}`;
 
-export const classStatus = ({ courses = [], now = new Date() }) => {
+export const classStatus = ({ courses = [], now = new Date(), breaks = [] }) => {
   const scheduled = courses.filter((course) => cleanSchedule(course.schedule));
   if (!scheduled.length) return '';
 
   const todayKey = ymd(now);
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const today = dayEntries(todayKey, { courses: scheduled });
+  const today = dayEntries(todayKey, { courses: scheduled, breaks });
   const left = today.filter((entry) =>
     entry.time ? minutesOf(entry.time) + CLASS_MINUTES > nowMinutes : nowMinutes < TEACHING_DAY_ENDS,
   );
@@ -324,10 +361,15 @@ export const classStatus = ({ courses = [], now = new Date() }) => {
     return `${countWord(left.length)} classes today — ${joinThen(left.map((entry) => entry.title))}. The rest of the day is yours.`;
   }
 
-  const opener = today.length ? `${WEEKDAY_NAMES[now.getDay()]}'s done.` : 'Nothing on today.';
+  const off = breakOn(breaks, todayKey);
+  const opener = today.length
+    ? `${WEEKDAY_NAMES[now.getDay()]}'s done.`
+    : off
+      ? `${off.name || 'A break'} — no classes today.`
+      : 'Nothing on today.';
   for (let i = 1; i <= 7; i += 1) {
     const key = addDays(todayKey, i);
-    const entries = dayEntries(key, { courses: scheduled });
+    const entries = dayEntries(key, { courses: scheduled, breaks });
     if (entries.length) {
       const first = entries[0];
       const day = i === 1 ? 'tomorrow' : WEEKDAY_NAMES[parseYmd(key).getDay()];

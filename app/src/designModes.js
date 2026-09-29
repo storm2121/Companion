@@ -17,7 +17,12 @@
 
 export const DESIGN_CLASSIC = 'classic';
 export const DESIGN_ROOM = 'room';
-export const DESIGN_DEFAULT_MODE = DESIGN_CLASSIC;
+
+// What a NEW account starts in: the room (owner, 2026-09-28). This constant only seeds a
+// profile at creation (AuthContext). It is deliberately NOT the fallback for a missing
+// preference: profiles from before the seam carry no `designMode`, and those people have
+// always used classic — `resolveDesignMode` keeps them there.
+export const DESIGN_DEFAULT_MODE = DESIGN_ROOM;
 
 export const DESIGN_OPTIONS = [
   {
@@ -32,8 +37,8 @@ export const DESIGN_OPTIONS = [
   },
 ];
 
-export const resolveDesignMode = (mode) =>
-  mode === DESIGN_ROOM ? DESIGN_ROOM : DESIGN_DEFAULT_MODE;
+// A missing or unknown preference means classic — see DESIGN_DEFAULT_MODE above.
+export const resolveDesignMode = (mode) => (mode === DESIGN_ROOM ? DESIGN_ROOM : DESIGN_CLASSIC);
 
 /* ── Which design renders at a URL ─────────────────────────────────────────────
    Decided HERE, at the root of the route tree — never by redirecting. `/dashboard` in
@@ -58,6 +63,37 @@ export const designFor = (pathname = '', mode) => {
     return DESIGN_ROOM;
   }
   return DESIGN_CLASSIC;
+};
+
+/* ── The first paint ───────────────────────────────────────────────────────────
+   public/boot.js reads what is remembered here BEFORE the app's code arrives and marks
+   <html data-boot="room">, so a reload in the room paints the room's ground from the first
+   frame instead of flashing classic's. Both are `companion:` keys, so "clear this device"
+   removes them. The marks come off the moment the real page takes over (`clearBoot`). */
+
+export const DESIGN_BOOT_KEY = 'companion:design';
+export const MOOD_BOOT_KEY = 'companion:mood';
+
+export const rememberDesign = (mode) => {
+  try {
+    localStorage.setItem(DESIGN_BOOT_KEY, resolveDesignMode(mode));
+  } catch {
+    // Storage blocked: the next reload simply paints classic first, as before.
+  }
+};
+
+export const rememberMood = (mood) => {
+  try {
+    localStorage.setItem(MOOD_BOOT_KEY, mood === 'day' ? 'day' : 'night');
+  } catch {
+    // As above.
+  }
+};
+
+export const clearBoot = () => {
+  if (typeof document === 'undefined') return;
+  document.documentElement.removeAttribute('data-boot');
+  document.documentElement.removeAttribute('data-boot-mood');
 };
 
 // Sets <html data-design>. Room routes call this on mount and reset it on unmount.

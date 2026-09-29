@@ -7,6 +7,8 @@
 //
 // DOM-free and Firebase-free: tests/room.unit.test.mjs loads it under Node.
 
+import { cleanTag, cleanTags, tagCounts } from './noteTags.js';
+
 // Case- and accent-insensitive, and ONE output character per input character, so an index
 // found in the folded text is the same index in the original (a whole-string NFD would
 // shift every index after an accent).
@@ -42,17 +44,29 @@ export const snippetParts = (text, at, length, radius = 48) => {
 };
 
 // `notes` should arrive newest first; the order within each group is kept.
-// Title matches come before body matches — a title is the stronger signal.
+// Title matches come before tag matches, and both before body matches — a title is the
+// strongest signal, a word somewhere in the text the weakest.
+//
+// A query that starts with "#" asks for TAGS: the tags in use that start with what follows
+// (most used first) and the notes carrying one of them. Nothing else answers it.
 export const searchDesk = ({ query, courses = [], notes = [], texts, limit = 24 }) => {
-  const q = fold(String(query || '').trim());
-  if (!q) return { courses: [], notes: [] };
+  const raw = String(query || '').trim();
+  if (raw.startsWith('#')) return searchTags(raw, notes, limit);
+  const q = fold(raw);
+  if (!q) return { courses: [], notes: [], tags: [] };
 
   const courseHits = courses.filter((course) => fold(course.name).includes(q)).slice(0, 5);
   const byTitle = [];
+  const byTag = [];
   const byBody = [];
   notes.forEach((note) => {
     if (fold(note.title).includes(q)) {
       byTitle.push({ note, where: 'title' });
+      return;
+    }
+    const tag = cleanTags(note.tags).find((item) => fold(item).includes(q));
+    if (tag) {
+      byTag.push({ note, where: 'tag', tag });
       return;
     }
     const body = texts?.get?.(note.id);
@@ -61,7 +75,62 @@ export const searchDesk = ({ query, courses = [], notes = [], texts, limit = 24 
     if (at >= 0) byBody.push({ note, where: 'body', snippet: snippetParts(body.text, at, q.length) });
   });
 
-  return { courses: courseHits, notes: [...byTitle, ...byBody].slice(0, limit) };
+  return { courses: courseHits, notes: [...byTitle, ...byTag, ...byBody].slice(0, limit), tags: [] };
+};
+
+const searchTags = (raw, notes, limit) => {
+  const wanted = fold(cleanTag(raw));
+  const tags = tagCounts(notes).filter(({ tag }) => fold(tag).startsWith(wanted));
+  if (!wanted) return { courses: [], notes: [], tags: tags.slice(0, 8) };
+  const hits = [];
+  notes.forEach((note) => {
+    const tag = cleanTags(note.tags).find((item) => fold(item).startsWith(wanted));
+    if (tag) hits.push({ note, where: 'tag', tag });
+  });
+  return { courses: [], notes: hits.slice(0, limit), tags: tags.slice(0, 4) };
+};
+
+/* ── Actions ──────────────────────────────────────────────────────────────────
+   ⌘K also DOES things: go to a page, start a note, file a thought, switch the mood,
+   and whatever the open page offers (a note's "Find in this note"). An action is
+   { id, label, keywords?, run }; it matches when every word typed starts a word of its
+   label or keywords — "new no" finds "New note", "cal" finds "Calendar".
+   Returns [{ action, strong }], best first. `strong` means the LABEL answered the query;
+   a match found only in the keywords is weak, and the palette lists it after the notes. */
+
+const wordsOf = (text) => fold(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+export const matchActions = (query, actions = [], limit = 5) => {
+  const typed = wordsOf(query);
+  if (!typed.length) return [];
+  const phrase = typed.join(' ');
+  return actions
+    .map((action, order) => {
+      const label = wordsOf(action.label);
+      const vocab = [...label, ...wordsOf((action.keywords || []).join(' '))];
+      if (!typed.every((word) => vocab.some((known) => known.startsWith(word)))) return null;
+      // The label itself reading as typed beats a label word that starts with it, which
+      // beats a match found only in the keywords.
+      let score = 2;
+      if (label.join(' ').startsWith(phrase)) score = 0;
+      else if (typed.every((word) => label.some((known) => known.startsWith(word)))) score = 1;
+      return { action, score, order };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score || a.order - b.order)
+    .slice(0, limit)
+    .map(({ action, score }) => ({ action, strong: score < 2 }));
+};
+
+// The course a room path is about — a course page or one of its notes — or ''.
+export const courseFromPath = (pathname = '') => {
+  const found = /^\/room\/(?:course|note)\/([^/?#]+)/.exec(String(pathname));
+  if (!found) return '';
+  try {
+    return decodeURIComponent(found[1]);
+  } catch {
+    return found[1];
+  }
 };
 
 /* ── Whether the sheet is open ────────────────────────────────────────────────
