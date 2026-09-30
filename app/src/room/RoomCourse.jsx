@@ -317,7 +317,7 @@ const RoomCourse = () => {
               {selected.has(note.id) ? '✓' : ''}
             </span>
             <div className="room-course-top">
-              <span className="room-stamp" style={{ color: course?.color }}>
+              <span className="room-stamp room-stamp--course" style={{ '--room-course': course?.color }}>
                 {note.pinned ? 'Pinned' : note.kind || 'Note'}
               </span>
               <span className="room-stamp">{noteStamp(note)}</span>

@@ -129,15 +129,14 @@ const BlockBody = ({ block, accent, onChange, onFocus, inColumn = false }) => {
   if (block.type === BLOCK_CALLOUT) {
     return (
       <div
-        className="room-callout"
-        style={accent ? { borderLeftColor: accent, background: `${accent}14` } : undefined}
+        className={accent ? 'room-callout has-accent' : 'room-callout'}
+        style={accent ? { '--room-callout': accent } : undefined}
       >
         <input
           className="room-callout-label"
           value={block.label || ''}
           onChange={(e) => patch({ label: e.target.value })}
           aria-label="Callout label"
-          style={accent ? { color: accent } : undefined}
         />
         <RichText
           value={block.value}

@@ -6,6 +6,7 @@ import {
   doc,
   getDoc,
   getDocFromCache,
+  getCountFromServer,
   getDocFromServer,
   getDocs,
   increment,
@@ -108,9 +109,42 @@ const readDocFromCacheFirst = async (ref) => {
   return getDoc(ref);
 };
 
+// Each design lists only its own courses (owner, 2026-09-29). A course made in the room
+// carries `design: 'room'` (createCourse, below); classic's list leaves those out. Filtered
+// here rather than in the query: Firestore cannot ask for "field missing or not 'room'", and
+// every classic course is one with the field missing. The listener hands on a snapshot-like
+// object with the same `docs` (what classic reads), `size`, `empty`, `forEach`, `metadata`.
+const ROOM_COURSE = 'room';
+const withoutRoomCourses = (snapshot) => {
+  const docs = snapshot.docs.filter((docSnap) => docSnap.data()?.design !== ROOM_COURSE);
+  return {
+    docs,
+    size: docs.length,
+    empty: docs.length === 0,
+    metadata: snapshot.metadata,
+    forEach: (fn) => docs.forEach(fn),
+    docChanges: () => snapshot.docChanges().filter((change) => change.doc.data()?.design !== ROOM_COURSE),
+  };
+};
+
 export const listenToClasses = (uid, onData, onError) => {
   const q = query(collection(db, 'users', uid, 'classes'), orderBy('order', 'asc'));
-  return onSnapshot(q, onData, onError);
+  return onSnapshot(q, (snapshot) => onData(withoutRoomCourses(snapshot)), onError);
+};
+
+// The room's listener: every course. It lists its own, plus any older course that already
+// holds room notes — and needs to see all of them to find those (room/courseDesigns.js).
+export const listenToAllClasses = (uid, onData, onError) =>
+  onSnapshot(query(collection(db, 'users', uid, 'classes'), orderBy('order', 'asc')), onData, onError);
+
+// An older course whose notes turned out all to be room notes becomes the room's own.
+export const markRoomCourse = (uid, classId) =>
+  updateDoc(doc(db, 'users', uid, 'classes', classId), { design: ROOM_COURSE });
+
+// Every note in a course, both designs', counted on the server (one read per 1,000 notes).
+export const countCourseNotes = async (uid, classId) => {
+  const snap = await getCountFromServer(collection(db, 'users', uid, 'classes', classId, 'notes'));
+  return snap.data().count;
 };
 
 export const createClass = async (uid, { name, color }) => {
@@ -833,6 +867,8 @@ export const createCourse = (uid, { name, color, schedule, room, professor } = {
     noteCount: 0,
     order: Date.now(),
     createdAt: serverTimestamp(),
+    // The room's own: classic's list leaves it out (see listenToClasses).
+    design: ROOM_COURSE,
   };
   if (schedule) payload.schedule = schedule;
   if (room) payload.room = room;

@@ -10,19 +10,22 @@ import { useEffect, useMemo, useState } from 'react';
 import { rememberMood } from '../designModes';
 
 /* ── Mood ─────────────────────────────────────────────────────────────────────
-   'clock' resolves against the hour; 'lamp' and 'rain' pin it. Two states of one
-   theme, not two themes.                                                       */
+   Two moods, two states of one theme: 'candlelight' — a room at night, candles lit, a
+   rainy city beyond the window (the owner's picture, gently alive: Atmosphere.jsx) — and
+   'rain', the grey day. 'clock' and 'lamp' were the first night choices; candlelight
+   replaced both (owner, 2026-09-29), and a profile still holding one of them opens in it. */
 
+export const MOOD_CANDLELIGHT = 'candlelight';
+export const MOOD_RAIN = 'rain';
+// Retired choices, still understood when read.
 export const MOOD_CLOCK = 'clock';
 export const MOOD_LAMP = 'lamp';
-export const MOOD_RAIN = 'rain';
 
 export const MOOD_NIGHT = 'night';
 export const MOOD_DAY = 'day';
 
 export const MOOD_OPTIONS = [
-  { id: MOOD_CLOCK, label: 'Clock' },
-  { id: MOOD_LAMP, label: 'Lamp' },
+  { id: MOOD_CANDLELIGHT, label: 'Candlelight' },
   { id: MOOD_RAIN, label: 'Rain' },
 ];
 
@@ -34,11 +37,11 @@ export const isDaytime = (date = new Date()) => {
   return hour >= DAY_STARTS && hour < DAY_ENDS;
 };
 
-// 'clock' | 'lamp' | 'rain'  →  'night' | 'day'
+// 'candlelight' | 'rain' (and the retired 'clock' | 'lamp')  →  'night' | 'day'
 export const resolveMood = (preference, date = new Date()) => {
-  if (preference === MOOD_LAMP) return MOOD_NIGHT;
   if (preference === MOOD_RAIN) return MOOD_DAY;
-  return isDaytime(date) ? MOOD_DAY : MOOD_NIGHT;
+  if (preference === MOOD_CLOCK) return isDaytime(date) ? MOOD_DAY : MOOD_NIGHT;
+  return MOOD_NIGHT;
 };
 
 /* ── Prefs ────────────────────────────────────────────────────────────────────
@@ -50,7 +53,7 @@ export const MOTION_CALM = 'calm';
 export const MOTION_STILL = 'still';
 
 export const ROOM_PREFS_DEFAULT = {
-  mood: MOOD_CLOCK,
+  mood: MOOD_CANDLELIGHT,
   grain: true,
   handDrawn: true,
   motion: MOTION_CALM,

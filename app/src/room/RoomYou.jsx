@@ -234,7 +234,7 @@ const RoomYou = () => {
           <p className="room-you-group">The room</p>
           {row(
             'Mood',
-            'Lamp at night, rain by day. Or pick one.',
+            'Candlelight: a room at night, rain on the window, the city beyond. Rain: a grey, quiet day.',
             <Segmented options={MOOD_OPTIONS} value={prefs.mood} onChange={(mood) => set({ mood })} />,
           )}
           {row(

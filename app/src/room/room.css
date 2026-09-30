@@ -28,24 +28,46 @@ html[data-design='room'] {
   scrollbar-gutter: stable;
 
   --room-ground: #1f2622;
-  --room-paper: #f3ede1;
-  --room-ink: #1f2622;
-  --room-ink-soft: #5a625d;
-  --room-ink-faint: #8d948f;
+
+  /* By candlelight the sheets are smoked glass, not paper: a warm dark tint over the room,
+     frosted just enough to read on (the frost is in "Glass" at the end of this file), and
+     the ink turns cream. --room-paper-solid is that glass where nothing may show through —
+     a tool chip laid over text; --room-on-ink is what is written ON an ink fill. */
+  --room-glass: 30, 21, 15;
+  --room-paper: rgba(var(--room-glass), 0.64);
+  --room-paper-solid: #1f1813;
+  --room-ink: #f2e8d8;
+  --room-ink-soft: rgba(242, 232, 216, 0.72);
+  --room-ink-faint: rgba(242, 232, 216, 0.5);
+  --room-on-ink: #1f1813;
   --room-on-ground: #efe7d8;
   --room-on-ground-70: rgba(239, 231, 216, 0.7);
   --room-on-ground-48: rgba(239, 231, 216, 0.48);
   --room-accent: #f0a868;
-  --room-accent-on-paper: #c9792f;
+  --room-accent-on-paper: #f0a868;
   --room-accent-ink: #2a1a0c;
-  --room-hairline: rgba(31, 38, 34, 0.15);
-  --room-rule: rgba(31, 38, 34, 0.12);
+  --room-hairline: rgba(242, 222, 196, 0.16);
+  --room-rule: rgba(242, 222, 196, 0.11);
   --room-edge: rgba(239, 231, 216, 0.28);
   --room-edge-soft: rgba(239, 231, 216, 0.18);
 
-  /* Paper on ground, night. */
-  --room-lift: 0 22px 50px rgba(0, 0, 0, 0.42), 0 2px 0 rgba(0, 0, 0, 0.2);
-  --room-lift-hover: 0 30px 60px rgba(0, 0, 0, 0.5), 0 2px 0 rgba(0, 0, 0, 0.2);
+  /* The ink and the accent as channels, for washes: rgba(var(--room-tint), 0.05). A well
+     is the darker recess code sits in; a print is a photo laid on the sheet. */
+  --room-tint: 242, 232, 216;
+  --room-accent-rgb: 240, 168, 104;
+  --room-well: rgba(8, 5, 3, 0.26);
+  --room-print-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+  --room-paper-scheme: dark;
+
+  /* Glass on ground, night: the deep shadow, a thin warm rim, and a brighter top edge where
+     the candlelight catches it. Inset shadows, so no box changes size. */
+  --room-glass-rim: rgba(236, 178, 120, 0.2);
+  --room-glass-rim-hover: rgba(240, 180, 118, 0.38);
+  --room-glass-shine: rgba(255, 234, 208, 0.08);
+  --room-lift: inset 0 0 0 1px var(--room-glass-rim), inset 0 1px 0 var(--room-glass-shine),
+    0 22px 50px rgba(0, 0, 0, 0.42), 0 2px 0 rgba(0, 0, 0, 0.2);
+  --room-lift-hover: inset 0 0 0 1px var(--room-glass-rim-hover), inset 0 1px 0 var(--room-glass-shine),
+    0 30px 60px rgba(0, 0, 0, 0.5), 0 2px 0 rgba(0, 0, 0, 0.2);
 
   --room-font: 'Figtree', system-ui, sans-serif;
   --room-display: 'Bricolage Grotesque', system-ui, sans-serif;
@@ -79,9 +101,19 @@ html[data-design='room'] {
 html[data-design='room'][data-mood='day'] {
   --room-ground: #d6dde0;
   --room-paper: #fbfaf6;
+  --room-paper-solid: #fbfaf6;
   --room-ink: #25302d;
   --room-ink-soft: #5f6a67;
   --room-ink-faint: #939c99;
+  --room-on-ink: #fbfaf6;
+  --room-accent-on-paper: #c9792f;
+  --room-hairline: rgba(31, 38, 34, 0.15);
+  --room-rule: rgba(31, 38, 34, 0.12);
+  --room-tint: 31, 38, 34;
+  --room-accent-rgb: 201, 121, 47;
+  --room-well: rgba(31, 38, 34, 0.05);
+  --room-print-shadow: 0 10px 24px rgba(31, 38, 34, 0.16);
+  --room-paper-scheme: light;
   --room-on-ground: #25302d;
   --room-on-ground-70: rgba(37, 48, 45, 0.72);
   --room-on-ground-48: rgba(37, 48, 45, 0.5);
@@ -233,6 +265,342 @@ html[data-design='room'][data-motion='still'] *::after {
   animation: room-rain linear infinite;
 }
 
+/* ── Candlelight ──────────────────────────────────────────────────────────────
+   The owner's picture: a bedroom at night, two candles lit, a big window onto a city by a
+   river, rain on the glass. Gently alive, never busy. Every loop returns to its own start;
+   only opacity and transform animate; Still mode and reduced motion (above) stop it all. */
+
+.room-candlelight {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #0e0f0d;
+  animation: room-cl-in 1.2s var(--room-ease) both;
+}
+
+/* The picture scaled to COVER the screen, as background-size: cover would — but as a box,
+   so everything inside is placed in the picture's own coordinates (1672 × 941). On a phone
+   it shows the middle: the window, the city and the rain. */
+.room-cl-stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100vw, calc(100vh * 1672 / 941));
+  height: max(100vh, calc(100vw * 941 / 1672));
+  translate: -50% -50%;
+  background: url('./assets/candlelight.webp') center / 100% 100% no-repeat;
+  /* A 2x copy for sharp screens (Lanczos + a light unsharp mask — no AI upscaling, nothing
+     invented). A browser that cannot read image-set keeps the line above. */
+  background-image: -webkit-image-set(url('./assets/candlelight.webp') 1x, url('./assets/candlelight-2x.webp') 2x);
+  background-image: image-set(url('./assets/candlelight.webp') 1x, url('./assets/candlelight-2x.webp') 2x);
+}
+
+/* The glass: everything beyond it is clipped to it, and feathered into a soft oval so no
+   layer can ever show the box's straight edge against the frame or the sill. */
+.room-cl-window {
+  position: absolute;
+  left: 20.9%;
+  top: 0;
+  width: 59.6%;
+  height: 69.5%;
+  overflow: hidden;
+  -webkit-mask-image: radial-gradient(ellipse 58% 62% at 50% 42%, #000 62%, transparent 100%);
+  mask-image: radial-gradient(ellipse 58% 62% at 50% 42%, #000 62%, transparent 100%);
+}
+
+/* Rain beyond the glass — thin, faint, a little slanted by the wind. Each streak is a
+   full-height column whose top tenth is the streak, so one translate carries it across. */
+.room-cl-rain {
+  position: absolute;
+  inset: -12% -8%;
+  transform: rotate(7deg);
+}
+
+.room-cl-streak {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    rgba(205, 222, 240, 0) 0%,
+    rgba(205, 222, 240, var(--a, 0.08)) 5%,
+    rgba(205, 222, 240, 0) 10%,
+    transparent 100%
+  );
+  will-change: transform;
+  animation-name: room-cl-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* A drop on the pane, sliding down slowly, a faint wet trail above it. */
+.room-cl-drop {
+  position: absolute;
+  top: 0;
+  width: var(--s, 5px);
+  height: 100%;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation-name: room-cl-slide;
+  animation-timing-function: ease-in;
+  animation-iteration-count: infinite;
+}
+
+.room-cl-drop::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--s, 5px);
+  height: calc(var(--s, 5px) * 1.25);
+  border-radius: 50% 50% 45% 45%;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 238, 214, 0.5), rgba(196, 212, 228, 0.16) 58%, transparent 74%);
+}
+
+.room-cl-drop::after {
+  content: '';
+  position: absolute;
+  left: calc(var(--s, 5px) / 2 - 0.5px);
+  top: calc(var(--s, 5px) * -7);
+  width: 1px;
+  height: calc(var(--s, 5px) * 7);
+  background: linear-gradient(to bottom, transparent, rgba(200, 216, 232, 0.12));
+}
+
+/* The glass fogging a little near the sill, breathing with the warm room. */
+.room-cl-fog {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 26%;
+  background: linear-gradient(to top, transparent 0%, rgba(180, 188, 196, 0.06) 38%, transparent 100%);
+  will-change: opacity;
+  animation: room-cl-breathe 11s ease-in-out infinite;
+}
+
+/* Mist drifting over the city. */
+.room-cl-mist {
+  position: absolute;
+  left: -10%;
+  top: 40%;
+  width: 120%;
+  height: 34%;
+  background:
+    radial-gradient(ellipse 60% 50% at 40% 55%, rgba(170, 160, 140, 0.07), transparent 70%),
+    radial-gradient(ellipse 40% 45% at 78% 45%, rgba(150, 150, 140, 0.05), transparent 70%);
+  will-change: transform, opacity;
+  animation: room-cl-mist 12s ease-in-out infinite;
+}
+
+/* The river's reflections, shimmering by a few pixels. */
+.room-cl-water {
+  position: absolute;
+  left: 0.2%;
+  top: 72%;
+  width: 65%;
+  height: 18.7%;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 196, 120, 0) 0,
+    rgba(255, 196, 120, 0) 5px,
+    rgba(255, 196, 120, 0.05) 6px,
+    rgba(255, 196, 120, 0) 8px
+  );
+  -webkit-mask-image: radial-gradient(ellipse 60% 55% at 45% 45%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(ellipse 60% 55% at 45% 45%, #000 20%, transparent 75%);
+  mix-blend-mode: screen;
+  will-change: transform, opacity;
+  animation: room-cl-water 9s ease-in-out infinite;
+}
+
+/* A few city lights, twinkling. */
+.room-cl-light {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: rgba(255, 214, 150, 0.95);
+  box-shadow: 0 0 4px 1px rgba(255, 190, 110, 0.45);
+  opacity: 0.2;
+  will-change: opacity;
+  animation-name: room-cl-twinkle;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* The warmth the candles throw on the window frame and the wall, breathing. */
+.room-cl-spill {
+  position: absolute;
+  translate: -50% -50%;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  will-change: opacity;
+  animation: room-cl-breathe 9s ease-in-out infinite;
+}
+
+.room-cl-spill--left {
+  left: 17%;
+  top: 44%;
+  width: 12%;
+  height: 52%;
+  background: radial-gradient(ellipse at center, rgba(255, 150, 70, 0.14), transparent 70%);
+}
+
+.room-cl-spill--right {
+  left: 92%;
+  top: 48%;
+  width: 16%;
+  height: 44%;
+  background: radial-gradient(ellipse at center, rgba(255, 150, 70, 0.12), transparent 70%);
+  animation-duration: 11s;
+  animation-delay: -4s;
+}
+
+/* The candles: a warm halo on each flame, flickering — softly, never a strobe. */
+.room-cl-flame {
+  position: absolute;
+  width: 9%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 186, 96, 0.42) 0%, rgba(255, 150, 60, 0.16) 30%, transparent 62%);
+  mix-blend-mode: screen;
+  will-change: opacity, transform;
+  animation: room-cl-flicker 3.4s ease-in-out infinite;
+}
+
+.room-cl-flame--left {
+  left: 18.06%;
+  top: 60.9%;
+}
+
+.room-cl-flame--right {
+  left: 90.9%;
+  top: 59.1%;
+  width: 7%;
+  animation-duration: 4.1s;
+  animation-delay: -1.3s;
+}
+
+@keyframes room-cl-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes room-cl-fall {
+  from {
+    transform: translateY(-12%);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+/* It slides a long way and fades before the end, so the jump back is never seen. */
+@keyframes room-cl-slide {
+  0% {
+    transform: translateY(6%);
+    opacity: 0;
+  }
+  12%,
+  82% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(78%);
+    opacity: 0;
+  }
+}
+
+@keyframes room-cl-breathe {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes room-cl-mist {
+  0%,
+  100% {
+    transform: translateX(0);
+    opacity: 0.8;
+  }
+  50% {
+    transform: translateX(22px);
+    opacity: 1;
+  }
+}
+
+@keyframes room-cl-water {
+  0%,
+  100% {
+    transform: translateX(0);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateX(-5px);
+    opacity: 1;
+  }
+}
+
+@keyframes room-cl-twinkle {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  40% {
+    opacity: 0.75;
+  }
+  55% {
+    opacity: 0.35;
+  }
+  70% {
+    opacity: 0.85;
+  }
+}
+
+@keyframes room-cl-flicker {
+  0%,
+  100% {
+    opacity: 0.82;
+    transform: scale(1);
+  }
+  14% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+  27% {
+    opacity: 0.88;
+    transform: scale(0.99);
+  }
+  41% {
+    opacity: 0.96;
+    transform: scale(1.02);
+  }
+  58% {
+    opacity: 0.84;
+    transform: scale(1);
+  }
+  72% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  86% {
+    opacity: 0.9;
+    transform: scale(1.01);
+  }
+}
+
 .room-grain {
   position: absolute;
   inset: 0;
@@ -338,8 +706,8 @@ html[data-design='room'][data-grain='off'] .room-grain {
 }
 
 /* ── Paper ────────────────────────────────────────────────────────────────────
-   Every card is a sheet: cream fill, the deep two-part shadow, a static tilt.
-   Hover lifts it 5px AND straightens it. Nothing scales.                       */
+   Every card is a sheet: paper by day, smoked glass by candlelight (the fill and the
+   shadow are tokens), a static tilt. Hover lifts it 5px AND straightens it. Nothing scales. */
 
 .room-paper {
   position: relative;
@@ -473,14 +841,14 @@ html[data-design='room'][data-grain='off'] .room-grain {
 }
 
 .room-paper .room-chip {
-  border-color: rgba(31, 38, 34, 0.3);
+  border-color: rgba(var(--room-tint), 0.3);
   color: var(--room-ink-soft);
 }
 
 .room-paper .room-chip[aria-pressed='true'] {
   background: var(--room-ink);
   border-color: var(--room-ink);
-  color: var(--room-paper);
+  color: var(--room-on-ink);
 }
 
 .room-toggle {
@@ -513,7 +881,7 @@ html[data-design='room'][data-grain='off'] .room-grain {
 }
 
 .room-toggle[aria-pressed='true']::after {
-  background: var(--room-paper);
+  background: var(--room-on-ink);
   transform: translateX(16px);
 }
 
@@ -685,7 +1053,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-rule {
 .room-scene-inner {
   width: 100%;
   height: 100%;
-  border: var(--room-border) dashed rgba(31, 38, 34, 0.28);
+  border: var(--room-border) dashed rgba(var(--room-tint), 0.28);
   border-radius: 12px;
   display: flex;
   align-items: center;
@@ -927,8 +1295,8 @@ html[data-design='room'][data-hand-drawn='off'] .room-rule {
 }
 
 /* The select mark: the design's own checklist box (wobbly round, 1.6px ink; done = filled
-   ink with a cream ✓), pinned to the sheet's corner. Paper-filled so it reads on the
-   sheet AND on the dark ground behind the corner. It shows on hover — which is how a mouse
+   ink with the ✓ in the sheet's colour), pinned to the sheet's corner. Filled solid so it
+   reads on the sheet AND on the ground behind the corner. It shows on hover — which is how a mouse
    user discovers selecting at all — and stays on every sheet while in select mode. */
 .room-select-mark {
   position: absolute;
@@ -941,8 +1309,8 @@ html[data-design='room'][data-hand-drawn='off'] .room-rule {
   justify-content: center;
   border: var(--room-border) solid var(--room-ink);
   border-radius: var(--room-r-round);
-  background: var(--room-paper);
-  color: var(--room-paper);
+  background: var(--room-paper-solid);
+  color: transparent;
   font-size: 12px;
   font-weight: 800;
   line-height: 1;
@@ -962,6 +1330,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-rule {
 
 .room-paper.is-selected > .room-select-mark {
   background: var(--room-ink);
+  color: var(--room-on-ink);
   opacity: 1;
 }
 
@@ -1329,7 +1698,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-rule {
   border: 0;
   border-radius: var(--room-r-round);
   background: var(--room-ink);
-  color: var(--room-paper);
+  color: var(--room-on-ink);
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
@@ -1412,7 +1781,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-rule {
   gap: 2px;
   padding: 2px 4px;
   border-radius: var(--room-r-btn);
-  background: var(--room-paper);
+  background: var(--room-paper-solid);
   opacity: 0;
   transition: opacity 0.25s var(--room-ease);
 }
@@ -1509,7 +1878,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   top: -4px;
   z-index: 3;
   opacity: 0;
-  background: var(--room-paper);
+  background: var(--room-paper-solid);
   border-radius: var(--room-r-btn);
   transition: opacity 0.25s var(--room-ease);
 }
@@ -1555,10 +1924,14 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
 }
 
 .room-callout {
-  border-left: 3px solid var(--room-accent-on-paper);
-  background: rgba(31, 38, 34, 0.05);
+  border-left: 3px solid var(--room-callout, var(--room-accent-on-paper));
+  background: rgba(var(--room-tint), 0.05);
   border-radius: 0 10px 10px 0;
   padding: 12px 16px 12px 18px;
+}
+
+.room-callout.has-accent {
+  background: color-mix(in srgb, var(--room-callout) 8%, transparent);
 }
 
 .room-callout-label {
@@ -1572,7 +1945,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--room-accent-on-paper);
+  color: var(--room-callout, var(--room-accent-on-paper));
   margin-bottom: 4px;
   outline: none;
 }
@@ -1602,7 +1975,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
 .room-code-area {
   width: 100%;
   border: 0;
-  background: rgba(31, 38, 34, 0.05);
+  background: var(--room-well);
   border-radius: 10px;
   padding: 16px 18px;
   min-height: 0;
@@ -1672,7 +2045,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   font-family: var(--room-mono);
   font-size: 13px;
   line-height: 1.6;
-  background: rgba(31, 38, 34, 0.05);
+  background: var(--room-well);
   border-radius: 10px;
   padding: 14px 16px;
   overflow-x: auto;
@@ -1681,23 +2054,26 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
 /* A marker stroke, not a solid fill. TipTap's multicolor Highlight writes both an inline
    background-color and a data-color attribute; the inline colour is cleared and the
    attribute drives the gradient, so the band sits where a real highlighter would. */
-.room-prose mark {
+.room-prose mark,
+.room-search-snippet mark {
+  --room-mark: var(--room-marker);
+  --room-mark-band: color-mix(in srgb, var(--room-mark) var(--room-mark-strength, 100%), transparent);
   background-color: transparent !important;
   background-image: linear-gradient(
     transparent 52%,
-    var(--room-marker) 52%,
-    var(--room-marker) 92%,
+    var(--room-mark-band) 52%,
+    var(--room-mark-band) 92%,
     transparent 92%
   );
   color: inherit;
 }
 
 .room-prose mark[data-color='#bfe3d0'] {
-  background-image: linear-gradient(transparent 52%, #bfe3d0 52%, #bfe3d0 92%, transparent 92%);
+  --room-mark: #bfe3d0;
 }
 
 .room-prose mark[data-color='#f5c7cf'] {
-  background-image: linear-gradient(transparent 52%, #f5c7cf 52%, #f5c7cf 92%, transparent 92%);
+  --room-mark: #f5c7cf;
 }
 
 /* Checklist: a wobbly 16px box; done is filled ink with a cream tick. */
@@ -1744,7 +2120,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--room-paper);
+  color: var(--room-on-ink);
   font-size: 10px;
   font-weight: 800;
 }
@@ -1923,7 +2299,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   width: 24px;
   height: 24px;
   border-radius: var(--room-r-round);
-  background: var(--room-paper);
+  background: var(--room-paper-solid);
   color: var(--room-ink);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
   opacity: 0;
@@ -2107,10 +2483,10 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   filter: none;
 }
 
-/* Fields sit on paper, which is light in both moods: their native pickers (date, time)
-   must draw for a light surface even when the room is dark. */
+/* Fields take their sheet's scheme, not the room's: native pickers (date, time) draw for
+   light paper by day and for dark glass at night. */
 .room-paper .room-field {
-  color-scheme: light;
+  color-scheme: var(--room-paper-scheme);
 }
 
 .room-topline-link[aria-current='page'] {
@@ -2224,7 +2600,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
 }
 
 .room-search-row.is-active {
-  background: rgba(31, 38, 34, 0.06);
+  background: rgba(var(--room-tint), 0.06);
 }
 
 .room-search-text {
@@ -2255,16 +2631,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   white-space: nowrap;
 }
 
-/* The design's highlighter stroke, as on the page itself. */
-.room-search-snippet mark {
-  color: inherit;
-  background: linear-gradient(
-    transparent 52%,
-    var(--room-marker) 52%,
-    var(--room-marker) 92%,
-    transparent 92%
-  );
-}
+/* The design's highlighter stroke, as on the page itself (drawn with the page's marks). */
 
 .room-search-row .room-stamp {
   flex: none;
@@ -2572,6 +2939,13 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   opacity: 0.75;
 }
 
+/* The note tags further down share the .room-tag class; a calendar entry's tag stays amber. */
+.room-entry .room-tag {
+  color: var(--room-accent-ink);
+  background: var(--room-accent-warm);
+  border-color: var(--room-accent-warm);
+}
+
 .room-day-add {
   font-family: inherit;
   font-size: 18px;
@@ -2627,7 +3001,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
 }
 
 .room-month-cell:hover {
-  background: rgba(31, 38, 34, 0.045);
+  background: rgba(var(--room-tint), 0.045);
 }
 
 .room-month-cell.is-out {
@@ -2757,7 +3131,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
 }
 
 .room-scene-inner:hover:not(:disabled) {
-  border-color: rgba(31, 38, 34, 0.45);
+  border-color: rgba(var(--room-tint), 0.45);
   color: var(--room-ink-soft);
 }
 
@@ -2782,7 +3156,7 @@ html[data-design='room'][data-hand-drawn='off'] .room-plus {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--room-ink-soft);
-  background: var(--room-paper);
+  background: var(--room-paper-solid);
   border-radius: var(--room-r-chip);
 }
 
@@ -2885,7 +3259,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
   border: 0;
   border-radius: 10px;
   overflow: hidden;
-  background: rgba(31, 38, 34, 0.08);
+  background: rgba(var(--room-tint), 0.08);
   cursor: pointer;
 }
 
@@ -3141,7 +3515,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
 }
 
 .room-math-open:hover {
-  background: rgba(31, 38, 34, 0.04);
+  background: rgba(var(--room-tint), 0.04);
 }
 
 .room-math-view {
@@ -3212,7 +3586,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
   align-items: center;
   border: 1px solid var(--room-hairline);
   border-radius: var(--room-r-chip);
-  background: rgba(31, 38, 34, 0.03);
+  background: rgba(var(--room-tint), 0.03);
 }
 
 .room-tag-name,
@@ -3309,12 +3683,12 @@ html[data-design='room'] .room-tag-input:focus-visible {
 .room-tag-suggest {
   padding: 3px 9px;
   border-radius: var(--room-r-chip);
-  background: rgba(31, 38, 34, 0.05);
+  background: rgba(var(--room-tint), 0.05);
 }
 
 .room-tag-suggest:hover {
   color: var(--room-ink);
-  background: rgba(31, 38, 34, 0.1);
+  background: rgba(var(--room-tint), 0.1);
 }
 
 .room-sheet-tags {
@@ -3405,7 +3779,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
   margin-top: 16px;
   padding: 12px 14px 12px;
   border-radius: var(--room-r-btn);
-  background: rgba(201, 121, 47, 0.08);
+  background: rgba(var(--room-accent-rgb), 0.08);
 }
 
 .room-sage-note.is-sage::before {
@@ -3551,7 +3925,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
   width: 100%;
   height: auto;
   border-radius: 10px;
-  box-shadow: 0 10px 24px rgba(31, 38, 34, 0.16);
+  box-shadow: var(--room-print-shadow);
   -webkit-user-drag: none;
 }
 
@@ -3576,7 +3950,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
   padding: 0;
   border: 0;
   border-radius: var(--room-r-round);
-  background: var(--room-paper);
+  background: var(--room-paper-solid);
   color: var(--room-ink);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
   font-family: inherit;
@@ -3636,7 +4010,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
 
 .room-image.is-over .room-image-drop {
   border-color: var(--room-accent-on-paper);
-  background: rgba(201, 121, 47, 0.06);
+  background: rgba(var(--room-accent-rgb), 0.06);
 }
 
 .room-image-note {
@@ -3733,7 +4107,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
 
 .room-sage-goal.is-on {
   border-color: var(--room-ink);
-  background: rgba(31, 38, 34, 0.04);
+  background: rgba(var(--room-tint), 0.04);
 }
 
 .room-sage-check {
@@ -3754,7 +4128,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
 .room-sage-goal.is-on .room-sage-check {
   border-color: var(--room-ink);
   background: var(--room-ink);
-  color: var(--room-paper);
+  color: var(--room-on-ink);
 }
 
 .room-sage-goal-text {
@@ -3780,7 +4154,7 @@ html[data-design='room'] .room-tag-input:focus-visible {
   margin-top: 12px;
   padding: 14px;
   border-radius: var(--room-r-btn);
-  background: rgba(31, 38, 34, 0.035);
+  background: rgba(var(--room-tint), 0.035);
 }
 
 .room-sage-instructions .room-days {
@@ -3813,4 +4187,147 @@ html[data-design='room'] .room-tag-input:focus-visible {
   .room-sage {
     width: auto;
   }
+}
+
+/* ── Glass (night) ────────────────────────────────────────────────────────────
+   By candlelight every sheet is smoked glass. The tint, the rim and the shadow are the
+   tokens at the top; this adds the frost, and thickens the glass where there is more to
+   read. Kept plain on purpose — no sheen, no glow, no gradient: a warm dark pane with the
+   candlelight on its edge. The frost stays modest because the room behind it moves, and
+   every frame is frosted again. Day keeps its paper. */
+
+html[data-design='room']:not([data-mood='day']) .room-paper {
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+}
+
+/* Thicker where you read at length, thickest where a sheet lies over other sheets. */
+html[data-design='room']:not([data-mood='day']) .room-page {
+  --room-paper: rgba(var(--room-glass), 0.82);
+}
+
+html[data-design='room']:not([data-mood='day']) .room-you-sheet,
+html[data-design='room']:not([data-mood='day']) .room-month {
+  --room-paper: rgba(var(--room-glass), 0.78);
+}
+
+html[data-design='room']:not([data-mood='day']) .room-overlay-sheet,
+html[data-design='room']:not([data-mood='day']) .room-sage {
+  --room-paper: rgba(var(--room-glass), 0.88);
+}
+
+/* A menu often opens inside another sheet, which seals it off from the room behind (a frosted
+   box frosts only its own contents), so it cannot be frosted: it is simply opaque. */
+html[data-design='room']:not([data-mood='day']) .room-menu {
+  --room-paper: rgb(var(--room-glass));
+}
+
+/* The format strip and the find bar stick over the page as it scrolls. By day a band of
+   ground hides the text passing under them; at night that band would be a flat stripe over
+   the glass, so the strip is a pane of the same glass instead and frosts what passes. */
+html[data-design='room']:not([data-mood='day']) .room-strip-dock {
+  background: transparent;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-strip,
+html[data-design='room']:not([data-mood='day']) .room-find {
+  background: rgba(var(--room-glass), 0.74);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+}
+
+/* The selection bar floats over the sheets: a strip of the same glass. */
+html[data-design='room']:not([data-mood='day']) .room-bulk {
+  background: rgba(var(--room-glass), 0.88);
+  border-color: var(--room-glass-rim);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+}
+
+/* A callout is a warm slip in the course's colour rather than a stripe. The stripe's 3px
+   go into the padding, so the text stays exactly where it was. */
+html[data-design='room']:not([data-mood='day']) .room-callout {
+  border-left-width: 0;
+  padding-left: 21px;
+  border-radius: 10px;
+  background: rgba(var(--room-accent-rgb), 0.1);
+}
+
+html[data-design='room']:not([data-mood='day']) .room-callout.has-accent {
+  background: color-mix(in srgb, var(--room-callout) 13%, transparent);
+}
+
+html[data-design='room']:not([data-mood='day']) .room-callout-label {
+  color: color-mix(in oklab, var(--room-callout, var(--room-accent)) 58%, var(--room-ink));
+}
+
+/* A highlighter on dark glass is a thinner band, so the cream ink reads through it. */
+html[data-design='room']:not([data-mood='day']) {
+  --room-mark-strength: 50%;
+}
+
+/* The ink colours were mixed for paper. On glass the dark ink IS the page's ink, and the
+   others lift a step so they read. Inline styles, hence !important — both spellings, since
+   the editor writes hex and reads back rgb(). */
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='#1f2622' i],
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='rgb(31, 38, 34)'] {
+  color: var(--room-ink) !important;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='#6b5bd2' i],
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='rgb(107, 91, 210)'] {
+  color: #aa9ff2 !important;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='#2e8b6a' i],
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='rgb(46, 139, 106)'] {
+  color: #72c8a6 !important;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='#c9792f' i],
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='rgb(201, 121, 47)'] {
+  color: #f0a868 !important;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='#c24a6e' i],
+html[data-design='room']:not([data-mood='day']) .room-prose [style*='rgb(194, 74, 110)'] {
+  color: #ee96b0 !important;
+}
+
+/* …and the strip's swatches show the ink as it will look. */
+html[data-design='room']:not([data-mood='day']) .room-strip-swatch[aria-label='Ink #1f2622'] {
+  background: var(--room-ink) !important;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-strip-swatch[aria-label='Ink #6b5bd2'] {
+  background: #aa9ff2 !important;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-strip-swatch[aria-label='Ink #2e8b6a'] {
+  background: #72c8a6 !important;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-strip-swatch[aria-label='Ink #c9792f'] {
+  background: #f0a868 !important;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-strip-swatch[aria-label='Ink #c24a6e'] {
+  background: #ee96b0 !important;
+}
+
+/* Text in a course's colour (a note sheet's PINNED / LECTURE) lifts toward the ink on glass,
+   so a deep purple still reads at 11px. The colour arrives as --room-course. */
+.room-paper .room-stamp--course {
+  color: var(--room-course, var(--room-ink-faint));
+}
+
+html[data-design='room']:not([data-mood='day']) .room-paper .room-stamp--course {
+  color: color-mix(in oklab, var(--room-course, var(--room-ink-faint)) 62%, var(--room-ink));
+}
+
+/* The shelf fades its edges with a mask, and a masked box is a sealed room for the frost:
+   sheets inside it cannot blur what lies behind the shelf. They get thicker glass instead,
+   so the city's lights stay soft through them. */
+html[data-design='room']:not([data-mood='day']) .room-course-grid.is-shelf .room-paper {
+  --room-paper: rgba(var(--room-glass), 0.76);
 }

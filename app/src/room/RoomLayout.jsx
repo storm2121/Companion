@@ -22,7 +22,7 @@ import './room.css';
 // else — not the page, and not an open editor.
 const Weather = ({ stored }) => {
   const { mood, prefs } = useRoomAtmosphere(stored);
-  return <Atmosphere mood={mood} grain={prefs.grain} />;
+  return <Atmosphere mood={mood} scene={prefs.mood} grain={prefs.grain} />;
 };
 
 // Every room page's code, fetched while the connection is good, so the room keeps

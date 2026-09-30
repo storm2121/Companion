@@ -12,8 +12,9 @@
 // live listener on courses and one per course on PAGE notes only, and the persistent
 // cache means both keep working — from cache — when the connection drops.
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { listenToClasses, listenToPageNotes } from '../services/library';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { countCourseNotes, listenToAllClasses, listenToPageNotes, markRoomCourse } from '../services/library';
+import { readyToMarkRoom, showInRoom } from './courseDesigns';
 import { classStatus } from './calendarDays';
 import { tagCounts } from './noteTags';
 import { useRoomUndo } from './roomUndo';
@@ -71,10 +72,13 @@ export const useRoomDataSource = (uid) => {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notesByCourse, setNotesByCourse] = useState({});
+  // Courses whose room notes the SERVER has confirmed — the only ones safe to judge by them.
+  const [serverSeen, setServerSeen] = useState(() => new Set());
+  const checked = useRef(new Set());
 
   useEffect(() => {
     if (!uid) return undefined;
-    return listenToClasses(
+    return listenToAllClasses(
       uid,
       (snapshot) => {
         setCourses(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) })));
@@ -105,6 +109,9 @@ export const useRoomDataSource = (uid) => {
             classId,
           }));
           setNotesByCourse((prev) => ({ ...prev, [classId]: list }));
+          if (!snapshot.metadata?.fromCache) {
+            setServerSeen((prev) => (prev.has(classId) ? prev : new Set(prev).add(classId)));
+          }
         },
         (err) => console.error('Room note listener failed', err),
       ),
@@ -112,16 +119,42 @@ export const useRoomDataSource = (uid) => {
     return () => stops.forEach((stop) => stop());
   }, [uid, courseIds]);
 
+  // Each design keeps its own courses (room/courseDesigns.js): the room lists what it made,
+  // and an older course only while it holds room notes.
+  const roomCourses = useMemo(
+    () => courses.filter((course) => showInRoom(course, (notesByCourse[course.id] || []).length)),
+    [courses, notesByCourse],
+  );
+
+  // An older course whose notes are ALL room notes becomes the room's, so classic stops
+  // listing it. Checked once per course per visit: the course's own note count must not be
+  // above the room notes seen, and then the server's count of all its notes must equal them.
+  useEffect(() => {
+    if (!uid) return;
+    courses.forEach((course) => {
+      const pageCount = (notesByCourse[course.id] || []).length;
+      if (checked.current.has(course.id)) return;
+      if (!readyToMarkRoom({ course, pageCount, serverSeen: serverSeen.has(course.id) })) return;
+      checked.current.add(course.id);
+      countCourseNotes(uid, course.id)
+        .then((total) => (total === pageCount ? markRoomCourse(uid, course.id) : undefined))
+        .catch((err) => {
+          checked.current.delete(course.id);
+          console.warn('Could not check which design a course belongs to', err);
+        });
+    });
+  }, [uid, courses, notesByCourse, serverSeen]);
+
   // Names are joined here rather than when listening, so renaming a course updates every
   // note's course name without re-subscribing anything. Notes of a deleted course drop out.
   const notes = useMemo(() => {
-    const names = new Map(courses.map((course) => [course.id, course.name || '']));
+    const names = new Map(roomCourses.map((course) => [course.id, course.name || '']));
     return Object.entries(notesByCourse)
       .filter(([classId]) => names.has(classId))
       .flatMap(([classId, list]) => list.map((note) => ({ ...note, className: names.get(classId) })));
-  }, [courses, notesByCourse]);
+  }, [roomCourses, notesByCourse]);
 
-  const coursesValue = useMemo(() => ({ courses, loading }), [courses, loading]);
+  const coursesValue = useMemo(() => ({ courses: roomCourses, loading }), [roomCourses, loading]);
   return { coursesValue, notes };
 };
 
@@ -210,7 +243,7 @@ export const deskStatus = ({ courses, recent, now = new Date(), breaks = [] }) =
   const today = classStatus({ courses, now, breaks });
   if (today) return today;
   if (!recent.length) {
-    return 'Your courses carried over. Nothing written here yet — this design keeps its own notes.';
+    return 'Nothing written here yet. Open a course and start a note.';
   }
   return recent[0]?.className
     ? `You were last in ${recent[0].className}.`

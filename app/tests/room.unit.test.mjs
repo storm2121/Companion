@@ -97,6 +97,7 @@ import { Fragment, Schema, Slice } from '@tiptap/pm/model';
 import { cleanPastedText, clipboardFragment, isFromProseMirror, keptStyle, tidyPastedSlice } from '../src/room/pasteClean.js';
 import { imageSize, imageTilt, isUploadedImage } from '../src/room/pageImages.js';
 import { cleanTex, formulaRows } from '../src/room/mathText.js';
+import { isRoomCourse, readyToMarkRoom, showInRoom } from '../src/room/courseDesigns.js';
 import { fillSnippet, MATH_GROUPS } from '../src/room/mathSymbols.js';
 
 // ── The board (railLayout.js) ─────────────────────────────────────────────────
@@ -1486,5 +1487,27 @@ test('sage page back: "end" lands at the very end, in order, and an added block 
   );
   const ids = scoped.blocks.map((block) => (block.value === '<p>last in §1</p>' ? 'NEW' : block.id));
   assert.deepEqual(ids, ['t1', 'c1', 'NEW', 's2', 's3', 'r1']);
+});
+
+// ── Each design keeps its own courses ─────────────────────────────────────────
+
+test('courses: the room lists what it made, and an older course only while it holds room notes', () => {
+  assert.equal(isRoomCourse({ design: 'room' }), true);
+  assert.equal(isRoomCourse({}), false);
+  assert.equal(showInRoom({ design: 'room' }, 0), true); // the room's own, even empty
+  assert.equal(showInRoom({}, 0), false); // classic's: never in the room
+  assert.equal(showInRoom({}, 2), true); // older, but room notes live in it
+});
+
+test('courses: an older course becomes the room’s only when nothing of classic’s is in it', () => {
+  const older = { noteCount: 2 };
+  assert.equal(readyToMarkRoom({ course: older, pageCount: 2, serverSeen: true }), true);
+  // Not yet confirmed by the server: a cache can be stale either way.
+  assert.equal(readyToMarkRoom({ course: older, pageCount: 2, serverSeen: false }), false);
+  // More notes than room notes: classic notes are in it — it stays in both.
+  assert.equal(readyToMarkRoom({ course: { noteCount: 5 }, pageCount: 2, serverSeen: true }), false);
+  // No room notes, or already the room's: nothing to do.
+  assert.equal(readyToMarkRoom({ course: { noteCount: 0 }, pageCount: 0, serverSeen: true }), false);
+  assert.equal(readyToMarkRoom({ course: { design: 'room', noteCount: 1 }, pageCount: 1, serverSeen: true }), false);
 });
 

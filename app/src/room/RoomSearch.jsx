@@ -16,7 +16,7 @@ import {
 import { cleanTag } from './noteTags';
 import { noteStamp, noteTime, useRoomDesk } from './roomData';
 import { pageActions } from './roomCommands';
-import { MOOD_CLOCK, MOOD_LAMP, MOOD_RAIN } from './roomPrefs';
+import { MOOD_CANDLELIGHT, MOOD_RAIN, resolveRoomPrefs } from './roomPrefs';
 import { sayInRoom } from './roomUndo';
 import CourseSheet from './components/CourseSheet';
 import { Dot } from './components/primitives';
@@ -92,23 +92,17 @@ const roomActions = ({ go, courses, course, newNote, addCourse, mood, setMood })
       run: () => go('/room/you'),
     },
     { id: 'add-course', label: 'Add a course', keywords: ['new', 'create', 'class', 'subject'], run: addCourse },
-    mood !== MOOD_LAMP && {
-      id: 'mood-lamp',
-      label: 'Switch to the lamp mood',
-      keywords: ['night', 'dark', 'theme'],
-      run: () => setMood(MOOD_LAMP),
+    mood !== MOOD_CANDLELIGHT && {
+      id: 'mood-candlelight',
+      label: 'Switch to the candlelight mood',
+      keywords: ['night', 'dark', 'candle', 'cozy', 'city', 'window', 'theme', 'mood'],
+      run: () => setMood(MOOD_CANDLELIGHT),
     },
     mood !== MOOD_RAIN && {
       id: 'mood-rain',
       label: 'Switch to the rain mood',
-      keywords: ['day', 'light', 'theme'],
+      keywords: ['day', 'light', 'grey', 'theme', 'mood'],
       run: () => setMood(MOOD_RAIN),
-    },
-    mood !== MOOD_CLOCK && {
-      id: 'mood-clock',
-      label: 'Let the clock pick the mood',
-      keywords: ['auto', 'time', 'theme', 'switch'],
-      run: () => setMood(MOOD_CLOCK),
     },
     // "new note stat" → New note in Statistics.
     ...courses
@@ -228,7 +222,7 @@ const SearchSheet = ({ onAddCourse }) => {
       course,
       newNote,
       addCourse: onAddCourse,
-      mood: profile?.roomPrefs?.mood || MOOD_CLOCK,
+      mood: resolveRoomPrefs(profile?.roomPrefs).mood,
       setMood,
     }).filter((action) => !offeredIds.has(action.id)),
   ];
