@@ -5,8 +5,7 @@ import { useAuth } from './context/authState';
 import { clearBoot, DESIGN_ROOM, designFor, rememberDesign } from './designModes';
 import ProtectedRoute from './components/ProtectedRoute';
 import ScreenLoader from './components/ui/ScreenLoader';
-import AuthHub from './pages/AuthHub';
-import AuthComplete from './pages/AuthComplete';
+import PublicLoader from './public/PublicLoader';
 import ProfileSetup from './pages/ProfileSetup';
 import Dashboard from './pages/Dashboard';
 import ClassNotes from './pages/ClassNotes';
@@ -17,6 +16,10 @@ import ClassNotes from './pages/ClassNotes';
 const NoteEditor = lazy(() => import('./pages/NoteEditor'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Calendar = lazy(() => import('./pages/Calendar'));
+const PublicLayout = lazy(() => import('./public/PublicLayout'));
+const MarketingExperience = lazy(() => import('./public/MarketingExperience'));
+const AuthPage = lazy(() => import('./public/AuthPage'));
+const AuthCompletePage = lazy(() => import('./public/AuthCompletePage'));
 
 // The room redesign is a separate, self-contained tree (see dualmode.md). Lazy so
 // none of it — code or CSS — reaches a user who never switches designs.
@@ -123,8 +126,8 @@ const DesignLayout = () => {
   );
 };
 
-// Pages outside the signed-in layout (sign-in, setup) are classic's: a device that booted in
-// the room's colours hands them back their own.
+// The existing setup page keeps its own styling: a device that booted in the room's
+// colours hands setup back its own.
 const ClassicPage = ({ children }) => {
   useEffect(() => {
     clearBoot();
@@ -139,17 +142,35 @@ const ByDesign = ({ classic, room }) => {
   return designFor(pathname, designMode) === DESIGN_ROOM ? room : classic;
 };
 
+const RouteLoader = () => {
+  const { pathname } = useLocation();
+  return /^\/(?:login|register|sage|desk(?:\/[^/]+)?|auth\/complete)?\/?$/.test(pathname)
+    ? <PublicLoader note="Loading Companion…" />
+    : <ScreenLoader note="Loading…" />;
+};
+
 const App = () => {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Suspense fallback={<ScreenLoader note="Loading…" />}>
+        <Suspense fallback={<RouteLoader />}>
         <Routes>
-          {/* The sign-in form answers on both paths: "/" as it always has, and "/login"
-              because that is where ProtectedRoute sends a signed-out visitor. */}
-          <Route path="/" element={<ClassicPage><AuthHub /></ClassicPage>} />
-          <Route path="/login" element={<ClassicPage><AuthHub /></ClassicPage>} />
-          <Route path="/auth/complete" element={<ClassicPage><AuthComplete /></ClassicPage>} />
+          <Route element={<PublicLayout />}>
+            {/* One parent stays mounted across the home and the note pages, so transitions,
+                reading positions and return focus carry from one to the other. */}
+            <Route element={<MarketingExperience />}>
+              <Route path="/" element={<></>} />
+              <Route path="/desk" element={<></>} />
+              <Route path="/desk/:view" element={<></>} />
+              <Route path="/sage" element={<></>} />
+            </Route>
+            <Route path="/login" element={<AuthPage key="login" />} />
+            <Route path="/register" element={<AuthPage key="register" registering />} />
+            <Route path="/auth/complete" element={<AuthCompletePage />} />
+          </Route>
+          {/* A stable bookmark for returning people. The real auth/profile guard
+              checks the session, then the dashboard keeps the chosen design. */}
+          <Route path="/app" element={<ProtectedRoute requireProfile><Navigate to="/dashboard" replace /></ProtectedRoute>} />
           <Route
             path="/setup"
             element={

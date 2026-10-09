@@ -48,6 +48,9 @@ Companion/
 │  ├─ src/
 │  │  ├─ pages/              AuthHub, AuthComplete, ProfileSetup, Dashboard,
 │  │  │                      ClassNotes, NoteEditor, Settings, Calendar
+│  │  ├─ public/             public home (one page + note pages) with the prepared Sage
+│  │  │                      demo, public layout, register/login/verification, safe
+│  │  │                      return-path helpers
 │  │  ├─ components/         classes/ editor/ ui/ + ProtectedRoute
 │  │  ├─ context/            AuthContext (auth + theme), authState
 │  │  ├─ services/           library.js (all Firestore/Storage access), sage*.js
@@ -143,8 +146,15 @@ If you ever point this at a different Firebase project, replace the `firebaseCon
 
 | Path | Page | Guard |
 |---|---|---|
-| `/` | AuthHub (login / register) | public |
-| `/auth/complete` | email-link sign-in completion | public |
+| `/` | Public home: cover, desk, Sage, "More on the desk", the coming hub | public; active sessions go to `/app` |
+| `/?landing` | The home, including while signed in | public |
+| `/desk` | The home, at its desk section | public |
+| `/desk/:view` | A fictional note's own page (Weekend list, Harbor review, Sampling notes) | public |
+| `/sage` | The home, at its Sage section | public |
+| `/login` | Password and email-link login, email verification | public |
+| `/register` | Registration and email verification | public |
+| `/auth/complete` | Email-link login completion | public |
+| `/app` | Direct workspace bookmark → `/dashboard` | signed-in + profile |
 | `/setup` | ProfileSetup | signed-in |
 | `/dashboard` | Dashboard (classes + notes) | signed-in + profile |
 | `/class/:classId` | ClassNotes | signed-in + profile |
@@ -152,6 +162,28 @@ If you ever point this at a different Firebase project, replace the `firebaseCon
 | `/template/new` | NoteEditor (template builder) | signed-in + profile |
 
 Sign-in is **email/password and email-link**, restricted to `@aui.ma` addresses.
+The public pages display the restriction on registration only. Protected links keep
+their destination in `?next=`; only known local workspace routes are accepted. Email-link
+login also keeps the return path in `companion:auth-return` for links opened in another
+tab. `/app` bypasses the landing page and `/dashboard` respects the saved design preference.
+
+The public pages use a flat paper palette, self-hosted Literata for reading, and Arial for
+controls. The home (`src/public/MarketingExperience.jsx`, copy in `sceneData.js`) is one page:
+the cover; the desk, whose cards switch the note shown under it (the note flies out of its
+card, `useCardFlight.js`); the Sage demo; "More on the desk", a numbered tour of the calendar,
+inbox, ⌘K, note structure, PDF/Markdown export and the rooms, each with a small drawn scene
+that plays with scrolling; and a short teaser for the coming class hub. The shown note and the
+cover open a note's own page (`/desk/:view`), which opens out of what was clicked and folds back
+into it on Back (`useSceneTransition.js`). Transitions use measured rectangles with clipped
+snapshots rather than stretching screenshots; desk card bounds live in `deskTargets.json`.
+Rain and Candlelight show the same Weekend list. All names and content are invented.
+The four prepared Sage results live in `src/public/sageDemoData.js`, using the real goal
+labels from `room/sageChoices.js`. Every result starts from the exact same `SAGE_NOTE.before`.
+Choosing a goal applies its result at once (no Run): the accessible content updates
+immediately while stable blocks move, new blocks appear and light edits mark changed words;
+Before / After compares. Nothing calls Sage. All motion respects system reduced motion and the
+local Motion switch, and stops on navigation, resize or interruption. On phones the Sage bar
+sticks to the top while the note is read, and Sage's note is a closed native disclosure.
 
 **The editor.** Each note is a freeform canvas of draggable/resizable blocks (text or image).
 Text blocks are **TipTap/ProseMirror** instances (bold/italic/underline/strike, font size &

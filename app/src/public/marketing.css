@@ -1,0 +1,1425 @@
+/* The public home (MarketingExperience.jsx): one complete page — the cover, the desk (its cards
+   switch the note under it), Sage, "More on the desk" and what is coming — and a page of its own
+   for each note. Classes are mx-*, under html[data-public]. Flat surfaces: no shadow, gradient,
+   blur or tilt. Literata for reading and labels; Arial (--pub-ui) for controls and the little
+   drawn scenes of the app. */
+
+html[data-public] .mx {
+  position: relative;
+  display: block;
+  /* Nothing that moves ever widens the document. Fixed layers are not clipped. */
+  overflow: clip;
+}
+
+/* Each page carries the ground, so a leaving page covers the arriving one until it fades. */
+html[data-public] .mx-page {
+  background: var(--pub-ground);
+}
+
+html[data-public] .mx-wrap {
+  max-width: calc(var(--pub-max) + 2 * var(--pub-gutter));
+  margin: 0 auto;
+  padding-right: var(--pub-gutter);
+  padding-left: var(--pub-gutter);
+}
+
+html[data-public] .mx-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Every picture's proportions, set before the browser picks a crop. */
+html[data-public] .mx picture img {
+  aspect-ratio: var(--mx-ratio);
+}
+
+@media (max-width: 719px) {
+  html[data-public] .mx picture img {
+    aspect-ratio: var(--mx-ratio-phone, var(--mx-ratio));
+  }
+}
+
+/* Headings take focus when their page or section arrives; the ring is for what can be activated. */
+html[data-public] .mx [tabindex='-1']:focus {
+  outline: none;
+}
+
+/* ── Ways in and back ───────────────────────────────────────────────────── */
+
+html[data-public] .mx-back,
+html[data-public] .mx-look {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--pub-ink);
+  font-family: var(--pub-ui);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+html[data-public] .mx-look {
+  gap: 10px;
+  font-size: 15px;
+}
+
+html[data-public] .mx-back:hover,
+html[data-public] .mx-look > span:first-child {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+}
+
+html[data-public] .mx-look:hover > span:first-child {
+  text-decoration-thickness: 2px;
+}
+
+/* "Open →" on everything that opens a note's page: always there, darker under a pointer or focus. */
+html[data-public] .mx-open {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--pub-ink);
+  border-radius: 3px;
+  background: var(--pub-paper);
+  color: var(--pub-ink);
+  font-family: var(--pub-ui);
+  font-size: 13px;
+  line-height: 1.2;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+html[data-public] .mx-cover-note:hover .mx-open,
+html[data-public] .mx-cover-note:focus-visible .mx-open,
+html[data-public] .mx-shown-note:hover .mx-open,
+html[data-public] .mx-shown-note:focus-visible .mx-open {
+  background: var(--pub-ink);
+  color: var(--pub-paper);
+}
+
+/* ── Cover ──────────────────────────────────────────────────────────────── */
+
+html[data-public] .mx-cover {
+  padding-top: 30px;
+  padding-bottom: 64px;
+}
+
+html[data-public] .mx-wordmark {
+  margin: 0 0 26px;
+  font-family: var(--pub-display);
+  font-size: clamp(80px, 9.8vw, 148px);
+  font-weight: 400;
+  letter-spacing: -0.075em;
+  line-height: 1.05;
+}
+
+html[data-public] .mx-wordmark span {
+  color: var(--pub-slate);
+}
+
+html[data-public] .mx-cover-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: center;
+  gap: 40px;
+}
+
+html[data-public] .mx-cover-copy {
+  grid-column: 2;
+  grid-row: 1;
+  padding-bottom: 36px;
+}
+
+html[data-public] .mx-lede-line {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+html[data-public] .mx-lede-more {
+  margin: 12px 0 24px;
+  color: var(--pub-ink-soft);
+  font-size: 16px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+html[data-public] .mx-cover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 26px;
+}
+
+html[data-public] .mx-cover-figure {
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+}
+
+html[data-public] .mx-cover-note,
+html[data-public] .mx-shown-note {
+  position: relative;
+  display: block;
+  border-radius: 4px;
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  transition: outline-color 0.15s ease;
+}
+
+html[data-public] .mx-cover-note {
+  background: #1f2622;
+}
+
+html[data-public] .mx-cover-note:hover,
+html[data-public] .mx-shown-note:hover {
+  outline-color: var(--pub-slate);
+}
+
+html[data-public] .mx-cover-note img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+html[data-public] .mx-cover-note .mx-open {
+  right: 16px;
+  bottom: 16px;
+}
+
+html[data-public] .mx figcaption,
+html[data-public] .mx-caption {
+  margin: 10px 0 0;
+  color: var(--pub-ink-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── Home sections ──────────────────────────────────────────────────────── */
+
+html[data-public] .mx-section {
+  padding-top: 44px;
+  padding-bottom: 64px;
+  border-top: 1px solid var(--pub-line);
+}
+
+html[data-public] .mx-section h2 {
+  margin: 0 0 24px;
+  font-family: var(--pub-display);
+  font-size: 42px;
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1.15;
+}
+
+/* A heading and its one sentence share a baseline. */
+html[data-public] .mx-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 28px;
+  margin-bottom: 22px;
+}
+
+html[data-public] .mx-section-head h2 {
+  margin: 0;
+}
+
+html[data-public] .mx-section-head p {
+  margin: 0;
+  color: var(--pub-ink-soft);
+  font-size: 16.5px;
+  line-height: 1.5;
+}
+
+/* The desk: its cards choose the note shown under it. */
+html[data-public] .mx-inside {
+  position: relative;
+}
+
+html[data-public] .mx-stage {
+  position: relative;
+  border-radius: 4px;
+  background: #d6dde0;
+  transform-origin: 17% 50%;
+}
+
+html[data-public] .mx-stage img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+html[data-public] .mx-target {
+  position: absolute;
+  display: block;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  cursor: pointer;
+  transition: outline-color 0.15s ease;
+}
+
+html[data-public] .mx-target:hover {
+  outline-color: var(--pub-line);
+}
+
+/* The card whose note is on show keeps its outline. */
+html[data-public] .mx-target[aria-pressed='true'] {
+  outline-color: var(--pub-slate);
+}
+
+html[data-public] .mx-shown {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  align-items: start;
+  gap: 40px;
+  margin: 28px 0 0;
+}
+
+html[data-public] .mx-shown-note {
+  overflow: hidden;
+  border: 1px solid #b1b9b8;
+  background: #d6dde0;
+}
+
+html[data-public] .mx-shown-note img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+html[data-public] .mx-shown figcaption {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  font-size: 15.5px;
+}
+
+html[data-public] .mx-shown figcaption strong {
+  color: var(--pub-ink);
+  font-weight: 600;
+}
+
+html[data-public] .mx-shown-name {
+  color: var(--pub-ink);
+  font-family: var(--pub-display);
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+html[data-public] .mx-shown .mx-shown-fine {
+  font-size: 13px;
+}
+
+/* The layer the switch's sheet flies in (useCardFlight.js). */
+html[data-public] .mx-swap {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* Sage. */
+html[data-public] .mx-sage-own {
+  max-width: 44rem;
+  margin: 40px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--pub-line);
+  font-size: 16.5px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+/* ── More on the desk: numbered like a note's sections, each with a small drawn scene ── */
+
+html[data-public] .mx-features {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+html[data-public] .mx-feature {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+  align-items: center;
+  gap: 40px;
+  padding: 26px 0;
+  border-top: 1px solid #d3d0c7;
+  view-timeline: --feature block;
+}
+
+html[data-public] .mx-feature:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+
+html[data-public] .mx-feature-n {
+  margin-right: 14px;
+  color: var(--pub-ink-soft);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+html[data-public] .mx-feature h3 {
+  margin: 0 0 8px;
+  font-family: var(--pub-display);
+  font-size: 25px;
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+html[data-public] .mx-feature p {
+  max-width: 32em;
+  padding-left: 34px;
+  margin: 0;
+  color: var(--pub-ink-soft);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+/* Each scene is a small paper panel drawn in the app's own type. */
+html[data-public] .mx-scene {
+  position: relative;
+  height: 156px;
+  overflow: hidden;
+  padding: 14px 16px;
+  border: 1px solid #c9c6bd;
+  border-radius: 4px;
+  background: var(--pub-paper);
+  color: var(--pub-ink);
+  font-family: var(--pub-ui);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+html[data-public] .mx-scene p,
+html[data-public] .mx-scene ul {
+  margin: 0;
+}
+
+/* §1 The week. */
+html[data-public] .mx-scene--calendar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: auto 1fr 1fr;
+  gap: 6px;
+}
+
+html[data-public] .sc-day {
+  color: var(--pub-ink-soft);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+html[data-public] .sc-block {
+  overflow: hidden;
+  padding: 5px 6px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+
+html[data-public] .sc-block em {
+  display: block;
+  color: var(--pub-ink-soft);
+  font-style: normal;
+}
+
+html[data-public] .sc-class {
+  border-left: 2px solid var(--pub-slate);
+  background: #e4ece9;
+}
+
+html[data-public] .sc-meet {
+  border-left: 2px solid #9a2d4f;
+  background: #f6eaee;
+}
+
+html[data-public] .sc-due {
+  align-self: start;
+  border: 1px solid var(--pub-amber-ink);
+  background: var(--pub-amber);
+  color: var(--pub-amber-ink);
+}
+
+/* §2 The inbox. */
+html[data-public] .sc-title {
+  margin-bottom: 10px;
+  color: var(--pub-ink-soft);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+html[data-public] .sc-scrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid #e3e0d8;
+  font-size: 12.5px;
+}
+
+html[data-public] .sc-scrap::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--pub-ink-soft);
+  border-radius: 2px;
+}
+
+/* Filed: it has left the inbox (the motion shows it going). */
+html[data-public] .sc-filed {
+  opacity: 0;
+}
+
+html[data-public] .sc-into {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  color: var(--pub-ink-soft);
+  font-size: 11.5px;
+}
+
+html[data-public] .sc-into span {
+  margin-left: 4px;
+  padding: 2px 6px;
+  border-left: 2px solid #8b6b4a;
+  background: #f1ece4;
+  color: var(--pub-ink);
+}
+
+/* §3 ⌘K. */
+html[data-public] .sc-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--pub-ink);
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+html[data-public] .sc-field kbd {
+  padding: 1px 5px;
+  border: 1px solid #c9c6bd;
+  border-radius: 3px;
+  color: var(--pub-ink-soft);
+  font-family: var(--pub-ui);
+  font-size: 10.5px;
+}
+
+html[data-public] .sc-typed {
+  border-right: 1.5px solid var(--pub-ink);
+  padding-right: 2px;
+}
+
+html[data-public] .sc-results {
+  margin-top: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+html[data-public] .sc-results li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+html[data-public] .sc-results li span {
+  color: var(--pub-ink-soft);
+}
+
+html[data-public] .sc-results li.is-hit {
+  background: var(--pub-ink);
+  color: var(--pub-paper);
+}
+
+html[data-public] .sc-results li.is-hit span {
+  color: #c9ccc6;
+}
+
+/* §4 A page with shape. */
+html[data-public] .mx-scene--structure {
+  font-family: var(--pub-body);
+}
+
+html[data-public] .sc-h {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+html[data-public] .sc-h span {
+  margin-right: 6px;
+  color: var(--pub-ink-soft);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+html[data-public] .sc-math {
+  margin: 6px 0 !important;
+  font-size: 16px;
+  text-align: center;
+}
+
+html[data-public] .sc-math sub {
+  font-size: 0.68em;
+}
+
+html[data-public] .sc-callout {
+  padding: 5px 9px;
+  border-left: 2px solid #2e8b6a;
+  background: #edf3ee;
+  font-size: 12.5px;
+}
+
+html[data-public] .sc-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px !important;
+  font-size: 12.5px;
+}
+
+html[data-public] .sc-box {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--pub-ink);
+  border-radius: 50%;
+  background:
+    no-repeat center / 8px 8px
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.4 4.8 9 10 3' fill='none' stroke='%23fffefa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+    var(--pub-ink);
+}
+
+/* §5 Export. */
+html[data-public] .mx-scene--export {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 22px;
+}
+
+html[data-public] .sc-page {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  height: 120px;
+  padding: 14px 12px;
+  border: 1px solid var(--pub-ink);
+  border-radius: 2px;
+}
+
+html[data-public] .sc-page span {
+  height: 3px;
+  border-radius: 2px;
+  background: #c9c6bd;
+}
+
+html[data-public] .sc-page span:nth-child(2) {
+  width: 70%;
+}
+
+html[data-public] .sc-page span:nth-child(4) {
+  width: 55%;
+}
+
+html[data-public] .sc-page b {
+  position: absolute;
+  right: -10px;
+  bottom: 12px;
+  padding: 3px 7px;
+  border: 1px solid var(--pub-amber-ink);
+  border-radius: 2px;
+  background: var(--pub-amber);
+  color: var(--pub-amber-ink);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+html[data-public] .sc-tree {
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+
+html[data-public] .sc-leaf {
+  padding-left: 16px;
+  color: var(--pub-ink-soft);
+}
+
+/* §6 Rain and candlelight: the real photographs, one fading into the other. */
+html[data-public] .mx-scene--room {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px;
+}
+
+html[data-public] .sc-rooms {
+  position: relative;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #1f2622;
+}
+
+html[data-public] .sc-rooms img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: left top;
+}
+
+/* Candlelight wipes across Rain with a crisp edge (never a muddy half-and-half). */
+html[data-public] .sc-night {
+  border-left: 2px solid var(--pub-amber);
+}
+
+html[data-public] .sc-moods {
+  display: flex;
+  justify-content: space-between;
+  color: var(--pub-ink-soft);
+  font-size: 11.5px;
+}
+
+/* ── Coming: the hub ────────────────────────────────────────────────────── */
+
+html[data-public] .mx-hub {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 56px;
+}
+
+html[data-public] .mx-hub-label {
+  margin: 0 0 10px;
+  color: var(--pub-slate);
+  font-family: var(--pub-ui);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+html[data-public] .mx-hub h2 {
+  margin-bottom: 12px;
+}
+
+html[data-public] .mx-hub-text {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.45;
+}
+
+html[data-public] .mx-hub-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 24px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+html[data-public] .mx-hub-list li {
+  padding: 8px 0 8px 14px;
+  border-left: 2px solid var(--pub-slate);
+  font-size: 16px;
+}
+
+html[data-public] .mx-hub-close {
+  margin: 22px 0 18px;
+  color: var(--pub-ink-soft);
+  font-size: 15px;
+}
+
+/* Three notes kept in step: a dot travels the line between them. */
+html[data-public] .mx-hub-drawing {
+  position: relative;
+  height: 220px;
+}
+
+html[data-public] .hd-note {
+  position: absolute;
+  z-index: 1;
+  top: 50px;
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  width: 26%;
+  height: 120px;
+  padding: 16px 14px;
+  border: 1px solid var(--pub-line);
+  border-radius: 4px;
+  background: var(--pub-paper);
+}
+
+html[data-public] .hd-note--one {
+  left: 0;
+}
+
+html[data-public] .hd-note--two {
+  left: 37%;
+}
+
+html[data-public] .hd-note--three {
+  right: 0;
+}
+
+html[data-public] .hd-note i {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: #c9c6bd;
+}
+
+html[data-public] .hd-note i:first-child {
+  width: 60%;
+  background: var(--pub-ink);
+}
+
+html[data-public] .hd-note i:nth-child(3) {
+  width: 75%;
+}
+
+html[data-public] .hd-line {
+  position: absolute;
+  top: 110px;
+  right: 13%;
+  left: 13%;
+  height: 1px;
+  background: var(--pub-slate);
+  opacity: 0.6;
+}
+
+html[data-public] .hd-dot {
+  position: absolute;
+  top: 105px;
+  left: 50%;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  border: 1px solid var(--pub-amber-ink);
+  border-radius: 50%;
+  background: var(--pub-amber);
+}
+
+/* ── A note's own page ──────────────────────────────────────────────────── */
+
+html[data-public] .mx-note {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  column-gap: 48px;
+  align-items: start;
+  padding-top: 18px;
+  padding-bottom: 72px;
+}
+
+html[data-public] .mx-note-text {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+html[data-public] .mx-note .mx-frame {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  margin-top: 8px;
+}
+
+html[data-public] .mx-note-after {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+html[data-public] .mx-kicker {
+  margin: 14px 0 8px;
+  color: var(--pub-ink-soft);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+html[data-public] .mx-note h1 {
+  margin: 0 0 16px;
+  font-family: var(--pub-display);
+  font-size: 44px;
+  font-weight: 400;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+html[data-public] .mx-lede {
+  margin: 0;
+  color: var(--pub-ink-soft);
+  font-size: 16.5px;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+html[data-public] .mx-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #b1b9b8;
+  border-radius: 4px;
+  background: #d6dde0;
+}
+
+html[data-public] .mx-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Candlelight and Rain stacked in one place; the one on show fades in over the other. */
+html[data-public] .mx-frame--moods {
+  display: grid;
+}
+
+html[data-public] .mx-frame[data-mood='candlelight'] {
+  border-color: #444a44;
+  background: #1f2622;
+}
+
+html[data-public] .mx-mood {
+  grid-area: 1 / 1;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
+}
+
+html[data-public] .mx-mood.is-shown {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.2s ease, visibility 0s;
+}
+
+html[data-public] .mx-moods {
+  display: flex;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+html[data-public] .mx-moods button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--pub-line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--pub-ink);
+  font-family: var(--pub-ui);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+html[data-public] .mx-moods button:hover {
+  border-color: var(--pub-ink);
+}
+
+html[data-public] .mx-moods button[aria-pressed='true'] {
+  border-color: var(--pub-ink);
+  background: var(--pub-ink);
+  color: var(--pub-paper);
+}
+
+html[data-public] .mx-note-after .mx-caption {
+  margin-top: 24px;
+}
+
+html[data-public] .mx-more {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--pub-line);
+}
+
+html[data-public] .mx-more p {
+  margin: 0 0 2px;
+  color: var(--pub-ink-soft);
+  font-size: 14px;
+}
+
+html[data-public] .mx-more ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+html[data-public] .mx-more li a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  color: var(--pub-ink);
+  font-size: 16px;
+  text-decoration: underline;
+  text-decoration-color: var(--pub-line);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+html[data-public] .mx-more li a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* ── The sheet that carries a note onto its own page (useSceneTransition.js) ── */
+
+html[data-public] .mx-flight {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+html[data-public] .mx-flight-sheet {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+html[data-public] .mx-flight-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+}
+
+/* ── Motion tied to scrolling: it plays as things come into view, and back again ── */
+
+@keyframes mx-settle {
+  from {
+    opacity: 0.55;
+    transform: scale(1.06);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sc-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sc-file {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translate(40px, 34px) scale(0.92);
+  }
+}
+
+@keyframes sc-show {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sc-type {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes sc-tick {
+  from {
+    background-color: transparent;
+    background-size: 0 0;
+  }
+  to {
+    background-color: var(--pub-ink);
+    background-size: 8px 8px;
+  }
+}
+
+@keyframes sc-stamp {
+  from {
+    opacity: 0;
+    transform: scale(1.5) rotate(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sc-wipe {
+  from {
+    clip-path: inset(0 0 0 100%);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes hd-travel {
+  from {
+    left: 13%;
+  }
+  to {
+    left: 87%;
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    /* The desk steps back from the cover's note into view, around the Everyday card. */
+    html[data-public]:not([data-public-still]) .mx-stage {
+      animation: mx-settle linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 38%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-class,
+    html[data-public]:not([data-public-still]) .sc-meet,
+    html[data-public]:not([data-public-still]) .sc-due {
+      animation: sc-drop linear both;
+      animation-timeline: --feature;
+      animation-range: entry 40% cover 35%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-second {
+      animation-range: entry 55% cover 40%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-meet {
+      animation-range: entry 70% cover 45%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-due {
+      animation-range: entry 85% cover 50%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-filed {
+      animation: sc-file linear both;
+      animation-timeline: --feature;
+      animation-range: cover 20% cover 50%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-into {
+      animation: sc-show linear both;
+      animation-timeline: --feature;
+      animation-range: cover 40% cover 55%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-typed {
+      animation: sc-type steps(8, end) both;
+      animation-timeline: --feature;
+      animation-range: entry 50% cover 40%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-results li {
+      animation: sc-show linear both;
+      animation-timeline: --feature;
+      animation-range: cover 38% cover 48%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-box {
+      animation: sc-tick steps(1, end) both;
+      animation-timeline: --feature;
+      animation-range: cover 35% cover 45%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-page b {
+      animation: sc-stamp linear both;
+      animation-timeline: --feature;
+      animation-range: entry 70% cover 42%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-leaf {
+      animation: sc-show linear both;
+      animation-timeline: --feature;
+      animation-range: cover 30% cover 50%;
+    }
+
+    html[data-public]:not([data-public-still]) .sc-night {
+      animation: sc-wipe linear both;
+      animation-timeline: --feature;
+      animation-range: entry 60% cover 65%;
+    }
+  }
+}
+
+/* The hub's dot keeps moving between the notes: the one loop on the page. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-public]:not([data-public-still]) .hd-dot {
+    animation: hd-travel 3.6s ease-in-out infinite alternate;
+  }
+}
+
+/* ── Narrower screens ───────────────────────────────────────────────────── */
+
+@media (max-width: 1199px) {
+  html[data-public] .mx-cover-body {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 28px;
+  }
+
+  html[data-public] .mx-note {
+    grid-template-columns: 240px minmax(0, 1fr);
+    column-gap: 36px;
+  }
+
+  html[data-public] .mx-feature {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 300px);
+    gap: 28px;
+  }
+}
+
+@media (max-width: 899px) {
+  html[data-public] .mx-cover-body {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 22px;
+  }
+
+  html[data-public] .mx-wordmark {
+    font-size: 13vw;
+  }
+
+  html[data-public] .mx-cover-copy {
+    padding: 0;
+  }
+
+  html[data-public] .mx-lede-more {
+    max-width: 34em;
+  }
+
+  html[data-public] .mx-shown {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  html[data-public] .mx-feature {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 16px;
+  }
+
+  html[data-public] .mx-feature .mx-scene {
+    max-width: 420px;
+    margin-left: 34px;
+  }
+
+  html[data-public] .mx-hub {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  html[data-public] .mx-note {
+    display: block;
+  }
+
+  html[data-public] .mx-note .mx-frame {
+    margin-top: 26px;
+  }
+}
+
+@media (max-width: 719px) {
+  html[data-public] .mx-cover {
+    padding-top: 22px;
+    padding-bottom: 44px;
+  }
+
+  html[data-public] .mx-wordmark {
+    margin-bottom: 16px;
+    font-size: 13.5vw;
+    letter-spacing: -0.06em;
+    line-height: 1.15;
+  }
+
+  html[data-public] .mx-lede-line {
+    font-size: 19px;
+  }
+
+  html[data-public] .mx-lede-more {
+    margin-bottom: 18px;
+    font-size: 15.5px;
+  }
+
+  html[data-public] .mx-cover-note .mx-open {
+    right: 10px;
+    bottom: 10px;
+  }
+
+  html[data-public] .mx-section {
+    padding-top: 30px;
+    padding-bottom: 44px;
+  }
+
+  html[data-public] .mx-section h2 {
+    margin-bottom: 18px;
+    font-size: 34px;
+  }
+
+  html[data-public] .mx-section-head {
+    display: block;
+  }
+
+  html[data-public] .mx-section-head h2 {
+    margin-bottom: 6px;
+  }
+
+  html[data-public] .mx-section-head p {
+    font-size: 15.5px;
+  }
+
+  /* The phone desk stacks its cards: it steps back around the first one. */
+  html[data-public] .mx-stage {
+    transform-origin: 50% 15%;
+  }
+
+  html[data-public] .mx-target {
+    border-radius: 8px;
+  }
+
+  html[data-public] .mx-shown {
+    margin-top: 20px;
+  }
+
+  html[data-public] .mx-shown-name {
+    font-size: 20px;
+  }
+
+  html[data-public] .mx-sage-own {
+    margin-top: 30px;
+    font-size: 15.5px;
+  }
+
+  html[data-public] .mx-feature {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 22px 0;
+  }
+
+  html[data-public] .mx-feature p {
+    padding-left: 0;
+  }
+
+  html[data-public] .mx-feature .mx-scene {
+    margin-left: 0;
+  }
+
+  html[data-public] .mx-feature h3 {
+    font-size: 22px;
+  }
+
+  html[data-public] .mx-feature p {
+    font-size: 15.5px;
+  }
+
+  html[data-public] .mx-hub-text {
+    font-size: 18px;
+  }
+
+  html[data-public] .mx-hub-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  html[data-public] .mx-hub-drawing {
+    height: 180px;
+  }
+
+  html[data-public] .hd-note {
+    top: 30px;
+    height: 110px;
+    padding: 14px 10px;
+  }
+
+  html[data-public] .hd-line {
+    top: 85px;
+  }
+
+  html[data-public] .hd-dot {
+    top: 80px;
+  }
+
+  html[data-public] .mx-note {
+    padding-top: 10px;
+    padding-bottom: 56px;
+  }
+
+  html[data-public] .mx-note h1 {
+    font-size: 36px;
+  }
+
+  html[data-public] .mx-lede {
+    font-size: 15.5px;
+  }
+
+  html[data-public] .mx-note .mx-frame {
+    margin-top: 20px;
+  }
+
+  html[data-public] .mx-moods {
+    margin-top: 18px;
+  }
+
+  html[data-public] .mx-note-after .mx-caption {
+    margin-top: 12px;
+  }
+}
+
+/* ── Still ──────────────────────────────────────────────────────────────── */
+
+html[data-public][data-public-still] .mx-open,
+html[data-public][data-public-still] .mx-target,
+html[data-public][data-public-still] .mx-cover-note,
+html[data-public][data-public-still] .mx-shown-note,
+html[data-public][data-public-still] .mx-mood {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-public] .mx-open,
+  html[data-public] .mx-target,
+  html[data-public] .mx-cover-note,
+  html[data-public] .mx-shown-note,
+  html[data-public] .mx-mood {
+    transition: none;
+  }
+}
