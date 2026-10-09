@@ -1,0 +1,771 @@
+/* Sage previews (SagePreview.jsx), on the Sage note of the home scene (/sage).
+
+   The preview is scoped under .sage-preview, so it looks the same wherever it is placed; the page
+   around it is the scene's (marketing.css). Inner classes are sp-*: classic's stylesheet styles
+   .sage-* globally. The preview lays itself out from its own width (container queries), not the
+   window's. Flat surfaces only: no shadow, gradient, blur or tilt. Colours and type come from
+   public.css's tokens; the fallbacks are the same values. Arial (--pub-ui) is for controls only:
+   the choices, the Sage bar and its buttons. Every label and caption is Literata. */
+
+html[data-public] .sage-preview {
+  --sp-ink: var(--pub-paper-ink, #242923);
+  --sp-soft: var(--pub-paper-soft, #62645e);
+  --sp-paper: var(--pub-paper, #fffefa);
+  --sp-edge: rgba(36, 41, 35, 0.2);
+  --sp-mark: var(--pub-slate, #31534c);
+  --sp-ui: var(--pub-ui, Arial, Helvetica, sans-serif);
+  --sp-text: var(--pub-body, Literata, Georgia, serif);
+  --sp-display: var(--pub-display, Literata, Georgia, serif);
+  container: sage-preview / inline-size;
+  color: var(--pub-ink, #242923);
+  font-family: var(--sp-text);
+}
+
+html[data-public] .sage-preview .sp-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+html[data-public] .sage-preview button {
+  font-family: var(--sp-ui);
+  cursor: pointer;
+}
+
+html[data-public] .sage-preview button:focus-visible,
+html[data-public] .sage-preview input:focus-visible {
+  outline: 2px solid var(--sp-mark);
+  outline-offset: 2px;
+}
+
+/* ── The four examples (/sage only) ─────────────────────────────────────── */
+
+html[data-public] .sage-preview .sp-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 0 14px;
+  padding: 0;
+  border: 0;
+}
+
+html[data-public] .sage-preview .sp-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--pub-line, #83867d);
+  border-radius: 3px;
+  color: var(--pub-ink, #242923);
+  font-family: var(--sp-ui);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+html[data-public] .sage-preview .sp-pick:hover {
+  border-color: var(--pub-ink, #242923);
+}
+
+html[data-public] .sage-preview .sp-pick.is-active {
+  border-color: var(--sp-ink);
+  background: var(--sp-paper);
+  color: var(--sp-ink);
+}
+
+/* index.css styles every input (a 44px minimum, padding, a field background): undone here. */
+html[data-public] .sage-preview .sp-pick input {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+  transition: none; /* index.css's field transitions would animate the dot */
+}
+
+html[data-public] .sage-preview .sp-pick input:checked {
+  border-color: var(--pub-amber-ink, #2a1a0c);
+  background: var(--pub-amber, #f0a868);
+  box-shadow: inset 0 0 0 2px var(--sp-paper);
+}
+
+/* ── The note, and Sage's side of it ────────────────────────────────────── */
+
+html[data-public] .sage-preview .sp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+html[data-public] .sage-preview .sp-sheet {
+  min-width: 0;
+  border: 1px solid var(--sp-edge);
+  border-radius: 4px;
+  background: var(--sp-paper);
+  color: var(--sp-ink);
+}
+
+/* Sage in the note's top line: what it will do on the left, Run (or the versions) on the right. */
+html[data-public] .sage-preview .sp-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--sp-edge);
+  font-family: var(--sp-ui);
+}
+
+html[data-public] .sage-preview .sp-goal {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+}
+
+html[data-public] .sage-preview .sp-goal-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+html[data-public] .sage-preview .sp-goal-hint {
+  color: var(--sp-soft);
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+html[data-public] .sage-preview .sp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+
+
+html[data-public] .sage-preview .sp-compare {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  overflow: hidden;
+  border: 1px solid var(--sp-ink);
+  border-radius: 3px;
+}
+
+html[data-public] .sage-preview .sp-compare button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--sp-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+html[data-public] .sage-preview .sp-compare button + button {
+  border-left: 1px solid var(--sp-ink);
+}
+
+html[data-public] .sage-preview .sp-compare button[aria-pressed='true'] {
+  background: var(--sp-ink);
+  color: var(--sp-paper);
+}
+
+/* Inside a clipped group the ring is drawn inward, on paper or on ink. */
+html[data-public] .sage-preview .sp-compare button:focus-visible {
+  outline-offset: -4px;
+}
+
+html[data-public] .sage-preview .sp-compare button[aria-pressed='true']:focus-visible {
+  outline-color: var(--sp-paper);
+}
+
+
+/* The page itself. The wide left margin holds § numbers and what Sage changed. */
+html[data-public] .sage-preview .sp-page {
+  position: relative;
+  padding: 28px 40px 36px 76px;
+}
+
+/* Copies of blocks that just left (useNoteMotion.js) fade here, over the page. */
+html[data-public] .sage-preview .sp-ghosts {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+html[data-public] .sage-preview .sp-group {
+  margin: 0;
+  color: var(--sp-soft);
+  font-family: var(--sp-text);
+  font-size: 14px;
+}
+
+html[data-public] .sage-preview .sp-title {
+  margin: 6px 0 0;
+  font-family: var(--sp-display);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
+html[data-public] .sage-preview .sp-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+html[data-public] .sage-preview .sp-tags li {
+  padding: 3px 9px;
+  border: 1px solid var(--sp-edge);
+  border-radius: 3px;
+  color: var(--sp-soft);
+  font-family: var(--sp-text);
+  font-size: 13.5px;
+}
+
+html[data-public] .sage-preview .sp-rule {
+  display: block;
+  width: 40px;
+  height: 1px;
+  margin: 18px 0 4px;
+  background: var(--sp-ink);
+  opacity: 0.45;
+}
+
+/* Words a light clean-up changed: a marker fill from below, drawn once right after Run and kept
+   afterwards (quietly) so the comparison stays readable. */
+@keyframes sp-mark-in {
+  from {
+    box-shadow: inset 0 0 0 rgba(240, 168, 104, 0);
+  }
+  to {
+    box-shadow: inset 0 -0.42em 0 rgba(240, 168, 104, 0.4);
+  }
+}
+
+html[data-public] .sage-preview .sp-ins {
+  box-shadow: inset 0 -0.42em 0 rgba(240, 168, 104, 0.4);
+}
+
+html[data-public] .sage-preview .sp-ins.is-fresh {
+  animation: sp-mark-in 0.28s ease-out 0.22s both;
+}
+
+/* Sage's note arrives as the consequence of Run, after the page has moved. */
+@keyframes sp-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+html[data-public] .sage-preview .sp-block {
+  position: relative;
+  margin-top: 14px;
+}
+
+html[data-public] .sage-preview .sp-mark {
+  position: absolute;
+  top: 0.35em;
+  left: -68px;
+  width: 54px;
+  color: var(--sp-mark);
+  font-family: var(--sp-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: right;
+}
+
+html[data-public] .sage-preview .sp-block.is-changed::before {
+  content: '';
+  position: absolute;
+  top: 0.2em;
+  bottom: 0.2em;
+  left: -10px;
+  width: 2px;
+  background: var(--sp-mark);
+}
+
+html[data-public] .sage-preview .sp-h {
+  position: relative;
+  margin: 26px 0 0;
+  font-family: var(--sp-display);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+html[data-public] .sage-preview .sp-section {
+  position: absolute;
+  top: 0.3em;
+  left: -38px;
+  color: var(--sp-soft);
+  font-family: var(--sp-text);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+html[data-public] .sage-preview .sp-p {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.62;
+  text-wrap: pretty;
+}
+
+html[data-public] .sage-preview mark {
+  background: rgba(240, 200, 80, 0.45);
+  color: inherit;
+}
+
+html[data-public] .sage-preview .sp-check {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+html[data-public] .sage-preview .sp-check li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 11px;
+  align-items: start;
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+html[data-public] .sage-preview .sp-box {
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  border: 1.5px solid var(--sp-ink);
+  border-radius: 50%;
+}
+
+html[data-public] .sage-preview .sp-check li.is-done {
+  color: var(--sp-soft);
+  text-decoration: line-through;
+}
+
+html[data-public] .sage-preview .sp-check li.is-done .sp-box {
+  background:
+    no-repeat center / 10px 10px
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.4 4.8 9 10 3' fill='none' stroke='%23fffefa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+    var(--sp-ink);
+}
+
+/* A labelled slip: a flat tint inside a thin, even edge. */
+html[data-public] .sage-preview .sp-callout {
+  padding: 12px 16px 14px;
+  border: 1px solid var(--sp-callout-edge);
+  border-radius: 3px;
+  background: var(--sp-callout-wash);
+}
+
+html[data-public] .sage-preview .sp-callout--green {
+  --sp-callout-edge: rgba(46, 139, 106, 0.35);
+  --sp-callout-wash: #edf3ee;
+  --sp-callout-ink: #1d6a4f;
+}
+
+html[data-public] .sage-preview .sp-callout--rose {
+  --sp-callout-edge: rgba(194, 74, 110, 0.3);
+  --sp-callout-wash: #f8ecef;
+  --sp-callout-ink: #9a2d4f;
+}
+
+html[data-public] .sage-preview .sp-callout-label {
+  color: var(--sp-callout-ink);
+  font-family: var(--sp-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+html[data-public] .sage-preview .sp-callout p {
+  margin: 5px 0 0;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+/* A formula line, set like a typeset math block: italic variables, a little air after each. */
+/* One formula, one line: it never wraps, and scrolls sideways only if even the smaller size
+   cannot fit. */
+html[data-public] .sage-preview .sp-math {
+  margin: 4px 0;
+  overflow-x: auto;
+  font-size: 20px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+html[data-public] .sage-preview .sp-math em {
+  margin-right: 0.06em;
+}
+
+html[data-public] .sage-preview .sp-math sub {
+  font-size: 0.68em;
+}
+
+html[data-public] .sage-preview .sp-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+html[data-public] .sage-preview .sp-pair-column {
+  padding: 2px 20px 4px 0;
+}
+
+html[data-public] .sage-preview .sp-pair-column + .sp-pair-column {
+  padding: 2px 0 4px 20px;
+  border-left: 1px solid var(--sp-edge);
+}
+
+html[data-public] .sage-preview .sp-pair-title {
+  margin: 0;
+  font-family: var(--sp-display);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+html[data-public] .sage-preview .sp-pair ul {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 16.5px;
+  line-height: 1.5;
+}
+
+/* Sage's side: the plan before Run, Sage's own note after it. */
+/* Sage's side reads as the page's margin: Literata, like every caption on the site. */
+html[data-public] .sage-preview .sp-aside {
+  min-width: 0;
+  color: var(--pub-ink-soft, #62645e);
+  font-family: var(--sp-text);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+html[data-public] .sage-preview .sp-plan,
+html[data-public] .sage-preview .sp-cue {
+  margin: 0;
+}
+
+html[data-public] .sage-preview .sp-cue {
+  margin-top: 8px;
+}
+
+html[data-public] .sage-preview .sp-says {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--sp-edge);
+  color: var(--pub-ink, #242923);
+  animation: sp-arrive 0.3s ease-out 0.24s both;
+}
+
+/* The same note under the bar, closed (a native disclosure): shown instead of the margin copy
+   when the layout is a single column (below), so it is never read twice and the changed page
+   stays in view. */
+html[data-public] .sage-preview .sp-slip {
+  display: none;
+  border-bottom: 1px solid var(--sp-edge);
+  background: rgba(49, 83, 76, 0.06);
+  font-family: var(--sp-text);
+  font-size: 14.5px;
+  line-height: 1.5;
+  animation: sp-arrive 0.3s ease-out 0.24s both;
+}
+
+html[data-public] .sage-preview .sp-slip summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 16px;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+html[data-public] .sage-preview .sp-slip summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A chevron that turns when the note is open. */
+html[data-public] .sage-preview .sp-slip summary::after {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: -4px 3px 0 0;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+html[data-public] .sage-preview .sp-slip[open] summary::after {
+  margin-top: 3px;
+  transform: rotate(-135deg);
+}
+
+html[data-public] .sage-preview .sp-slip summary:focus-visible {
+  outline: 2px solid var(--sp-mark);
+  outline-offset: -4px;
+}
+
+html[data-public] .sage-preview .sp-slip-body {
+  padding: 0 16px 14px;
+}
+
+html[data-public] .sage-preview .sp-slip-body .sp-says-text {
+  margin: 0;
+}
+
+html[data-public] .sage-preview .sp-slip-body .sp-file {
+  margin-top: 8px;
+}
+
+/* What the chosen goal does, under the choices — phones only (below); elsewhere it is in the bar. */
+html[data-public] .sage-preview .sp-hint {
+  display: none;
+  margin: -4px 0 12px;
+  color: var(--sp-soft);
+  font-family: var(--sp-text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+html[data-public] .sage-preview .sp-tried {
+  margin-left: -2px;
+  color: var(--sp-mark);
+  font-family: var(--sp-text);
+  font-weight: 600;
+}
+
+html[data-public] .sage-preview .sp-says-label {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+html[data-public] .sage-preview .sp-says-text {
+  margin: 6px 0 0;
+  font-family: var(--sp-text);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+html[data-public] .sage-preview .sp-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  font-size: 13.5px;
+}
+
+html[data-public] .sage-preview .sp-suggest {
+  padding: 2px 8px;
+  border: 1px dashed var(--pub-line, #83867d);
+  border-radius: 3px;
+}
+
+
+/* Wide enough: Sage's side becomes the page's right margin. */
+@container sage-preview (min-width: 880px) {
+  html[data-public] .sage-preview .sp-layout {
+    grid-template-columns: minmax(0, 1fr) 240px;
+    column-gap: 28px;
+    align-items: start;
+  }
+
+  html[data-public] .sage-preview .sp-aside {
+    padding-top: 14px;
+  }
+}
+
+/* Narrow: no margin to hang marks in. They sit above their block, the § before its heading. */
+@container sage-preview (max-width: 619px) {
+  html[data-public] .sage-preview .sp-picks {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  html[data-public] .sage-preview .sp-pick {
+    padding: 0 12px;
+    font-size: 14.5px;
+  }
+
+  html[data-public] .sage-preview .sp-bar {
+    padding: 12px 14px;
+  }
+
+  html[data-public] .sage-preview .sp-page {
+    padding: 20px 18px 26px;
+  }
+
+  html[data-public] .sage-preview .sp-title {
+    font-size: 27px;
+  }
+
+  html[data-public] .sage-preview .sp-mark {
+    position: static;
+    display: block;
+    width: auto;
+    margin-bottom: 3px;
+    text-align: left;
+  }
+
+  html[data-public] .sage-preview .sp-block.is-changed::before {
+    left: -9px;
+  }
+
+  html[data-public] .sage-preview .sp-section {
+    position: static;
+    margin-right: 8px;
+  }
+
+  html[data-public] .sage-preview .sp-p,
+  html[data-public] .sage-preview .sp-check li,
+  html[data-public] .sage-preview .sp-callout p {
+    font-size: 16px;
+  }
+
+  html[data-public] .sage-preview .sp-math {
+    font-size: 17px;
+  }
+
+  html[data-public] .sage-preview .sp-pair {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+  }
+
+  html[data-public] .sage-preview .sp-pair-column,
+  html[data-public] .sage-preview .sp-pair-column + .sp-pair-column {
+    padding: 0;
+    border-left: 0;
+  }
+
+  html[data-public] .sage-preview .sp-pair-column + .sp-pair-column {
+    padding-top: 12px;
+    border-top: 1px solid var(--sp-edge);
+  }
+}
+
+/* The narrowest phones: the choices keep to one line, the tried mark included. */
+@container sage-preview (max-width: 339px) {
+  html[data-public] .sage-preview .sp-pick {
+    gap: 7px;
+    padding: 0 9px;
+    font-size: 14px;
+  }
+}
+
+/* Single column (the margin sits under the note): Sage's note moves up under the bar. */
+@container sage-preview (max-width: 879px) {
+  html[data-public] .sage-preview .sp-slip {
+    display: block;
+  }
+
+  html[data-public] .sage-preview .sp-aside .sp-says {
+    display: none;
+  }
+}
+
+/* Phones: the bar is one strip that stays at the top of the screen while the note is read, and
+   leaves with the note. Before a goal is chosen it says what to do; after, it holds Before /
+   After, and what the goal does moves under the choices (.sp-hint). The buttons show "Before"
+   and "After" (their names still say "Sage"). */
+@media (max-width: 719px) {
+  html[data-public] .sage-preview .sp-bar {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    flex-wrap: nowrap;
+    gap: 8px;
+    min-height: 56px;
+    padding: 6px 10px 6px 12px;
+    border-radius: 3px 3px 0 0;
+    background: var(--sp-paper);
+  }
+
+  html[data-public] .sage-preview:not(.is-idle) .sp-goal {
+    display: none;
+  }
+
+  html[data-public] .sage-preview:not(.is-idle) .sp-hint {
+    display: block;
+  }
+
+
+  html[data-public] .sage-preview .sp-actions {
+    flex-wrap: nowrap;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  html[data-public] .sage-preview .sp-compare button {
+    padding: 0 12px;
+  }
+
+
+  html[data-public] .sage-preview .sp-long {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* Once motion has been stopped (useNoteMotion.js cancel(): a resize, a new choice, Start over,
+   Before / After), Sage's note and the changed words stay put at their final look until the
+   next Run. */
+html[data-public] .sage-preview[data-settled] .sp-says,
+html[data-public] .sage-preview[data-settled] .sp-slip,
+html[data-public] .sage-preview[data-settled] .sp-ins.is-fresh {
+  animation: none;
+}
+
+/* Motion off (the public Motion switch) or reduced motion (the system): nothing here moves.
+   The block movement stops itself in useNoteMotion.js. */
+html[data-public][data-public-still] .sage-preview .sp-says,
+html[data-public][data-public-still] .sage-preview .sp-slip,
+html[data-public][data-public-still] .sage-preview .sp-ins.is-fresh {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-public] .sage-preview .sp-says,
+  html[data-public] .sage-preview .sp-slip,
+  html[data-public] .sage-preview .sp-ins.is-fresh {
+    animation: none;
+  }
+}
