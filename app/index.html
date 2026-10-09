@@ -2,13 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/images/crest-placeholder.svg" />
+    <link rel="icon" type="image/svg+xml" href="/images/companion-mark.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Companion keeps project work, class notes, and everyday notes as pages on one desk." />
     <title>Companion</title>
     <!-- The room's ground from the very first paint, on a device that last showed the room
          (see public/boot.js). Tokens only, so the room's own styles take over unchanged. -->
     <script src="/boot.js"></script>
     <style>
+      html[data-public] { --bg: #f5f2eb; --glow: transparent; --text: #242923; --text-secondary: #62645e; color-scheme: light; background: var(--bg); }
       html[data-boot='room'] { --bg: #1f2622; --glow: transparent; color-scheme: dark; background: var(--bg); }
       html[data-boot='room'][data-boot-mood='day'] { --bg: #d6dde0; color-scheme: light; }
       html[data-boot='room'] body { background: var(--bg); }

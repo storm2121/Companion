@@ -5,6 +5,15 @@
 // An external file rather than inline because the site's CSP allows no inline script.
 (function () {
   try {
+    // The public pages paint their flat paper ground before React.
+    // A returning person still enters through the real auth guard.
+    if (/^\/(?:login|register|sage|desk(?:\/[^/]+)?|auth\/complete)?\/?$/.test(location.pathname)) {
+      document.documentElement.setAttribute('data-public', '');
+      if (/^\/(?:sage|desk(?:\/[^/]+)?)?\/?$/.test(location.pathname)) {
+        document.documentElement.setAttribute('data-public-site', '');
+      }
+      return;
+    }
     if (localStorage.getItem('companion:design') !== 'room') return;
     var root = document.documentElement;
     root.setAttribute('data-boot', 'room');

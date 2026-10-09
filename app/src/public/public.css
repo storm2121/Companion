@@ -1,0 +1,379 @@
+@font-face {
+  font-family: 'Literata';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+  src: url('/fonts/literata-latin.woff2') format('woff2');
+}
+/* Public pages own this flat reading surface. Native product photographs keep their fonts. */
+html[data-public] {
+  --pub-ground: #f5f2eb;
+  --pub-paper: #fffefa;
+  --pub-ink: #242923;
+  --pub-ink-soft: #62645e;
+  --pub-paper-ink: #242923;
+  --pub-paper-soft: #62645e;
+  --pub-line: #83867d;
+  --pub-slate: #31534c;
+  --pub-amber: #f0a868;
+  --pub-amber-hover: #f4b984;
+  --pub-amber-ink: #2a1a0c;
+  --pub-alert: #8a2432;
+  --pub-alert-wash: #f7e9e9;
+  --pub-status-wash: #e6ede7;
+  --pub-r-paper: 4px;
+  --pub-r-pill: 3px;
+  --pub-r-field: 3px;
+  --pub-r-chip: 3px;
+  --pub-shadow-paper: none;
+  --pub-display: 'Literata', Georgia, serif;
+  --pub-body: 'Literata', Georgia, serif;
+  --pub-ui: Arial, Helvetica, sans-serif;
+  --pub-mono: Arial, Helvetica, sans-serif;
+  --pub-gutter: 72px;
+  --pub-page: 880px;
+  --pub-max: 1200px;
+  --bg: var(--pub-ground);
+  --glow: transparent;
+  --text: var(--pub-ink);
+  --text-muted: var(--pub-ink-soft);
+  --font: var(--pub-body);
+  --focus-ring: var(--pub-slate);
+  --scroll-track: transparent;
+  --scroll-thumb: #9da097;
+  --scroll-thumb-hover: #777b72;
+  color-scheme: light;
+  background: var(--pub-ground);
+  scroll-behavior: auto;
+}
+html[data-public] body {
+  background: var(--pub-ground);
+  color: var(--pub-ink);
+  font-family: var(--pub-body);
+  font-optical-sizing: auto;
+  font-size: 17px;
+  line-height: 1.55;
+  transition: none;
+}
+html[data-public] .pub-site { min-height: 100vh; }
+html[data-public] .pub-top,
+html[data-public] .pub-footer {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  max-width: calc(var(--pub-max) + 2 * var(--pub-gutter));
+  margin: 0 auto;
+  padding: 22px var(--pub-gutter);
+}
+html[data-public] .pub-top { border-bottom: 1px solid var(--pub-line); }
+html[data-public] .pub-wordmark {
+  color: var(--pub-ink);
+  font-family: var(--pub-display);
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.055em;
+  text-decoration: none;
+}
+html[data-public] .pub-wordmark span { color: var(--pub-slate); }
+html[data-public] .pub-product-nav {
+  display: flex;
+  gap: 26px;
+  margin-left: 24px;
+}
+html[data-public] .pub-product-nav a,
+html[data-public] .pub-top-link,
+html[data-public] .pub-footer nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--pub-ink);
+  font-family: var(--pub-ui);
+  font-size: 14px;
+  text-decoration: none;
+}
+html[data-public] .pub-product-nav a:hover,
+html[data-public] .pub-product-nav a[aria-current='page'],
+html[data-public] .pub-top-link:hover,
+html[data-public] .pub-footer a:hover { text-decoration: underline; text-underline-offset: 5px; }
+html[data-public] .pub-top-nav { display: flex; align-items: center; gap: 18px; margin-left: auto; }
+html[data-public] .pub-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 22px;
+  border: 1px solid var(--pub-ink);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--pub-ink);
+  font-family: var(--pub-ui);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+}
+html[data-public] .pub-button:hover { background: #e9e6df; }
+html[data-public] .pub-button--solid { border-color: var(--pub-amber-ink); background: var(--pub-amber); color: var(--pub-amber-ink); }
+html[data-public] .pub-button--solid:hover { background: var(--pub-amber-hover); }
+html[data-public] .pub-button:disabled { cursor: default; opacity: .6; }
+html[data-public] .pub-top-register { min-height: 42px; padding: 0 18px; font-size: 14px; }
+html[data-public] .pub-text-button,
+html[data-public] .pub-motion-switch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--pub-ink);
+  font-family: var(--pub-ui);
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+html[data-public] .pub-motion-switch { color: var(--pub-ink-soft); text-decoration: none; }
+html[data-public] .pub-motion-switch:hover { text-decoration: underline; }
+html[data-public] .pub-motion-switch:disabled { opacity: .7; cursor: default; }
+html[data-public] .pub-text-button:disabled { opacity: .6; cursor: default; }
+html[data-public] .pub-footer { justify-content: space-between; border-top: 1px solid var(--pub-line); padding-top: 24px; padding-bottom: 24px; }
+html[data-public] .pub-footer p { margin: 6px 0 0; font-family: var(--pub-body); color: var(--pub-ink-soft); font-size: 13px; }
+html[data-public] .pub-footer p a { color: var(--pub-ink); text-underline-offset: 3px; }
+html[data-public] .pub-footer nav { display: flex; align-items: center; gap: 26px; }
+html[data-public] a:focus-visible,
+html[data-public] button:focus-visible,
+html[data-public] input:focus-visible { outline: 2px solid var(--pub-slate); outline-offset: 3px; }
+html[data-public] main:focus { outline: none; }
+html[data-public] .pub-skip {
+  position: absolute;
+  top: 12px; left: 12px; z-index: 10;
+  padding: 10px 16px;
+  border-radius: 3px;
+  background: var(--pub-ink);
+  color: var(--pub-ground);
+  font-family: var(--pub-ui);
+  font-size: 15px;
+  transform: translateY(-200%);
+}
+html[data-public] .pub-skip:focus { transform: none; }
+html[data-public] .pub-kicker { display: block; font-family: var(--pub-ui); color: var(--pub-ink-soft); font-size: 13px; }
+html[data-public] .pub-rule { display: block; width: 100%; height: 1px; color: var(--pub-line); }
+html[data-public] .pub-rule path { fill: none; stroke: currentColor; stroke-width: 1; vector-effect: non-scaling-stroke; }
+html[data-public] .pub-auth p { text-wrap: pretty; }
+html[data-public] .pub-auth h1 { text-wrap: balance; }
+/* ── Account pages ─────────────────────────────────────────────────────────
+   The intro sits on the ground and the form on a paper sheet, like the landing's text and
+   pictures. The sheet stays flat: a tilted form renders its text and caret soft. */
+
+html[data-public] .pub-auth {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
+  column-gap: 72px;
+  align-items: start;
+  max-width: calc(var(--pub-max) + 2 * var(--pub-gutter));
+  margin: 0 auto;
+  padding: 72px var(--pub-gutter) 112px;
+}
+
+html[data-public] .pub-auth-intro {
+  padding-top: 8px;
+}
+
+html[data-public] .pub-auth-intro h1 {
+  margin: 12px 0 0;
+  font-family: var(--pub-display);
+  font-size: 52px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+html[data-public] .pub-auth-intro p {
+  max-width: 32em;
+  margin: 20px 0 0;
+  font-size: 18px;
+  line-height: 1.5;
+}
+
+html[data-public] .pub-auth-intro strong {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Styled wherever it sits inside the page (the intro today; after the sheet works too). */
+html[data-public] .pub-auth .pub-auth-bookmark {
+  margin-top: 28px;
+  color: var(--pub-ink-soft);
+  font-size: 15px;
+}
+
+html[data-public] .pub-auth-bookmark code {
+  padding: 2px 7px;
+  border-radius: 7px 6px 8px 5px;
+  background: rgba(37, 48, 45, 0.08);
+  color: var(--pub-ink);
+  font-family: var(--pub-mono);
+  font-size: 0.9em;
+}
+
+html[data-public] .pub-auth-sheet {
+  padding: 32px 32px 28px;
+  border-radius: var(--pub-r-paper);
+  background: var(--pub-paper);
+  box-shadow: var(--pub-shadow-paper);
+}
+
+html[data-public] .pub-auth-sheet > .pub-button {
+  width: 100%;
+}
+
+html[data-public] .pub-form {
+  display: grid;
+  gap: 20px;
+}
+
+html[data-public] .pub-field {
+  display: grid;
+  gap: 8px;
+}
+
+html[data-public] .pub-field label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+html[data-public] .pub-field input {
+  width: 100%;
+  min-height: 50px;
+  padding: 0 14px;
+  border: 1.6px solid var(--pub-line);
+  border-radius: var(--pub-r-field);
+  background: #fff;
+  color: var(--pub-ink);
+  font-size: 17px;
+  line-height: 1.3;
+  transition: border-color 0.15s ease;
+}
+
+html[data-public] .pub-field input:hover {
+  border-color: var(--pub-ink-soft);
+}
+
+html[data-public] .pub-field input:focus-visible {
+  border-color: var(--pub-ink);
+  outline-offset: 2px;
+}
+
+html[data-public] .pub-field input[readonly] {
+  background: #f3f2ee;
+}
+
+html[data-public] .pub-field-note {
+  margin: 0;
+  color: var(--pub-ink-soft);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* A note that follows its field (the domain line) sits as close to it as a note inside one. */
+html[data-public] .pub-form > .pub-field-note {
+  margin-top: -12px;
+}
+
+html[data-public] .pub-auth-submit {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+html[data-public] .pub-feedback {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--pub-r-chip);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+html[data-public] .pub-feedback--alert {
+  background: var(--pub-alert-wash);
+  box-shadow: inset 3px 0 0 var(--pub-alert);
+  color: var(--pub-alert);
+}
+
+html[data-public] .pub-feedback--status {
+  background: var(--pub-status-wash);
+  box-shadow: inset 3px 0 0 var(--pub-slate);
+  color: var(--pub-ink);
+}
+
+html[data-public] .pub-auth-sheet > .pub-feedback {
+  margin-top: 16px;
+}
+
+html[data-public] .pub-auth-actions {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+html[data-public] .pub-auth-actions .pub-button {
+  width: 100%;
+  min-height: 50px;
+  margin-bottom: 10px;
+}
+
+html[data-public] .pub-auth-alternative {
+  margin-top: 12px;
+}
+
+html[data-public] .pub-auth-switch {
+  margin: 14px 0 0;
+  color: var(--pub-ink-soft);
+  font-size: 15px;
+}
+
+html[data-public] .pub-auth-switch a {
+  color: var(--pub-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1.2px;
+  text-underline-offset: 4px;
+}
+
+
+html[data-public] .pub-auth-sheet { border: 1px solid var(--pub-line); }
+html[data-public] .pub-auth-intro h1 { font-weight: 400; line-height: 1.12; }
+html[data-public] .pub-form,
+html[data-public] .pub-auth-actions,
+html[data-public] .pub-auth-switch,
+html[data-public] .pub-auth-bookmark { font-family: var(--pub-ui); }
+@keyframes pub-loading-in { from { opacity: 0; } to { opacity: 1; } }
+html[data-public] .pub-loading { display: grid; place-items: center; min-height: 70vh; padding: 24px; color: var(--pub-ink-soft); font-family: var(--pub-ui); font-size: 15px; }
+html[data-public] .pub-loading p { margin: 0; animation: pub-loading-in .2s ease .6s both; }
+@media (max-width: 1199px) { html[data-public] { --pub-gutter: 40px; } }
+@media (max-width: 899px) {
+  html[data-public] .pub-product-nav { margin-left: 0; gap: 18px; }
+  html[data-public] .pub-auth { grid-template-columns: minmax(0, 1fr); row-gap: 36px; max-width: calc(520px + 2 * var(--pub-gutter)); }
+}
+@media (max-width: 719px) {
+  html[data-public] { --pub-gutter: 20px; }
+  html[data-public] .pub-top { padding-top: 12px; padding-bottom: 12px; gap: 12px; }
+  html[data-public] .pub-wordmark { font-size: 20px; }
+  html[data-public] .pub-product-nav { display: none; }
+  html[data-public] .pub-top-nav { gap: 14px; }
+  html[data-public] .pub-top-register { padding: 0 12px; }
+  html[data-public] .pub-footer { align-items: start; gap: 16px; flex-wrap: wrap; }
+  html[data-public] .pub-footer nav { gap: 22px; }
+  html[data-public] .pub-auth { row-gap: 28px; padding-top: 36px; padding-bottom: 72px; }
+  html[data-public] .pub-auth-intro h1 { font-size: 38px; }
+  html[data-public] .pub-auth-sheet { padding: 24px 20px 22px; }
+}
+html[data-public][data-public-still] { scroll-behavior: auto; }
+@media (prefers-reduced-motion: reduce) {
+  html[data-public] { scroll-behavior: auto; }
+  html[data-public] .pub-loading p { animation-duration: 0s; }
+  html[data-public] .pub-field input { transition: none; }
+}
