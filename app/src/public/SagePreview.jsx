@@ -1,4 +1,5 @@
 import { Fragment, useId, useMemo, useRef } from 'react';
+import Segmented from './Segmented';
 import { SAGE_EXAMPLES, SAGE_PLANS } from './sageDemoData';
 import { useSageDemo } from './useSageDemo';
 import { useNoteMotion } from './useNoteMotion';
@@ -8,10 +9,10 @@ import './sageDemo.css';
 
 // The Sage preview on the home page: the same fictional note for every goal, with Sage in its
 // top line. The note starts as it was written; choosing a goal applies Sage's prepared result at
-// once (sageDemoData.js — nothing is generated and nothing is sent anywhere), and Before Sage /
-// After Sage compare the two. What Sage did shows in the page itself: blocks move to where the
-// result puts them, new blocks open in place, a light clean-up marks the words it changed, and
-// Sage's own note sits beside the page — or, without room for that margin, closed under the bar.
+// once (sageDemoData.js — nothing is generated and nothing is sent anywhere), and Before / After
+// compare the two. What Sage did shows in the page itself: blocks spring to where the result puts
+// them (useNoteMotion.js), new blocks open in place under an "Added" in the accent, a light
+// clean-up marks the words it changed with the marker, and Sage's own note follows the page.
 //
 // Styles live under .sage-preview (sageDemo.css); the layout follows the preview's own width.
 // Inner classes are sp-*: classic's stylesheet styles .sage-* globally.
@@ -118,7 +119,7 @@ const Block = ({ block, section, heading, original, sweep }) => {
 
   const mark = block.change && MARK_LABELS[block.change];
   return (
-    <div className={`sp-block${mark ? ' is-changed' : ''}`} data-block={block.id}>
+    <div className={`sp-block${mark ? ` is-changed is-${block.change}` : ''}`} data-block={block.id}>
       {mark && <span className="sp-mark">{mark}</span>}
       {body}
     </div>
@@ -134,12 +135,15 @@ const numbered = (blocks) => {
   });
 };
 
-// Sage's own note: what it did, and the tags it would file the note under.
-const SagesNote = ({ example, className, label = true }) => (
-  <div className={className}>
-    {label && <p className="sp-says-label">Sage’s note</p>}
-    <p className="sp-says-text">{example.note}</p>
+// Sage's own note, under the page: how it worked, what it did, and the tags it would file the
+// note under (suggested, not applied).
+const SagesNote = ({ example }) => (
+  <div className="sp-says">
+    <p className="sp-says-text">
+      <strong>Sage’s note.</strong> {example.note}
+    </p>
     <p className="sp-file">
+      <span className="sp-plan">{SAGE_PLANS[example.plan]}</span>
       <span>File it under</span>
       {example.suggested.map((tag) => (
         <span key={tag} className="sp-suggest">
@@ -149,6 +153,25 @@ const SagesNote = ({ example, className, label = true }) => (
     </p>
   </div>
 );
+
+const VERSIONS = [
+  {
+    id: 'before',
+    label: (
+      <>
+        Before<span className="sp-long"> Sage</span>
+      </>
+    ),
+  },
+  {
+    id: 'after',
+    label: (
+      <>
+        After<span className="sp-long"> Sage</span>
+      </>
+    ),
+  },
+];
 
 const SagePreview = () => {
   const { example, original, view, tried, fresh, status, choose, show } = useSageDemo(SAGE_EXAMPLES);
@@ -187,7 +210,7 @@ const SagePreview = () => {
               checked={item.id === example?.id}
               onChange={() => onChoose(item.id)}
             />
-            <span>{item.label}</span>
+            <span className="sp-pick-label">{item.label}</span>
             {tried(item.id) && (
               <span className="sp-tried">
                 <span aria-hidden="true">✓</span>
@@ -200,82 +223,63 @@ const SagePreview = () => {
       {/* Phones: what the chosen goal does, here by the choice; the bar keeps only its controls. */}
       {example && <p className="sp-hint">{example.hint}</p>}
 
-      <div className="sp-layout">
-        <article className="sp-sheet" aria-labelledby={titleId}>
-          {/* Sage lives in the note's top line, as in the room's editor. */}
-          <div className="sp-bar">
-            <p className="sp-goal">
-              <span className="sp-goal-name">{example ? `Sage · ${example.label}` : 'Sage'}</span>
-              <span className="sp-goal-hint">
-                {example ? example.hint : 'Pick what it should do with this note. The result shows right away.'}
-              </span>
-            </p>
-            {example && (
-              <div className="sp-actions">
-                <div className="sp-compare" role="group" aria-label="Version on show">
-                  {/* "Before" and "After" on a phone's bar; still "Before Sage" and "After Sage" to read aloud. */}
-                  <button type="button" aria-pressed={view === 'before'} onClick={() => onShow('before')}>
-                    Before<span className="sp-long"> Sage</span>
-                  </button>
-                  <button type="button" aria-pressed={view === 'after'} onClick={() => onShow('after')}>
-                    After<span className="sp-long"> Sage</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* No margin beside the page: Sage's note waits, closed, right under the bar. */}
+      <article className="sp-sheet" aria-labelledby={titleId}>
+        {/* Sage lives in the note's top line, as in the room's editor. */}
+        <div className="sp-bar">
+          <p className="sp-goal">
+            <span className="sp-goal-name">{example ? `Sage · ${example.label}` : 'Sage'}</span>
+            <span className="sp-goal-hint">
+              {example ? example.hint : 'Pick what it should do with this note. The result shows right away.'}
+            </span>
+          </p>
           {example && (
-            <details className="sp-slip">
-              <summary>Sage’s note</summary>
-              <SagesNote example={example} className="sp-slip-body" label={false} />
-            </details>
-          )}
-
-          <div className="sp-page">
-            <p className="sp-group">{note.group}</p>
-            <h3 className="sp-title" id={titleId}>
-              {note.title}
-            </h3>
-            <ul className="sp-tags" aria-label="Tags">
-              {note.tags.map((tag) => (
-                <li key={tag}>#{tag}</li>
-              ))}
-            </ul>
-            <span className="sp-rule" aria-hidden="true" />
-            <div className="sp-body" ref={bodyRef}>
-              {numbered(example && view === 'after' ? example.after : original.before).map(({ block, section }) => (
-                <Block
-                  key={block.id}
-                  block={block}
-                  section={section}
-                  heading="h4"
-                  original={originals.get(block.id)}
-                  sweep={fresh}
-                />
-              ))}
-            </div>
-            {/* Copies of blocks that just left fade here; never read, never focusable. */}
-            <div className="sp-ghosts" ref={ghostRef} aria-hidden="true" inert />
-          </div>
-        </article>
-
-        <div className="sp-aside">
-          {example ? (
-            <>
-              <p className="sp-plan">{SAGE_PLANS[example.plan]}</p>
-              <SagesNote example={example} className="sp-says" />
-            </>
-          ) : (
-            <p className="sp-cue">Pick a goal above: Sage’s prepared result for this note shows right away.</p>
+            <Segmented
+              name="sage-version"
+              label="Version on show"
+              className="sp-compare"
+              options={VERSIONS}
+              value={view}
+              onChange={onShow}
+            />
           )}
         </div>
 
-        <p className="sp-hidden" role="status">
-          {status}
-        </p>
-      </div>
+        <div className="sp-page">
+          <p className="sp-group">{note.group}</p>
+          <h3 className="sp-title" id={titleId}>
+            {note.title}
+          </h3>
+          <ul className="sp-tags" aria-label="Tags">
+            {note.tags.map((tag) => (
+              <li key={tag}>#{tag}</li>
+            ))}
+          </ul>
+          <div className="sp-body" ref={bodyRef}>
+            {numbered(example && view === 'after' ? example.after : original.before).map(({ block, section }) => (
+              <Block
+                key={block.id}
+                block={block}
+                section={section}
+                heading="h4"
+                original={originals.get(block.id)}
+                sweep={fresh}
+              />
+            ))}
+          </div>
+          {/* Copies of blocks that just left fade here; never read, never focusable. */}
+          <div className="sp-ghosts" ref={ghostRef} aria-hidden="true" inert />
+        </div>
+      </article>
+
+      {example ? (
+        <SagesNote example={example} />
+      ) : (
+        <p className="sp-cue">Pick a goal above: Sage’s prepared result for this note shows right away.</p>
+      )}
+
+      <p className="sp-hidden" role="status">
+        {status}
+      </p>
     </div>
   );
 };

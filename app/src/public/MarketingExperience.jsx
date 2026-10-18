@@ -1,106 +1,37 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Link, Navigate, useLocation, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/authState';
+import FindDemo from './FindDemo';
+import HeroWindow from './HeroWindow';
+import Picture from './Picture';
 import PublicLoader from './PublicLoader';
 import SagePreview from './SagePreview';
-import {
-  COVER,
-  DESK,
-  DESK_TARGETS,
-  FEATURES,
-  FIRST_SHOWN,
-  HUB,
-  IMAGES,
-  LEDE,
-  NOTE_ORDER,
-  NOTES,
-  pathOf,
-  sceneOf,
-} from './sceneData';
+import Segmented from './Segmented';
+import { FRAME_SIZES, SHOWN_SIZES, fetchNote, fetchOn, usePhone } from './photos';
+import { CLOSE, DESK, DESK_TARGETS, FEATURES, FIRST_SHOWN, HUB, IMAGES, LEDE, NOTE_ORDER, NOTES, WINDOW, pathOf, sceneOf } from './sceneData';
+import { warmSprings } from './springLoader';
 import { useCardFlight } from './useCardFlight';
+import { useCrossfade } from './useCrossfade';
 import { useReducedMotion } from './useReducedMotion';
 import { useSceneTransition } from './useSceneTransition';
+import { MOOD_CHOICES, readMood, setMoodChoice, subscribeMood } from './windowMood';
 import './marketing.css';
 
-// The public home: one complete page read top to bottom — the cover, the desk (its cards switch
-// the note shown under it), Sage, the rest of what Companion does, and what is coming — with a
-// page of its own for each note on the desk, a level down (/desk/:view). A note opens out of what
-// was clicked and folds back into it (useSceneTransition.js); the desk's switch flies a note out
-// of its card (useCardFlight.js). PublicLayout renders this for /, /desk, /desk/:view and /sage;
-// /desk and /sage are sections of the home. Copy and pictures: sceneData.js.
+// The public home: one page read top to bottom — the window into the room (HeroWindow.jsx), the
+// desk (its cards switch the note shown under it), Sage, ⌘K and the week, the rest of the desk,
+// what is coming, and the last word — with a page of its own for each note on the desk, a level
+// down (/desk/:view). A note opens out of what was clicked and folds back into it
+// (useSceneTransition.js); the desk's switch flies a note out of its card (useCardFlight.js).
+// PublicLayout renders this for /, /desk, /desk/:view and /sage; /desk and /sage are sections of
+// the home, and #find lands on ⌘K. Copy and pictures: sceneData.js.
+//
+// Daylight studio: a pale ground, white tiles with soft physical shadows, ink, one blue accent;
+// translucent material only where something floats over a picture (marketing.css).
 
-const PHONE = '(max-width: 719px)';
-const PHONE_SIZES = 'calc(100vw - 40px)';
-const COVER_SIZES = '(min-width: 1344px) 860px, (min-width: 900px) calc(100vw - 420px), calc(100vw - 80px)';
-const DESK_SIZES = '(min-width: 1344px) 1200px, (min-width: 1200px) calc(100vw - 144px), calc(100vw - 80px)';
-const SHOWN_SIZES = '(min-width: 1344px) 900px, (min-width: 900px) calc(100vw - 444px), calc(100vw - 80px)';
-const FRAME_SIZES = '(min-width: 1344px) 872px, (min-width: 1200px) calc(100vw - 472px), (min-width: 900px) calc(100vw - 408px), calc(100vw - 80px)';
-const MOODS = [
-  { id: 'candlelight', label: 'Candlelight' },
-  { id: 'rain', label: 'Rain' },
-];
+const DESK_SIZES = '(min-width: 1180px) 1024px, (min-width: 720px) calc(100vw - 156px), calc(100vw - 80px)';
 // Openers on the home page: going back there folds the note into what opened it.
-const FROM_HOME = ['cover', 'shown'];
-
-const subscribePhone = (listener) => {
-  const query = window.matchMedia(PHONE);
-  query.addEventListener('change', listener);
-  return () => query.removeEventListener('change', listener);
-};
-const readPhone = () => window.matchMedia(PHONE).matches;
-const usePhone = () => useSyncExternalStore(subscribePhone, readPhone, () => false);
-
-const srcSetOf = (photo) => `${IMAGES}/${photo.src}-small.webp ${photo.width / 2}w, ${IMAGES}/${photo.src}.webp ${photo.width}w`;
-
-// Proportions come from CSS per screen size (marketing.css): a picture that has just mounted is
-// measured (for the motion) before the browser has chosen between the phone and desktop crops.
-const Picture = ({ photo, sizes, alt = photo.alt, eager = false, className, imageProps }) => (
-  <picture
-    className={className}
-    style={{
-      '--mx-ratio': `${photo.width} / ${photo.height}`,
-      '--mx-ratio-phone': `${photo.phone.width} / ${photo.phone.height}`,
-    }}
-  >
-    <source media={PHONE} srcSet={srcSetOf(photo.phone)} sizes={PHONE_SIZES} width={photo.phone.width} height={photo.phone.height} />
-    <img
-      src={`${IMAGES}/${photo.src}.webp`}
-      srcSet={srcSetOf(photo)}
-      sizes={sizes}
-      width={photo.width}
-      height={photo.height}
-      alt={alt}
-      loading={eager ? 'eager' : 'lazy'}
-      fetchPriority={eager ? 'high' : 'auto'}
-      {...imageProps}
-    />
-  </picture>
-);
-
-// Photographs are fetched as soon as a pointer or focus reaches a way to them, so they are
-// there when they are shown.
-const fetched = new Set();
-const fetchPhoto = (photo, sizes) => {
-  if (!photo) return;
-  const phone = readPhone();
-  const source = phone ? photo.phone : photo;
-  if (fetched.has(source.src)) return;
-  fetched.add(source.src);
-  const image = new Image();
-  image.sizes = phone ? PHONE_SIZES : sizes;
-  image.srcset = srcSetOf(source);
-  image.src = `${IMAGES}/${source.src}.webp`;
-};
-const fetchNote = (view) => {
-  const note = NOTES[view];
-  fetchPhoto(note.photo ?? note.moods?.candlelight, FRAME_SIZES);
-  fetchPhoto(note.shown.photo, SHOWN_SIZES);
-};
-const fetchOn = (view) => ({
-  onPointerEnter: () => fetchNote(view),
-  onFocus: () => fetchNote(view),
-  onTouchStart: () => fetchNote(view),
-});
+const FROM_HOME = ['window', 'shown', 'find'];
+const featureOf = (id) => FEATURES.find((feature) => feature.id === id);
 
 // Back to the home page: the browser's own Back when that is where the visitor came from, so the
 // history does not grow with every return (and the note folds back into what opened it).
@@ -113,20 +44,16 @@ const BackLink = ({ to, previous, children }) => {
   };
   return (
     <Link className="mx-back" to={to} onClick={onClick}>
-      <span aria-hidden="true">←</span> {children}
+      <span aria-hidden="true">‹</span> {children}
     </Link>
   );
 };
 
-const OpenLabel = ({ name }) => (
-  <span className="mx-open">
-    Open<span className="mx-hidden"> {name}</span> <span aria-hidden="true">→</span>
-  </span>
-);
+// ── The small drawn scenes (decorative: the words say it all) ───────────────────────────────
+// Each is drawn in the app's own colours, and plays its scene as it comes into view
+// (marketing.css; still without browser support, with reduced motion or Motion off).
 
-// ── Small drawn scenes for "More on the desk" (decorative: the text says it all) ─────────────
-
-const CalendarScene = () => (
+const CalendarThing = () => (
   <div className="mx-scene mx-scene--calendar" aria-hidden="true">
     {['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((day) => (
       <span key={day} className="sc-day">
@@ -148,34 +75,27 @@ const CalendarScene = () => (
   </div>
 );
 
-const InboxScene = () => (
+const InboxThing = () => (
   <div className="mx-scene mx-scene--inbox" aria-hidden="true">
-    <p className="sc-title">Inbox</p>
-    <p className="sc-scrap sc-filed">Call the bike shop before ten</p>
-    <p className="sc-scrap">Ask Mira about the north gate</p>
+    <p className="sc-tray-label">
+      Inbox{' '}
+      <b>
+        <span className="sc-count-was">3</span>
+        <span className="sc-count-now">2</span>
+      </b>
+    </p>
+    <div className="sc-tray">
+      <p className="sc-slip sc-slip--filed">Call the bike shop before ten</p>
+      <p className="sc-slip">Ask Mira about the north gate</p>
+      <p className="sc-slip">Return the library book</p>
+    </div>
     <p className="sc-into">
       Filed into <span>Everyday</span>
     </p>
   </div>
 );
 
-const FindScene = () => (
-  <div className="mx-scene mx-scene--find" aria-hidden="true">
-    <p className="sc-field">
-      <kbd>⌘K</kbd>
-      <span className="sc-typed">aliasing</span>
-    </p>
-    <ul className="sc-results">
-      <li className="is-hit">
-        Sampling notes <span>Systems &amp; Signals</span>
-      </li>
-      <li>New note “aliasing”</li>
-      <li>Switch to Rain</li>
-    </ul>
-  </div>
-);
-
-const StructureScene = () => (
+const StructureThing = () => (
   <div className="mx-scene mx-scene--structure" aria-hidden="true">
     <p className="sc-h">
       <span>§1</span> From a wave to a sequence
@@ -185,14 +105,16 @@ const StructureScene = () => (
       <sub>s</sub> &gt; 2<i>f</i>
       <sub>max</sub>
     </p>
-    <p className="sc-callout">Too slow a rate turns fast into slow.</p>
+    <p className="sc-callout">
+      <b>Remember</b> Too slow a rate turns fast into slow.
+    </p>
     <p className="sc-check">
       <span className="sc-box" /> Compare two sampling intervals
     </p>
   </div>
 );
 
-const ExportScene = () => (
+const ExportThing = () => (
   <div className="mx-scene mx-scene--export" aria-hidden="true">
     <div className="sc-page">
       <span />
@@ -210,11 +132,11 @@ const ExportScene = () => (
   </div>
 );
 
-const RoomScene = () => (
+const RoomThing = () => (
   <div className="mx-scene mx-scene--room" aria-hidden="true">
     <div className="sc-rooms">
-      <img src={`${IMAGES}/rain-cover-small.webp`} alt="" width="936" height="394" loading="lazy" />
-      <img className="sc-night" src={`${IMAGES}/room-cover-small.webp`} alt="" width="936" height="394" loading="lazy" />
+      <img src={`${IMAGES}/rain-cover-small.webp`} alt="" width="936" height="394" loading="lazy" decoding="async" />
+      <img className="sc-night" src={`${IMAGES}/room-cover-small.webp`} alt="" width="936" height="394" loading="lazy" decoding="async" />
     </div>
     <p className="sc-moods">
       <span>Rain</span>
@@ -223,14 +145,29 @@ const RoomScene = () => (
   </div>
 );
 
-const SCENES = {
-  calendar: CalendarScene,
-  inbox: InboxScene,
-  find: FindScene,
-  structure: StructureScene,
-  export: ExportScene,
-  room: RoomScene,
-};
+const MORE = [
+  { id: 'inbox', Thing: InboxThing },
+  { id: 'structure', Thing: StructureThing },
+  { id: 'export', Thing: ExportThing },
+  { id: 'room', Thing: RoomThing },
+];
+
+// Three people's copies of one note, the same line being written in all of them at once.
+const HubDrawing = ({ people }) => (
+  <div className="mx-hub-drawing" aria-hidden="true">
+    <span className="hd-pile hd-pile--back" />
+    <span className="hd-pile hd-pile--middle" />
+    {people.map((name, index) => (
+      <span key={name} className={`hd-note hd-note--${index + 1}`}>
+        <b className="hd-who">{name}</b>
+        <i className="hd-line hd-line--title" />
+        <i className="hd-line" />
+        <i className="hd-line hd-line--short" />
+        <i className="hd-line hd-line--typing" />
+      </span>
+    ))}
+  </div>
+);
 
 // ── The home page ────────────────────────────────────────────────────────────────────────────
 
@@ -242,6 +179,9 @@ const HomePage = ({ shownView, onShow }) => {
   const layerRef = useRef(null);
   const flight = useCardFlight({ frameRef, layerRef, reduce });
   const shown = NOTES[shownView];
+  const findId = useId();
+  const calendar = featureOf('calendar');
+  const find = featureOf('find');
 
   const pick = (view, card) => {
     if (view === shownView) return;
@@ -252,274 +192,319 @@ const HomePage = ({ shownView, onShow }) => {
 
   // Once the page has settled, the notes' photographs come in the background.
   useEffect(() => {
-    const timer = window.setTimeout(() => NOTE_ORDER.forEach(fetchNote), 1500);
+    const timer = window.setTimeout(() => NOTE_ORDER.forEach(fetchNote), 1800);
     return () => window.clearTimeout(timer);
   }, []);
 
   return (
     <>
-      <section className="mx-wrap mx-cover" aria-labelledby="mx-title">
-        <h1 id="mx-title" className="mx-wordmark">
-          companion<span aria-hidden="true">.</span>
-        </h1>
-        <div className="mx-cover-body">
-          <div className="mx-cover-copy">
-            <p className="mx-lede-line">{LEDE.line}</p>
-            <p className="mx-lede-more">{LEDE.more}</p>
-            <div className="mx-cover-actions">
-              <Link className="pub-button pub-button--solid" to="/register">
-                Register
+      <section className="mx-hero" id="top" aria-labelledby="mx-title">
+        <div className="mx-wrap">
+          <h1 id="mx-title" className="mx-wordmark">
+            companion.
+          </h1>
+          <p className="mx-lede-line">{LEDE.line}</p>
+          <p className="mx-lede-more">{LEDE.more}</p>
+          <div className="mx-actions">
+            <Link className="pub-button" to="/register">
+              Register
+            </Link>
+            <Link className="pub-link" to="/desk">
+              Look inside <span aria-hidden="true">›</span>
+            </Link>
+          </div>
+          <HeroWindow />
+          <p className="mx-fine">{WINDOW.fine}</p>
+        </div>
+      </section>
+
+      <section className="mx-section" id="inside" aria-labelledby="inside-title">
+        <div className="mx-wrap">
+          <div className="mx-tile mx-tile--inside">
+            <div className="mx-head">
+              <h2 id="inside-title" tabIndex={-1} data-scene-focus>
+                Inside Companion
+              </h2>
+              <p>A desk of groups, each with its latest note. Pick one to see it.</p>
+            </div>
+            <div className="mx-stage" data-stage>
+              <Picture photo={DESK} sizes={DESK_SIZES} />
+              {targets
+                .filter((target) => Object.hasOwn(NOTES, target.view))
+                .map((target) => (
+                  <button
+                    key={target.view}
+                    type="button"
+                    className="mx-target"
+                    data-target={target.view}
+                    data-source="card"
+                    aria-pressed={target.view === shownView}
+                    aria-label={`${NOTES[target.view].group}: ${NOTES[target.view].title}`}
+                    style={{
+                      left: `${target.x * 100}%`,
+                      top: `${target.y * 100}%`,
+                      width: `${target.w * 100}%`,
+                      height: `${target.h * 100}%`,
+                    }}
+                    onClick={(event) => pick(target.view, event.currentTarget)}
+                    {...fetchOn(target.view)}
+                  />
+                ))}
+            </div>
+            <figure className="mx-shown">
+              <Link
+                ref={frameRef}
+                className="mx-shown-note"
+                to={pathOf(shownView)}
+                state={{ opener: 'shown' }}
+                data-target={shownView}
+                data-source="shown"
+              >
+                <Picture key={shownView} photo={shown.shown.photo} sizes={SHOWN_SIZES} alt={shown.shown.photo.alt} imageProps={{ 'data-photo': '' }} />
               </Link>
-              <Link className="mx-look" to="/desk">
-                <span>Look inside</span> <span aria-hidden="true">↓</span>
+              <figcaption>
+                <span className="mx-shown-name">
+                  {shown.group} · {shown.title}
+                </span>
+                <span>
+                  <strong>{shown.shown.label}</strong> {shown.shown.text}
+                </span>
+                <Link className="pub-link" to={pathOf(shownView)} state={{ opener: 'shown' }}>
+                  Open the note <span aria-hidden="true">›</span>
+                </Link>
+                <span className="mx-shown-fine">Actual Companion views. All names and note content are invented.</span>
+              </figcaption>
+            </figure>
+            {/* The sheet that brings a note out of its card is drawn here, over the tile. */}
+            <div className="mx-swap" ref={layerRef} aria-hidden="true" />
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-section mx-later" id="sage" aria-labelledby="sage-title">
+        <div className="mx-wrap">
+          <div className="mx-tile">
+            <div className="mx-head">
+              <h2 id="sage-title" tabIndex={-1}>
+                Sage
+              </h2>
+              <p>Four prepared results on the same fictional note. Pick one.</p>
+            </div>
+            <SagePreview />
+            <p className="mx-sage-own">
+              In your own notes, Sage runs on the whole note or only the section you are in, and Before Sage and After
+              Sage stay a click apart until you keep one. A real run sends that text to an AI model, which writes the new
+              version.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-section mx-later" id="find" aria-label="Find anything, and the calendar">
+        <div className="mx-wrap mx-pair">
+          <div className="mx-tile mx-tile--find">
+            <h2 id={findId} tabIndex={-1}>
+              {find.title}
+            </h2>
+            <p className="mx-tile-text">{find.text}</p>
+            <FindDemo titleId={findId} />
+          </div>
+          <div className="mx-tile mx-tile--calendar">
+            <h2>{calendar.title}</h2>
+            <p className="mx-tile-text">{calendar.text}</p>
+            <CalendarThing />
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-section mx-later" id="more" aria-labelledby="more-title">
+        <div className="mx-wrap">
+          <h2 className="mx-section-title" id="more-title">
+            More on the desk
+          </h2>
+          <ul className="mx-grid">
+            {MORE.map((item) => {
+              const { id } = item;
+              const Thing = item.Thing;
+              const feature = featureOf(id);
+              return (
+                <li key={id} className={`mx-tile mx-thing mx-thing--${id}`}>
+                  <Thing />
+                  <h3>{feature.title}</h3>
+                  <p className="mx-tile-text">{feature.text}</p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </section>
+
+      <section className="mx-section mx-later" id="hub" aria-labelledby="hub-title">
+        <div className="mx-wrap">
+          <div className="mx-tile mx-tile--night mx-hub">
+            <div className="mx-hub-copy">
+              <p className="mx-hub-label">{HUB.label}</p>
+              <h2 id="hub-title">{HUB.title}</h2>
+              <p className="mx-hub-text">{HUB.text}</p>
+              <ul className="mx-hub-list">
+                {HUB.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+              <p className="mx-hub-close">{HUB.close}</p>
+              <Link className="pub-button pub-button--light" to="/register">
+                Register to be there first
               </Link>
             </div>
+            <HubDrawing people={HUB.people} />
           </div>
-          <figure className="mx-cover-figure">
-            <Link
-              className="mx-cover-note"
-              to={pathOf('weekend-list')}
-              state={{ opener: 'cover' }}
-              data-target="weekend-list"
-              data-source="cover"
-              {...fetchOn('weekend-list')}
-            >
-              <Picture photo={COVER} eager sizes={COVER_SIZES} />
-              <OpenLabel name="Weekend list" />
+        </div>
+      </section>
+
+      <section className="mx-section mx-close" aria-labelledby="close-title">
+        <div className="mx-wrap">
+          <h2 id="close-title">{CLOSE.title}</h2>
+          <div className="mx-actions">
+            <Link className="pub-button" to="/register">
+              Register
             </Link>
-            <figcaption>An invented Weekend list, in Companion’s Candlelight room.</figcaption>
-          </figure>
-        </div>
-      </section>
-
-      <section className="mx-wrap mx-section mx-inside" id="inside" aria-labelledby="inside-title">
-        <div className="mx-section-head">
-          <h2 id="inside-title" tabIndex={-1} data-scene-focus>
-            Inside Companion
-          </h2>
-          <p>A desk of groups, each with its latest note. Pick one to see it.</p>
-        </div>
-        <div className="mx-stage" data-stage>
-          <Picture photo={DESK} sizes={DESK_SIZES} />
-          {targets
-            .filter((target) => Object.hasOwn(NOTES, target.view))
-            .map((target) => (
-              <button
-                key={target.view}
-                type="button"
-                className="mx-target"
-                data-target={target.view}
-                data-source="card"
-                aria-pressed={target.view === shownView}
-                aria-label={`${NOTES[target.view].group}: ${NOTES[target.view].title}`}
-                style={{
-                  left: `${target.x * 100}%`,
-                  top: `${target.y * 100}%`,
-                  width: `${target.w * 100}%`,
-                  height: `${target.h * 100}%`,
-                }}
-                onClick={(event) => pick(target.view, event.currentTarget)}
-                {...fetchOn(target.view)}
-              />
-            ))}
-        </div>
-        <figure className="mx-shown">
-          <Link
-            ref={frameRef}
-            className="mx-shown-note"
-            to={pathOf(shownView)}
-            state={{ opener: 'shown' }}
-            data-target={shownView}
-            data-source="shown"
-          >
-            <Picture key={shownView} photo={shown.shown.photo} sizes={SHOWN_SIZES} alt={shown.shown.photo.alt} />
-            <OpenLabel name={shown.title} />
-          </Link>
-          <figcaption>
-            <span className="mx-shown-name">
-              {shown.group} · {shown.title}
-            </span>
-            <span>
-              <strong>{shown.shown.label}</strong> {shown.shown.text}
-            </span>
-            <span className="mx-shown-fine">Actual Companion views. All names and note content are invented.</span>
-          </figcaption>
-        </figure>
-        {/* The sheet that brings a note out of its card is drawn here, over the section. */}
-        <div className="mx-swap" ref={layerRef} aria-hidden="true" />
-      </section>
-
-      <section className="mx-wrap mx-section mx-sage" id="sage" aria-labelledby="sage-title">
-        <div className="mx-section-head">
-          <h2 id="sage-title" tabIndex={-1}>
-            Sage
-          </h2>
-          <p>Four prepared results on the same fictional note. Pick one.</p>
-        </div>
-        <SagePreview />
-        <p className="mx-sage-own">
-          In your own notes, Sage runs on the whole note or only the section you are in, and Before Sage and After Sage
-          stay a click apart until you keep one. A real run sends that text to an AI model, which writes the new
-          version.
-        </p>
-      </section>
-
-      <section className="mx-wrap mx-section mx-more-desk" id="more" aria-labelledby="more-title">
-        <h2 id="more-title">More on the desk</h2>
-        <ol className="mx-features">
-          {FEATURES.map((feature, index) => {
-            const Scene = SCENES[feature.id];
-            return (
-              <li key={feature.id} className={`mx-feature mx-feature--${feature.id}`}>
-                <div className="mx-feature-text">
-                  {/* Numbered the way Companion numbers a note's sections. */}
-                  <h3>
-                    <span className="mx-feature-n" aria-hidden="true">
-                      §{index + 1}
-                    </span>
-                    {feature.title}
-                  </h3>
-                  <p>{feature.text}</p>
-                </div>
-                <Scene />
-              </li>
-            );
-          })}
-        </ol>
-      </section>
-
-      <section className="mx-wrap mx-section mx-hub" id="hub" aria-labelledby="hub-title">
-        <div className="mx-hub-copy">
-          <p className="mx-hub-label">{HUB.label}</p>
-          <h2 id="hub-title">{HUB.title}</h2>
-          <p className="mx-hub-text">{HUB.text}</p>
-          <ul className="mx-hub-list">
-            {HUB.items.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-          <p className="mx-hub-close">{HUB.close}</p>
-          <Link className="pub-button pub-button--solid" to="/register">
-            Register to be there first
-          </Link>
-        </div>
-        <div className="mx-hub-drawing" aria-hidden="true">
-          {['one', 'two', 'three'].map((name) => (
-            <span key={name} className={`hd-note hd-note--${name}`}>
-              <i />
-              <i />
-              <i />
-            </span>
-          ))}
-          <span className="hd-line" />
-          <span className="hd-dot" />
+            <Link className="pub-link" to="/app">
+              {CLOSE.open} <span aria-hidden="true">›</span>
+            </Link>
+          </div>
         </div>
       </section>
     </>
   );
 };
 
-// The Weekend list in either of the room's two moods: the same note, photographed in the same crop.
-const MoodFrame = ({ note, mood, missing, onMissing }) => (
-  <div className="mx-frame mx-frame--moods" data-frame data-mood={mood}>
-    {MOODS.filter((item) => item.id === 'candlelight' || !missing).map((item) => (
-      <Picture
-        key={item.id}
-        photo={note.moods[item.id]}
-        className={`mx-mood${item.id === mood ? ' is-shown' : ''}`}
-        eager
-        sizes={FRAME_SIZES}
-        imageProps={{
-          'data-photo': item.id === mood ? '' : undefined,
-          onError: item.id === 'candlelight' ? undefined : onMissing,
-        }}
-      />
-    ))}
-  </div>
-);
-
-const NotePage = ({ scene }) => {
-  const note = NOTES[scene.view];
-  const [mood, setMood] = useState('candlelight');
-  // Without its Rain photograph the Weekend list simply stays in Candlelight.
-  const [rainMissing, setRainMissing] = useState(false);
-  const moods = note.moods && !rainMissing ? MOODS : null;
-  const others = NOTE_ORDER.filter((view) => view !== scene.view);
+// The Weekend list in either of the room's two moods: the same note, photographed in the same
+// crop, crossfading as the window on the home does (the two share the visit's mood).
+const MoodFrame = ({ note, mood, onMissing }) => {
+  const reduce = useReducedMotion();
+  const night = useRef(null);
+  const [loaded, setLoaded] = useState({});
+  const apply = useCallback((value) => {
+    if (night.current) night.current.style.opacity = String(value);
+  }, []);
+  const fade = useCrossfade({ value: mood === 'candlelight' ? 1 : 0, ready: Boolean(loaded[mood]), apply, reduce });
   return (
-    <div className="mx-wrap mx-note">
-      <div className="mx-note-text">
-        <BackLink to="/desk" previous={FROM_HOME.includes(scene.opener)}>
-          Back
-        </BackLink>
-        <p className="mx-kicker">{note.group}</p>
-        <h1 tabIndex={-1} data-scene-focus>
-          {note.title}
-        </h1>
-        <p className="mx-lede">{note.text}</p>
-        {moods && (
-          <div className="mx-moods" role="group" aria-label="The room’s mood">
-            {moods.map((item) => (
-              <button key={item.id} type="button" aria-pressed={mood === item.id} onClick={() => setMood(item.id)}>
-                {item.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {note.moods ? (
-        <MoodFrame
-          note={note}
-          mood={rainMissing ? 'candlelight' : mood}
-          missing={rainMissing}
-          onMissing={() => {
-            setRainMissing(true);
-            setMood('candlelight');
+    <div className="mx-frame mx-frame--moods" data-frame data-mood={mood}>
+      {['rain', 'candlelight'].map((id) => (
+        <Picture
+          key={id}
+          photo={note.moods[id]}
+          className={`mx-mood mx-mood--${id}`}
+          alt={id === mood ? note.moods[id].alt : ''}
+          eager
+          sizes={FRAME_SIZES}
+          pictureRef={
+            id === 'candlelight'
+              ? (element) => {
+                  night.current = element;
+                  if (element) element.style.opacity = String(fade.current.now);
+                }
+              : undefined
+          }
+          imageProps={{
+            'data-photo': id === mood ? '' : undefined,
+            onLoad: () => setLoaded((prev) => ({ ...prev, [id]: true })),
+            onError: id === 'rain' ? onMissing : undefined,
           }}
         />
-      ) : (
-        <div className="mx-frame" data-frame>
-          <Picture photo={note.photo} eager sizes={FRAME_SIZES} imageProps={{ 'data-photo': '' }} />
-        </div>
-      )}
-
-      <div className="mx-note-after">
-        <p className="mx-caption">An actual Companion view. Names and note content are invented.</p>
-        <nav className="mx-more" aria-label="More on this desk">
-          <p>More on this desk</p>
-          <ul>
-            {others.map((view) => (
-              <li key={view}>
-                <Link to={pathOf(view)} state={{ opener: 'more' }} {...fetchOn(view)}>
-                  {NOTES[view].title}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </div>
+      ))}
     </div>
   );
 };
 
+// A note's own page.
+const NotePage = ({ scene }) => {
+  const note = NOTES[scene.view];
+  const { choice, mood } = useSyncExternalStore(subscribeMood, readMood, readMood);
+  // Without its Rain photograph the Weekend list simply stays in Candlelight.
+  const [rainMissing, setRainMissing] = useState(false);
+  const moods = note.moods && !rainMissing;
+  const others = NOTE_ORDER.filter((view) => view !== scene.view);
+  return (
+    <section className="mx-note-page" aria-labelledby="mx-note-title">
+      <div className="mx-wrap mx-note">
+        <div className="mx-note-text">
+          <BackLink to="/desk" previous={FROM_HOME.includes(scene.opener)}>
+            Back
+          </BackLink>
+          <p className="mx-kicker">{note.group}</p>
+          <h1 id="mx-note-title" tabIndex={-1} data-scene-focus>
+            {note.title}
+          </h1>
+          <p className="mx-lede">{note.text}</p>
+          {moods && (
+            <Segmented
+              name="note-mood"
+              label="The room’s mood"
+              className="mx-note-moods"
+              options={MOOD_CHOICES}
+              value={choice}
+              onChange={setMoodChoice}
+            />
+          )}
+        </div>
+
+        {note.moods ? (
+          <MoodFrame note={note} mood={rainMissing ? 'candlelight' : mood} onMissing={() => setRainMissing(true)} />
+        ) : (
+          <div className="mx-frame" data-frame>
+            <Picture photo={note.photo} eager sizes={FRAME_SIZES} imageProps={{ 'data-photo': '' }} />
+          </div>
+        )}
+
+        <div className="mx-note-after">
+          <p className="mx-caption">An actual Companion view. Names and note content are invented.</p>
+          <nav className="mx-more" aria-label="More on this desk">
+            <p>More on this desk</p>
+            <ul>
+              {others.map((view) => (
+                <li key={view}>
+                  <Link to={pathOf(view)} state={{ opener: 'more' }} {...fetchOn(view)}>
+                    {NOTES[view].title}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+// The home first, then the notes: a page that leaves keeps its place in the document, so turning
+// back mid-transition never moves anything in it.
+const rank = (page) => (page.view ? 1 + NOTE_ORDER.indexOf(page.view) : 0);
+
 const MarketingExperience = () => {
   const { firebaseUser, loading } = useAuth();
-  const { pathname, state, key } = useLocation();
+  const { pathname, state, key, hash } = useLocation();
+  const navigation = useNavigationType();
   const [params] = useSearchParams();
   const reduce = useReducedMotion();
   // Which note the desk shows; kept here so it is the same when a note's page closes again.
   const [shownView, setShownView] = useState(FIRST_SHOWN);
   const place = sceneOf(pathname);
-  // The cover is the signed-out home page: a signed-in visitor goes to their desk unless they
-  // asked for the cover (?landing). One address per page: an unknown note is the desk section.
+  // The home is the signed-out front page: a signed-in visitor goes to their desk unless they
+  // asked for the home (?landing). One address per page: an unknown note is the desk section.
   const home = pathname === '/' && !params.has('landing');
   const waiting = home && loading;
   const signedIn = home && Boolean(firebaseUser);
   const canonical = place.path !== (pathname.replace(/\/+$/, '') || '/') ? place.path : null;
+  const section = place.section ?? (hash === '#find' ? 'find' : null);
+  // Back returns to where the home was left; a link that names a section lands on it.
+  const landOn = navigation === 'POP' ? null : section;
   const { shown, leaving, rootRef, flightRef } = useSceneTransition({
-    scene: waiting || signedIn || canonical ? null : { ...place, opener: state?.opener ?? null },
+    scene: waiting || signedIn || canonical ? null : { ...place, opener: state?.opener ?? null, landOn },
     reduce,
   });
+
+  useEffect(() => warmSprings(), []);
 
   // Within the home page, land on the section the address names: at once on arrival, gliding when
   // a link is followed on the page (unless motion is off). Moving to or from a note is placed by
@@ -533,7 +518,7 @@ const MarketingExperience = () => {
     if (place.key !== 'home' || (last && last.scene !== 'home')) return;
     const first = last === null;
     const behavior = first || document.documentElement.hasAttribute('data-public-still') ? 'instant' : 'smooth';
-    const target = place.section ? document.getElementById(place.section) : null;
+    const target = section ? document.getElementById(section) : null;
     if (target) {
       target.scrollIntoView({ block: 'start', behavior });
       if (!first) target.querySelector('h2')?.focus({ preventScroll: true });
@@ -541,7 +526,7 @@ const MarketingExperience = () => {
     } else if (!first || key !== 'default') {
       window.scrollTo({ top: 0, left: 0, behavior });
     }
-  }, [key, place.key, place.section]);
+  }, [key, place.key, section]);
 
   // Arriving, the site's layout (PublicLayout) puts the page at its top after this component's
   // effects have run; land on the section once more right after it.
@@ -559,7 +544,7 @@ const MarketingExperience = () => {
   if (signedIn) return <Navigate to="/app" replace />;
   if (!shown) return canonical ? <Navigate to={canonical} replace /> : null;
 
-  const pages = leaving ? [leaving, shown] : [shown];
+  const pages = (leaving ? [leaving, shown] : [shown]).sort((a, b) => rank(a) - rank(b));
   return (
     <main className="mx" id="main-content" ref={rootRef}>
       {/* The page on show stays while a wrong address is replaced. */}

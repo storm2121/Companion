@@ -1,8 +1,9 @@
-// What the public home (MarketingExperience.jsx) says and shows: one complete page — the cover, the
-// desk (its cards switch the note shown under it), Sage, the rest of what Companion does, and
-// what is coming — and, a level down, a page for each note on the desk. Every picture is an
-// actual Companion capture of invented content (public/images/landing), with a desktop and a
-// phone crop.
+// What the public home (MarketingExperience.jsx) says and shows: one complete page — the window
+// into the room, the desk (its cards switch the note shown under it), Sage, finding things and the
+// week, the rest of the desk, and what is coming — and, a level down, a page for each note on the
+// desk. Every picture is an actual Companion capture of invented content (public/images/landing),
+// with a desktop and a phone crop. `body` is what each capture shows written in the note: the home's
+// ⌘K demo (findIndex.js) searches it, the way the app searches a note by any word in it.
 //
 // Card positions on the desk picture come from the capture harness (deskTargets.json):
 // { desktop | phone: { width, height, targets: [{ view, label, x, y, w, h }] } }, x / y / w / h as
@@ -16,14 +17,6 @@ export const DESK_TARGETS = TARGET_FILES['./deskTargets.json'] ?? null;
 export const LEDE = {
   line: 'A desk for everything you’re working on.',
   more: 'Notes, a calendar that knows your week, an inbox for loose thoughts, and Sage when a note needs work.',
-};
-
-export const COVER = {
-  src: 'room-cover',
-  width: 1872,
-  height: 788,
-  phone: { src: 'room-cover-mobile', width: 692, height: 422 },
-  alt: '',
 };
 
 export const DESK = {
@@ -82,6 +75,15 @@ export const NOTES = {
     text: 'A short list for Saturday and Sunday, by day in Rain or by evening in Candlelight.',
     moods: { candlelight: CANDLELIGHT, rain: RAIN },
     shown: { label: 'Everyday.', text: 'A short list for the weekend, here by day in the Rain room.', photo: RAIN },
+    tags: ['at-home'],
+    body: [
+      'Saturday morning',
+      'Pick up coffee on the way to the market. The bike shop opens at ten.',
+      'Book the bike repair',
+      'Back up the photos',
+      'Sunday',
+      'Walk by the river. Read a few pages. Leave the afternoon open.',
+    ],
   },
   'harbor-review': {
     title: 'Harbor review',
@@ -89,6 +91,19 @@ export const NOTES = {
     text: 'The pilot scope, the decision, and Friday’s checklist on the same page.',
     photo: WORK,
     shown: { label: 'For work.', text: 'The scope, the decision and Friday’s checklist on one page.', photo: WORK },
+    tags: ['decisions', 'next-steps'],
+    body: [
+      'Tuesday’s review',
+      'The delivery pilot is ready. We spent most of the review on staffing, dates, and what we still need from the field team.',
+      'Keep the pilot to two sites. The wider rollout can follow once we have reviewed the first deliveries.',
+      'Decision: Start with the north site. Add the second site after the first delivery review.',
+      'Before Friday',
+      'Share the revised timeline',
+      'Confirm the delivery windows',
+      'Send the field checklist',
+      'Still open',
+      'Do we need a separate visit before the first delivery, or can the field team send the measurements?',
+    ],
   },
   'sampling-notes': {
     title: 'Sampling notes',
@@ -96,10 +111,22 @@ export const NOTES = {
     text: 'An explanation beside its formula, with sections and a reminder for the idea worth revisiting.',
     photo: CLASS,
     shown: { label: 'For a class.', text: 'An explanation beside its formula, and a reminder for what is worth revisiting.', photo: CLASS },
+    tags: ['week-03'],
+    body: [
+      'From a wave to a sequence',
+      'Sampling records the value of a continuous signal at regular intervals. The spacing between those readings determines which changes we can still recover.',
+      'Remember: A faster-looking pattern can become a slower one when the sampling rate is too low. That ambiguity is aliasing.',
+      'What to check',
+      'Find the highest frequency first. Then choose a sampling rate with enough room above twice that value.',
+      'Sketch the continuous signal',
+      'Compare two sampling intervals',
+    ],
   },
 };
 
-// The rest of the desk, in the order the page shows it.
+// What Companion does, in the order the page shows it. Find anything and the calendar have their
+// own tiles under Sage (Find anything is a working ⌘K); the rest lie on "More on the desk", each
+// with its small drawn scene.
 export const FEATURES = [
   {
     id: 'calendar',
@@ -133,13 +160,30 @@ export const FEATURES = [
   },
 ];
 
-// What is coming: named, not explained.
+// What is coming: named, not explained. The drawing shows three people's copies of one note
+// being written at once.
 export const HUB = {
   label: 'Coming',
   title: 'A hub for your class',
   text: 'Your notes, in step with everyone in the course.',
   items: ['Sync notes with your class', 'Share a page', 'Upload what you have', 'Export it all'],
   close: 'That’s all we’ll say for now.',
+  people: ['You', 'Sara', 'Omar'],
+};
+
+// The window into the room, under the cover's words (HeroWindow.jsx): the line along its sill, and
+// the one hint it gives.
+export const WINDOW = {
+  note: 'Everyday · Weekend list',
+  saved: 'Saved · just now',
+  hint: { pointer: 'Drag across the glass to wipe it.', touch: 'Swipe across the glass to wipe it.' },
+  fine: 'An actual Companion view. All names and note content are invented.',
+};
+
+// The last words on the page.
+export const CLOSE = {
+  title: 'Ready when you are.',
+  open: 'Already have a desk? Open it',
 };
 
 export const pathOf = (view) => `/desk/${view}`;

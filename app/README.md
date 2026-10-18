@@ -146,7 +146,7 @@ If you ever point this at a different Firebase project, replace the `firebaseCon
 
 | Path | Page | Guard |
 |---|---|---|
-| `/` | Public home: cover, desk, Sage, "More on the desk", the coming hub | public; active sessions go to `/app` |
+| `/` | Public home: the window into the room, desk, Sage, ⌘K and the week, "More on the desk", the coming hub (`#find` lands on ⌘K) | public; active sessions go to `/app` |
 | `/?landing` | The home, including while signed in | public |
 | `/desk` | The home, at its desk section | public |
 | `/desk/:view` | A fictional note's own page (Weekend list, Harbor review, Sampling notes) | public |
@@ -167,23 +167,43 @@ their destination in `?next=`; only known local workspace routes are accepted. E
 login also keeps the return path in `companion:auth-return` for links opened in another
 tab. `/app` bypasses the landing page and `/dashboard` respects the saved design preference.
 
-The public pages use a flat paper palette, self-hosted Literata for reading, and Arial for
-controls. The home (`src/public/MarketingExperience.jsx`, copy in `sceneData.js`) is one page:
-the cover; the desk, whose cards switch the note shown under it (the note flies out of its
-card, `useCardFlight.js`); the Sage demo; "More on the desk", a numbered tour of the calendar,
-inbox, ⌘K, note structure, PDF/Markdown export and the rooms, each with a small drawn scene
-that plays with scrolling; and a short teaser for the coming class hub. The shown note and the
-cover open a note's own page (`/desk/:view`), which opens out of what was clicked and folds back
-into it on Back (`useSceneTransition.js`). Transitions use measured rectangles with clipped
-snapshots rather than stretching screenshots; desk card bounds live in `deskTargets.json`.
-Rain and Candlelight show the same Weekend list. All names and content are invented.
+The public pages are "Daylight studio": a pale ground (`#eef1f3`) with white tiles lying on it
+under soft shadows, ink type, one blue accent (the room's day accent) for links and the live
+dot, and translucent material only where something floats over content (the top line, the
+controls on the window). Headings are Bricolage Grotesque (the app's display face, Google
+Fonts); everything else is the system font. No gradients, no texture, no rules between sections.
+Tokens live in `src/public/public.css`; the home is `src/public/MarketingExperience.jsx` with all
+copy and pictures in `sceneData.js`.
+
+The hero is a window into the room (`HeroWindow.jsx`): the invented Weekend list in Rain from
+06:00 to 18:00 by the visitor's clock and in Candlelight otherwise, as the app does, or the room
+picked on the window (`windowMood.js`; never written anywhere). The glass is drawn by hand on
+WebGL2 (`rainRenderer.js`, run in a worker on an OffscreenCanvas by `rainWorker.js`, hosted by
+`rainGlass.js`, all fetched after first paint and only while the window is in view): drops that
+refract the room, running streaks, and condensation the visitor can wipe away with a pointer or
+a finger; it gathers back over about twenty seconds. A click still opens the note; a drag is a
+wipe. Without WebGL2 it is the plain capture. "Rain sound" in the window's sill plays a rain
+made in Web Audio (`rainSound.js`, mixed by `rainMix.js`), only when asked for.
+
+Below it: the desk, whose cards switch the note shown under it (the note flies out of its card,
+`useCardFlight.js`); the Sage demo; a working ⌘K (`FindDemo.jsx`: a real field over the room's own
+`deskSearch.js`, `findIndex.js`; ⌘K / Ctrl+K anywhere on the home) beside the drawn week; "More on
+the desk" (inbox, notes with shape, export, the rooms), each playing a small scene as it scrolls
+into view; the coming class hub; and the last word. The window, the shown note and a ⌘K result
+open a note's own page (`/desk/:view`), which opens out of what was clicked and folds back into
+it on Back (`useSceneTransition.js`; Back mid-open turns the same sheet round). Every movement
+is a spring (Motion, `springs.js`, a chunk of its own fetched after first paint): it starts from
+where a thing is drawn and carries its speed. Transitions move a sheet with a transform and
+change its size with a clip-path, so nothing is stretched and nothing is laid out while it flies.
+All names and content are invented.
+
 The four prepared Sage results live in `src/public/sageDemoData.js`, using the real goal
 labels from `room/sageChoices.js`. Every result starts from the exact same `SAGE_NOTE.before`.
 Choosing a goal applies its result at once (no Run): the accessible content updates
-immediately while stable blocks move, new blocks appear and light edits mark changed words;
-Before / After compares. Nothing calls Sage. All motion respects system reduced motion and the
-local Motion switch, and stops on navigation, resize or interruption. On phones the Sage bar
-sticks to the top while the note is read, and Sage's note is a closed native disclosure.
+immediately while stable blocks spring to their places, new blocks appear under an "Added" and
+light edits mark changed words; Before / After compares. Nothing calls Sage. All motion respects
+system reduced motion (cross-fades instead), reduced transparency (solid materials, no
+condensation) and the local Motion switch. On phones the Sage bar sticks under the top line.
 
 **The editor.** Each note is a freeform canvas of draggable/resizable blocks (text or image).
 Text blocks are **TipTap/ProseMirror** instances (bold/italic/underline/strike, font size &
