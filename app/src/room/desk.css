@@ -1,0 +1,2637 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   desk.css — PROTOTYPE Home, "the desk in the room" (RoomDesk.jsx imports it; nothing
+   else does). Every class is room-desk-*; tokens live under html[data-design='room'],
+   the day's under [data-mood='day']. Positions come inline from deskLayout.js.
+
+   No gradients anywhere: light and shade are baked pictures (assets/desk/, see its
+   README) or flat bands. Only transform and opacity ever move; the mood's own layers
+   change by opacity alone, so the room's 600ms cross-fade carries them.
+   ────────────────────────────────────────────────────────────────────────────── */
+
+/* The spines' lettering faces (the stage's leather books and the ghost of the next one): EB Garamond
+   700 in its true small caps for titles (round seven, run three: the planner's bounded check against
+   Spectral SC 600, which cut far more titles), Amiri 700 for their Arabic, Spectral SC 700's lining
+   figures for the counts (crisper than EB Garamond 800 by the study's M); their files load only where
+   a spine uses them; block, not swap: gilt never shows in a fallback face (DeskStage waits for them
+   too). */
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:wght@700&family=Spectral+SC:wght@700&family=Amiri:wght@700&display=block');
+
+html[data-design='room'] {
+  /* The desk's back edge: ~40% of the screen, within reason on very short or tall ones. */
+  --room-desk-top: clamp(300px, 40vh, 440px);
+  /* 1 by candlelight, 0 by day: what the mood's layers fade by. */
+  --room-desk-night: 1;
+
+  /* Writing straight on the wood (the candle's stamp, "+ New course"). */
+  --room-desk-on-wood: #f2e8d8;
+  --room-desk-on-wood-soft: #f2e8d8;
+  --room-desk-dashed: rgba(242, 232, 216, 0.46);
+
+  /* The notebook: the room's glass, thick enough to read on wood with no frost behind it. */
+  --room-desk-sheet: rgba(var(--room-glass), 0.86);
+  --room-desk-rim: inset 0 0 0 1px var(--room-glass-rim), inset 0 1px 0 var(--room-glass-shine);
+  --room-desk-edge: #2b2019;
+  --room-desk-board: #120d0a;
+  --room-desk-ribbon: #8a2d24;
+
+  /* A book's page block, and its night shade (deskLayout NIGHT_SHADE / _ALPHA). */
+  --room-desk-pages: #d9cdb5;
+  --room-desk-cover-shade: rgba(24, 14, 6, 0.3);
+
+  /* The frame around the Home's picture. */
+  --room-desk-mat: rgba(var(--room-glass), 0.94);
+
+  /* Text actions. The room's own amber on paper by day reads at 3.2:1; the desk's is
+     deeper so every action holds 4.5:1 (5.3 on paper). */
+  --room-desk-action: var(--room-accent-on-paper);
+}
+
+html[data-design='room'][data-mood='day'] {
+  --room-desk-night: 0;
+  --room-desk-on-wood-soft: #f2e8d8;
+  --room-desk-dashed: rgba(242, 232, 216, 0.62);
+  --room-desk-sheet: var(--room-paper);
+  --room-desk-rim: 0 0 0 1px rgba(31, 38, 34, 0.05);
+  --room-desk-edge: #ebe4d5;
+  --room-desk-board: #2a231f;
+  --room-desk-mat: #f4f1ea;
+  --room-desk-action: #9a581c;
+}
+
+/* ── The page: the wall, then the desk to the very end ───────────────────────── */
+
+.room-desk-page {
+  display: flex;
+  flex-direction: column;
+  /* The top line takes 66px; the desk runs through the content's 48px bottom padding. */
+  min-height: calc(100vh - 66px + 48px);
+  margin-bottom: -48px;
+}
+
+.room-desk-wall {
+  flex: none;
+  box-sizing: border-box;
+  min-height: calc(var(--room-desk-top) - 66px);
+  padding-bottom: 40px;
+}
+
+.room-desk-plaque {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 52px;
+}
+
+.room-desk {
+  position: relative;
+  flex: 1 0 auto;
+  margin: 0 calc(-1 * var(--room-gutter));
+  padding: 0 var(--room-gutter);
+  /* The wood runs 16px past both edges for the parallax; the desk cuts it at the window's
+     edges without becoming a scroller (the frame and the candle still rise over the wall). */
+  overflow-x: clip;
+}
+
+/* ── The wood ─────────────────────────────────────────────────────────────────
+   Dark oiled oak (ambientCG Wood051, graded warm), a CSS background so it never holds
+   up first paint. Night lays a flat dusk over it; day a flat, even light.        */
+
+.room-desk-surface {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -16px;
+  right: -16px;
+  z-index: 0;
+  overflow: hidden;
+  background: #3b2a1f url('./assets/desk/wood.webp') 0 0 / 1024px 1024px repeat;
+}
+
+.room-desk-dusk,
+.room-desk-daylight,
+.room-desk-back,
+.room-desk-light,
+.room-desk-front {
+  position: absolute;
+  pointer-events: none;
+}
+
+.room-desk-dusk {
+  inset: 0;
+  background: rgba(12, 7, 4, 0.46);
+  opacity: var(--room-desk-night);
+  transition: opacity 600ms var(--room-ease);
+}
+
+.room-desk-daylight {
+  inset: 0;
+  background: rgba(236, 230, 220, 0.12);
+  opacity: calc(1 - var(--room-desk-night));
+  transition: opacity 600ms var(--room-ease);
+}
+
+/* Where the desk meets the wall: a crease, then a soft baked darkening (multiply). */
+.room-desk-back {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 96px;
+  background: url('./assets/desk/desk-back.webp') 0 0 / 8px 96px repeat-x;
+  border-top: 1px solid rgba(6, 3, 2, 0.7);
+  mix-blend-mode: multiply;
+}
+
+/* The candle's light on the wood: a baked warm falloff, screened onto the wood — the one
+   blended layer that moves, and only its opacity, breathing ±5%. Out by day. */
+.room-desk-light {
+  left: calc(var(--room-gutter) + 16px + var(--lx, 0px));
+  top: var(--ly, 0px);
+  mix-blend-mode: screen;
+  opacity: var(--room-desk-night);
+  transition: opacity 600ms var(--room-ease);
+}
+
+.room-desk-light-map {
+  position: absolute;
+  inset: 0;
+  background: url('./assets/desk/candle-light.webp') 0 0 / 100% 100% no-repeat;
+  opacity: 0.5;
+  animation: room-desk-breathe 2.3s ease-in-out infinite;
+}
+
+@keyframes room-desk-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  30% {
+    opacity: 0.525;
+  }
+  55% {
+    opacity: 0.478;
+  }
+  80% {
+    opacity: 0.515;
+  }
+}
+
+/* The light pass (deskLight.js): the lit oak, drawn in a worker, laid over the wood once its
+   first frame is ready — then the baked light and shade beneath fade out (600 ms, opacity).
+   Without it (no WebGL2, a flow desk, ?light=off) none of this happens and the baked light
+   stays. The frame keeps its CSS shadow: it falls on the wall, which the pass does not draw. */
+.room-desk-glhost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.room-desk-gl {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 600ms var(--room-ease);
+}
+
+.room-desk[data-light='on'] .room-desk-gl {
+  opacity: 1;
+}
+
+.room-desk[data-light='on'] .room-desk-dusk,
+.room-desk[data-light='on'] .room-desk-daylight,
+.room-desk[data-light='on'] .room-desk-back,
+.room-desk[data-light='on'] .room-desk-light,
+.room-desk[data-light='on'] .room-desk-book .room-desk-shade::before,
+.room-desk[data-light='on'] .room-desk-book .room-desk-shade::after,
+.room-desk[data-light='on'] .room-desk-notebook > .room-desk-shade::before,
+.room-desk[data-light='on'] .room-desk-notebook > .room-desk-shade::after,
+.room-desk[data-light='on'] .room-desk-scrap-slot > .room-desk-shade::before,
+.room-desk[data-light='on'] .room-desk-scrap-slot > .room-desk-shade::after {
+  opacity: 0;
+}
+
+.room-desk[data-light='on'] .room-desk-light-map {
+  animation-play-state: paused;
+}
+
+/* The front edge: the same wood, turned down and darker, its arris catching the light. */
+.room-desk-front {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 12px;
+  background: #5a4636 url('./assets/desk/wood.webp') 0 100% / 1024px 1024px repeat-x;
+  background-blend-mode: multiply;
+  border-top: 1px solid rgba(255, 226, 190, 0.2);
+}
+
+/* ── The objects ──────────────────────────────────────────────────────────── */
+
+.room-desk-stage {
+  position: relative;
+  z-index: 1;
+  min-height: var(--room-desk-h);
+}
+
+/* A depth plane: the stage's whole box, so what lies in it keeps its own place; moved as one
+   by the parallax (a translate3d, written per frame, gone at rest). */
+.room-desk-plane {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.room-desk-plane > * {
+  pointer-events: auto;
+}
+
+.room-desk-candle,
+.room-desk-notebook,
+.room-desk-books,
+.room-desk-scrap-slot,
+.room-desk-frame {
+  position: absolute;
+}
+
+/* Every object's shadow: two layers, night's and day's, that cross-fade with the mood.
+   The night one falls away from the candle (deskLayout castShadow). The shadow is drawn
+   by a box set in from the object's edges, so lifting the object never uncovers the
+   hole an outer box-shadow leaves under its own box. */
+.room-desk-shade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.room-desk-shade::before,
+.room-desk-shade::after {
+  content: '';
+  position: absolute;
+  inset: 22px;
+  transition: opacity 600ms var(--room-ease);
+}
+
+.room-desk-shade::before {
+  box-shadow: var(--sn-x, 0) var(--sn-y, 0) var(--sn-blur, 12px) 22px rgba(0, 0, 0, var(--sn-a, 0.4));
+  opacity: var(--room-desk-night);
+}
+
+.room-desk-shade::after {
+  box-shadow: var(--sd-x, 3px) var(--sd-y, 6px) var(--sd-blur, 12px) 22px rgba(20, 12, 6, var(--sd-a, 0.3));
+  opacity: calc(1 - var(--room-desk-night));
+}
+
+/* ── Candle ───────────────────────────────────────────────────────────────── */
+
+.room-desk-candle-button {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--room-r-chip);
+  background: none;
+  cursor: pointer;
+}
+
+/* The candle in its dish: a photograph, lying in the lower half of the box, its foot at 91%
+   (deskLayout CANDLE_*). Night's grade and day's cross-fade with the mood. */
+.room-desk-candle-photo {
+  position: absolute;
+  /* The picture runs a little past the box at each side (its dish's soft shadow); the wick
+     stays at 48.9%, 53.1%. */
+  left: -4%;
+  right: -4%;
+  bottom: 3%;
+  aspect-ratio: 241 / 172;
+  pointer-events: none;
+}
+
+.room-desk-candle-photo::before,
+.room-desk-candle-photo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: 0 0 / 100% 100% no-repeat;
+  transition: opacity 600ms var(--room-ease);
+}
+
+.room-desk-candle-photo::before {
+  background-image: url('./assets/desk/candle-night.webp');
+  opacity: var(--room-desk-night);
+}
+
+.room-desk-candle-photo::after {
+  background-image: url('./assets/desk/candle-day.webp');
+  opacity: calc(1 - var(--room-desk-night));
+}
+
+/* The drawn flame, on the wick (48.9%, 53.1%): shown only where the film cannot play. */
+.room-desk-flame {
+  position: absolute;
+  left: 35.3%;
+  top: 27%;
+  width: 26.7%;
+  height: 27.8%;
+  opacity: var(--room-desk-night);
+  transform: scale(calc(0.3 + 0.7 * var(--room-desk-night)));
+  transform-origin: 51% 94%;
+  transition: opacity 240ms var(--room-ease), transform 240ms var(--room-ease);
+}
+
+/* The filmed flame (Desk.jsx), screened onto the wood. Out by day; once it shows a frame the
+   drawn flame steps aside and stops flickering. */
+.room-desk-flamevideo {
+  position: absolute;
+  display: block;
+  object-fit: fill;
+  mix-blend-mode: screen;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 240ms var(--room-ease);
+}
+
+.room-desk[data-flame='video'] .room-desk-flamevideo {
+  opacity: var(--room-desk-night);
+}
+
+.room-desk[data-flame='video'] .room-desk-flame {
+  opacity: 0;
+}
+
+.room-desk[data-flame='video'] .room-desk-flame-outer,
+.room-desk[data-flame='video'] .room-desk-flame-inner {
+  animation-play-state: paused;
+}
+
+.room-desk-flame svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* The wisp rises from the same wick: its box is the flame's, taller. */
+.room-desk-smoke {
+  position: absolute;
+  left: 35.3%;
+  top: 16.3%;
+  width: 26.7%;
+  height: 40%;
+  overflow: visible;
+}
+
+/* Two flickers out of step — 1.1s and 1.7s — so it never looks mechanical. Transform only,
+   from the wick. */
+.room-desk-flame-outer,
+.room-desk-flame-inner {
+  transform-origin: 50% 91%;
+  will-change: transform;
+}
+
+.room-desk-flame-outer {
+  animation: room-desk-flicker-a 1.1s ease-in-out infinite;
+}
+
+.room-desk-flame-inner {
+  animation: room-desk-flicker-b 1.7s ease-in-out infinite;
+}
+
+@keyframes room-desk-flicker-a {
+  0%,
+  100% {
+    transform: translateX(0) scale(1, 1);
+  }
+  22% {
+    transform: translateX(0.6px) scale(0.98, 1.05);
+  }
+  48% {
+    transform: translateX(-0.5px) scale(1.02, 0.96);
+  }
+  74% {
+    transform: translateX(0.3px) scale(0.99, 1.03);
+  }
+}
+
+@keyframes room-desk-flicker-b {
+  0%,
+  100% {
+    transform: translateX(0) scaleY(1);
+  }
+  31% {
+    transform: translateX(-0.5px) scaleY(1.07);
+  }
+  57% {
+    transform: translateX(0.7px) scaleY(0.94);
+  }
+  83% {
+    transform: translateX(-0.2px) scaleY(1.03);
+  }
+}
+
+/* Day: nothing burns, so nothing runs. */
+html[data-design='room'][data-mood='day'] .room-desk-flame-outer,
+html[data-design='room'][data-mood='day'] .room-desk-flame-inner,
+html[data-design='room'][data-mood='day'] .room-desk-light-map {
+  animation-play-state: paused;
+}
+
+/* Blown out: one wisp, up and gone. Hidden at rest, so Still (no animation) shows none. */
+.room-desk-smoke {
+  opacity: 0;
+  transform-origin: 51% 92%;
+  animation: room-desk-smoke 900ms var(--room-ease) forwards;
+}
+
+@keyframes room-desk-smoke {
+  0% {
+    opacity: 0;
+    transform: translateY(3px) scale(0.9, 0.85);
+  }
+  18% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-20px) scale(1.08, 1.1);
+  }
+}
+
+.room-desk-candle-stamp {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 2px;
+  text-align: center;
+  font-family: var(--room-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--room-desk-on-wood-soft);
+}
+
+/* ── The notebook ─────────────────────────────────────────────────────────────
+   Two pages on a dark cover board, a stack of page edges on each outer side, the gutter
+   shading into the spine, a ribbon over the right page. Night: the room's glass. Day:
+   its paper.                                                                     */
+
+.room-desk-notebook {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  /* The slot's height is the notebook's: a page never grows past it. */
+  grid-template-rows: minmax(0, 100%);
+  isolation: isolate;
+  color: var(--room-ink);
+}
+
+/* The cover board, larger than the page block: a rim only, so the candle's light on the
+   wood still shows through the glass pages at night — and its own edge below it. */
+.room-desk-notebook::before {
+  content: '';
+  position: absolute;
+  inset: -6px -13px -17px;
+  z-index: -1;
+  border: solid var(--room-desk-board);
+  border-width: 6px 13px 17px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 236, 214, 0.06), 0 3px 0 rgba(0, 0, 0, 0.55);
+}
+
+.room-desk-notebook > .room-desk-shade {
+  inset: -6px -13px -20px;
+  z-index: -2;
+}
+
+.room-desk-nb-page {
+  position: relative;
+  min-width: 0;
+  padding: 26px 26px 22px;
+  background: var(--room-desk-sheet);
+  transition: background-color 600ms var(--room-ease), color 600ms var(--room-ease);
+}
+
+.room-desk-nb-page--left {
+  border-radius: 3px 0 0 3px;
+  box-shadow: var(--room-desk-rim);
+}
+
+.room-desk-nb-page--right {
+  display: flex;
+  flex-direction: column;
+  border-radius: 0 3px 3px 0;
+  box-shadow: var(--room-desk-rim);
+}
+
+/* The page block under each page: about twenty leaves showing at the front (12px) and at the
+   outer side (5px, foreshortened), skewed so the two faces meet at the corner, darker where
+   they turn from the light. The leaves are a picture: mid-grey lines over the stack's own
+   colour, darker than paper by day and lighter than the glass at night. At the spine the two
+   fronts part in a V: the leaves curving down into the gutter. */
+.room-desk-nb-page::before,
+.room-desk-nb-page::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--room-desk-edge);
+  transition: background-color 600ms var(--room-ease);
+}
+
+.room-desk-nb-page::before {
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 12px;
+  background-image: url('./assets/desk/nb-stack-h.webp');
+  background-size: 1px 12px;
+  background-repeat: repeat-x;
+  box-shadow: inset 0 0 0 40px rgba(10, 6, 3, 0.14);
+  transform-origin: 0 0;
+  transform: skewX(22.6deg);
+}
+
+.room-desk-nb-page--left::before {
+  transform-origin: 100% 0;
+  transform: skewX(-22.6deg);
+}
+
+.room-desk-nb-page::after {
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 5px;
+  background-image: url('./assets/desk/nb-stack-v.webp');
+  background-size: 12px 1px;
+  background-repeat: repeat-y;
+  box-shadow: inset 0 0 0 40px rgba(10, 6, 3, 0.32);
+  transform-origin: 0 0;
+  transform: skewY(67.4deg);
+}
+
+.room-desk-nb-page--left::after {
+  left: auto;
+  right: 100%;
+  transform-origin: 100% 0;
+  transform: skewY(-67.4deg);
+}
+
+/* One leaf's corner, lifted: its underside and its small shadow are a picture (baked), and
+   the page itself shows through beneath it. Night's and day's cross-fade with the mood. */
+.room-desk-nb-curl {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+}
+
+.room-desk-nb-curl::before,
+.room-desk-nb-curl::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: 0 0 / 100% 100% no-repeat;
+  transition: opacity 600ms var(--room-ease);
+}
+
+.room-desk-nb-curl::before {
+  background-image: url('./assets/desk/nb-curl-night.webp');
+  opacity: var(--room-desk-night);
+}
+
+.room-desk-nb-curl::after {
+  background-image: url('./assets/desk/nb-curl-day.webp');
+  opacity: calc(1 - var(--room-desk-night));
+}
+
+@media (max-width: 1339px) {
+  .room-desk-nb-page {
+    padding: 24px 20px 20px 22px;
+  }
+}
+
+/* The pages curve down into the spine (a baked shade), meeting at one fine line. */
+.room-desk-nb-gutter {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 64px;
+  transform: translateX(-50%);
+  background: url('./assets/desk/notebook-gutter.webp') 0 0 / 100% 100%;
+  pointer-events: none;
+}
+
+.room-desk-nb-gutter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.room-desk-nb-heading {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 0 0 10px;
+}
+
+.room-desk-nb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.room-desk-nb-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.room-desk-nb-row .room-dot {
+  flex: none;
+  transform: translateY(-1px);
+}
+
+.room-desk-nb-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.room-desk-nb-row-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-desk-nb-row:hover .room-desk-nb-row-title {
+  color: var(--room-desk-action);
+}
+
+.room-desk-nb-row-stamp,
+.room-desk-nb-course {
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--room-ink-soft);
+}
+
+.room-desk-nb-empty {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--room-ink-soft);
+  margin: 4px 0 0;
+}
+
+.room-desk-nb-latest {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 0;
+}
+
+/* The open page's first line: the course, then the note's kind in the course's colour,
+   deepened toward the ink so it holds at 11.5px on the glass by night and on paper by day. */
+.room-desk-nb-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  max-width: 100%;
+  margin: 0;
+}
+
+.room-desk-nb-course {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-desk-nb-kind {
+  flex: none;
+  font-family: var(--room-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--room-course, var(--room-ink-soft)) 62%, var(--room-ink));
+}
+
+.room-desk-nb-title {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: 26px;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+  margin: 10px 0 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.room-desk-nb-summary,
+.room-desk-nb-lines {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--room-ink-soft);
+  margin: 12px 0 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+/* The note's own first lines (deskPage.js): each paragraph, heading or item on a line of its
+   own, four lines at most. They arrive a moment after the page (read lazily): a short fade. */
+.room-desk-nb-lines {
+  white-space: pre-line;
+  overflow-wrap: break-word;
+  animation: room-rise 0.35s var(--room-ease) both;
+}
+
+/* The note's tags, as on its sheet in the course, a step stronger: the faint ink is too faint
+   on the glass at this size. */
+.room-desk-nb-latest .room-sheet-tags {
+  margin-top: 12px;
+  color: var(--room-ink-soft);
+}
+
+/* A text action in the room's way: the accent, never a button shape. */
+.room-desk-action {
+  margin-top: 18px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-desk-action);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.room-desk-action:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The ribbon: from the spine, out over the top edge and down the page beside the gutter,
+   clear of the writing. Grosgrain, cut in a V, with its own small shadow — all one picture. */
+.room-desk-nb-ribbon {
+  position: absolute;
+  left: 8px;
+  top: -12px;
+  width: 11px;
+  height: 90px;
+  background: url('./assets/desk/ribbon.webp') 0 0 / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+/* ── Books ────────────────────────────────────────────────────────────────────
+   Closed, cover up, cloth in the course's colour: the cloth texture multiplies over the
+   colour deskLayout chose (coverTone), so every course is its own dyed cloth. A spine
+   fold on the left, the page block showing at the fore-edge and the tail, the back
+   board under it.                                                               */
+
+.room-desk-book,
+.room-desk-new {
+  position: absolute;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.room-desk-book {
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  text-align: start;
+  transform: rotate(calc(var(--tilt, 0deg) * var(--room-tilt)));
+  transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.room-desk-book > .room-desk-shade {
+  inset: 0 -5px -13px 0;
+  opacity: 0.8;
+  transition: transform 220ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Picked up: it lifts 6px and straightens; its shadow stays on the desk, wider and softer.
+   A press sets it back 2px at once; a pick holds it up while its course opens. */
+.room-desk-book.is-lifted,
+.room-desk-book.is-picked,
+.room-desk-book:focus-visible {
+  transform: translateY(-6px) rotate(0deg);
+  will-change: transform;
+}
+
+.room-desk-book.is-lifted > .room-desk-shade,
+.room-desk-book.is-picked > .room-desk-shade,
+.room-desk-book:focus-visible > .room-desk-shade {
+  transform: translateY(6px) scale(1.04);
+  opacity: 0.55;
+}
+
+@media (hover: hover) {
+  .room-desk-book:hover {
+    transform: translateY(-6px) rotate(0deg);
+    will-change: transform;
+  }
+
+  .room-desk-book:hover > .room-desk-shade {
+    transform: translateY(6px) scale(1.04);
+    opacity: 0.55;
+  }
+}
+
+.room-desk-book:active {
+  transform: translateY(-4px) rotate(0deg);
+  transition-duration: 0s;
+}
+
+.room-desk-book:active > .room-desk-shade {
+  transform: translateY(4px) scale(1.03);
+  opacity: 0.62;
+  transition-duration: 0s;
+}
+
+.room-desk-book.is-picked {
+  transition-duration: 180ms;
+}
+
+.room-desk-book-cover {
+  position: absolute;
+  inset: 0;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 13px 11px 11px 19px;
+  border-radius: 3px;
+  background: var(--cover) url('./assets/desk/cloth.webp') var(--cloth-at, 0 0) / 256px 256px repeat;
+  background-blend-mode: multiply;
+  color: var(--ink);
+  /* The board's edge catching the light along the top and the spine side. */
+  box-shadow: inset 1px 1px 0 rgba(255, 240, 222, 0.09);
+}
+
+/* The book's thickness, on the two faces turned away from the light: the front (13px: the
+   top board's edge, the page block with its hairlines, the bottom board's edge) and the
+   fore-edge (5px, foreshortened), skewed to meet at the corner. Flat shade over each, the
+   fore-edge darker. Pictures and flat bands only. */
+.room-desk-book-edge {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.room-desk-book-edge::before,
+.room-desk-book-edge::after {
+  content: '';
+  position: absolute;
+  box-sizing: border-box;
+  background-color: var(--room-desk-pages);
+}
+
+.room-desk-book-edge::before {
+  left: 0;
+  top: 100%;
+  width: 100%;
+  height: 13px;
+  border-top: 3px solid var(--cover-board, #2c241d);
+  border-bottom: 3px solid var(--cover-board, #2c241d);
+  border-radius: 0 0 2px 2px;
+  background-image: url('./assets/desk/book-pages-h.webp');
+  background-size: 1px 7px;
+  background-repeat: repeat-x;
+  box-shadow: inset 0 0 0 20px rgba(14, 8, 4, 0.16);
+  transform-origin: 0 0;
+  transform: skewX(21deg);
+}
+
+.room-desk-book-edge::after {
+  left: 100%;
+  top: 0;
+  width: 5px;
+  height: 100%;
+  border-left: 1px solid var(--cover-board, #2c241d);
+  border-right: 1px solid var(--cover-board, #2c241d);
+  background-image: url('./assets/desk/book-pages-v.webp');
+  background-size: 3px 1px;
+  background-repeat: repeat-y;
+  box-shadow: inset 0 0 0 20px rgba(14, 8, 4, 0.36);
+  transform-origin: 0 0;
+  transform: skewY(69deg);
+}
+
+/* A book bound on the right shows its spine there, not its leaves. */
+.room-desk-book.is-rtl .room-desk-book-edge::after {
+  background-image: none;
+  background-color: var(--cover-board, #2c241d);
+}
+
+/* The spine fold: the cloth wraps round the boards' hinge. */
+.room-desk-book-cover::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: -1;
+  border-radius: 3px 0 0 3px;
+  background: rgba(0, 0, 0, 0.13);
+  box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.26), 1px 0 0 rgba(255, 244, 228, 0.08);
+}
+
+/* Bound on the right: Arabic and Hebrew titles. */
+.room-desk-book.is-rtl .room-desk-book-cover {
+  padding: 13px 19px 11px 11px;
+}
+
+.room-desk-book.is-rtl .room-desk-book-cover::before {
+  left: auto;
+  right: 0;
+  border-radius: 0 3px 3px 0;
+  box-shadow: inset 1px 0 0 rgba(0, 0, 0, 0.26), -1px 0 0 rgba(255, 244, 228, 0.08);
+}
+
+.room-desk-book.is-rtl .room-desk-book-title {
+  text-align: right;
+}
+
+/* Night dims the cloth and the page block with it (deskLayout's NIGHT_SHADE). */
+.room-desk-book-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0 -5px -13px 0;
+  z-index: -1;
+  border-radius: 3px;
+  background: var(--room-desk-cover-shade);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 13px, 100% 100%, 5px 100%, 0 calc(100% - 13px));
+  opacity: var(--room-desk-night);
+  transition: opacity 600ms var(--room-ease);
+}
+
+.room-desk-book-title {
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: var(--title-size, 18.5px);
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  /* A restrained deboss: pressed into the cloth, nothing shiny. */
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 -1px 0 rgba(255, 244, 228, 0.09);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+
+.room-desk-book-count {
+  font-family: var(--room-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* "+ New course": a book's outline in the room's dashed idiom. */
+.room-desk-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: var(--room-border) dashed var(--room-desk-dashed);
+  border-radius: var(--room-r-chip);
+  background: none;
+  color: var(--room-desk-on-wood-soft);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.room-desk-new:hover {
+  color: var(--room-desk-on-wood);
+  border-color: var(--room-desk-on-wood-soft);
+}
+
+/* The first course: the one thing to do on an empty desk, in the room's amber. */
+.room-desk-new.is-first {
+  flex-direction: column;
+  gap: 6px;
+  border-color: rgba(var(--room-accent-rgb), 0.7);
+  color: var(--room-accent-warm);
+  font-family: var(--room-display);
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.room-desk-new.is-first .room-desk-new-plus {
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+/* On the lighter daytime wood the amber steps up a shade to keep 4.5:1. */
+html[data-design='room'][data-mood='day'] .room-desk-new.is-first {
+  border-color: rgba(245, 189, 133, 0.9);
+  color: #f5bd85;
+}
+
+.room-desk-new.is-first:hover {
+  border-color: var(--room-accent-warm);
+  color: var(--room-accent-warm);
+}
+
+/* ── The scrap and the picture: the room's own components, placed ────────────── */
+
+.room-desk-scrap.room-scrap {
+  width: 100%;
+  margin: 0;
+}
+
+/* On the desk the glass is thick and unfrosted: nothing that moves lies under it. */
+html[data-design='room'] .room-desk .room-desk-scrap.room-paper,
+html[data-design='room'] .room-desk .room-desk-frame .room-paper {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html[data-design='room']:not([data-mood='day']) .room-desk .room-desk-scrap.room-paper {
+  --room-paper: rgba(var(--room-glass), 0.9);
+}
+
+html[data-design='room'] .room-desk .room-desk-scrap.room-paper {
+  box-shadow: var(--room-desk-rim);
+}
+
+/* On the desk every word is at least 4.5:1 — the room's faint ink is 2.7:1 on paper by
+   day, so the scrap's foot and the empty frame's words take the soft ink here. */
+.room-desk .room-scrap-foot,
+.room-desk-frame .room-scene-inner {
+  color: var(--room-ink-soft);
+}
+
+.room-desk-frame .room-scene-add {
+  color: var(--room-desk-action);
+}
+
+.room-desk-scrap-slot > .room-desk-shade {
+  inset: 0;
+  transform: rotate(calc(0.8deg * var(--room-tilt)));
+}
+
+/* The frame: thin dark wood with a bevelled lip; the picture's sheet is its mat. */
+.room-desk-frame-wood {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 9px;
+  border-radius: 2px;
+  background: #4b3a2e url('./assets/desk/wood.webp') 0 0 / 512px 512px;
+  background-blend-mode: multiply;
+  box-shadow: inset 1px 1px 0 rgba(255, 232, 205, 0.16), inset -1px -1px 0 rgba(0, 0, 0, 0.45);
+}
+
+.room-desk-frame > .room-desk-shade {
+  inset: 0;
+}
+
+/* The glass over the picture catching the room's light: a fine line along its top edge and
+   one faint straight streak. Flat, no blur. */
+.room-desk-frame-wood::before,
+.room-desk-frame-wood::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.room-desk-frame-wood::before {
+  left: 9px;
+  right: 9px;
+  top: 9px;
+  height: 1px;
+  background: rgba(255, 248, 235, 0.2);
+}
+
+.room-desk-frame-wood::after {
+  top: 9px;
+  left: 31%;
+  width: 1px;
+  height: 64%;
+  background: rgba(255, 252, 245, 0.07);
+  transform: rotate(31deg);
+  transform-origin: 0 0;
+}
+
+html[data-design='room'] .room-desk .room-desk-frame .room-scene {
+  --room-paper: var(--room-desk-mat);
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 5px;
+  aspect-ratio: auto;
+  border-radius: 0;
+  transform: none;
+  box-shadow: inset 1px 1px 0 rgba(0, 0, 0, 0.5), inset 0 3px 4px -2px rgba(0, 0, 0, 0.35);
+}
+
+.room-desk-frame .room-scene-inner {
+  gap: 8px;
+  padding: 8px;
+  border-radius: 1px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.room-desk-frame .room-scene-img,
+.room-desk-frame .room-scene-frame {
+  border-radius: 0;
+}
+
+/* ── The flow desks: phone and tablet ─────────────────────────────────────────── */
+
+@media (max-width: 1099px) {
+  .room-desk-wall {
+    min-height: 0;
+    padding-bottom: 28px;
+  }
+
+  .room-desk-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+    padding: 104px 0 64px;
+  }
+
+  .room-desk-candle,
+  .room-desk-notebook,
+  .room-desk-books,
+  .room-desk-scrap-slot,
+  .room-desk-frame {
+    position: relative;
+  }
+
+  /* No planes on a flow desk: their objects join the page's own flow, in reading order. */
+  .room-desk-plane {
+    display: contents;
+  }
+
+  .room-desk-notebook {
+    order: 1;
+  }
+
+  .room-desk-books {
+    order: 2;
+  }
+
+  .room-desk-scrap-slot {
+    order: 3;
+  }
+
+  .room-desk-frame {
+    order: 4;
+  }
+
+  .room-desk-candle {
+    position: absolute;
+    right: 2px;
+    top: 4px;
+    width: 60px;
+    height: 90px;
+  }
+
+  /* The film on the small candle's wick: 30px in from the stage's right edge, 52px down. */
+  .room-desk.is-flow .room-desk-flamevideo {
+    left: auto;
+    right: calc(var(--room-gutter) + 40px);
+    top: 20px;
+    width: 16px;
+    height: 32px;
+  }
+
+  /* The light, smaller, under the small candle in the corner (its foot ~32px in from the
+     stage's right edge, 88px down). The box stays on the desk; only the picture inside it
+     is shifted, so its centre sits under the candle. */
+  .room-desk.is-flow .room-desk-light {
+    left: auto;
+    right: 0;
+    top: -36px;
+    width: 420px;
+    height: 270px;
+  }
+
+  .room-desk.is-flow .room-desk-light-map {
+    background-size: 420px 270px;
+    background-position: right calc(var(--room-gutter) + 32px - 210px) top 0;
+  }
+
+  /* Beside the dish rather than under it: the notebook starts right below. */
+  .room-desk-candle-stamp {
+    left: auto;
+    right: 100%;
+    top: auto;
+    bottom: 6px;
+    margin: 0 4px 0 0;
+    font-size: 12px;
+  }
+
+  .room-desk-notebook {
+    margin: 0 9px;
+  }
+
+  .room-desk-books {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 160px));
+    justify-content: space-between;
+    gap: 24px 22px;
+  }
+
+  .room-desk-book,
+  .room-desk-new {
+    position: relative;
+    aspect-ratio: 3 / 4;
+  }
+
+  .room-desk-frame {
+    width: min(100%, 300px);
+    aspect-ratio: 4 / 3;
+    margin: 6px auto 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .room-desk-books {
+    grid-template-columns: repeat(2, minmax(0, 148px));
+    justify-content: center;
+  }
+
+  .room-desk-notebook {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .room-desk-notebook.is-single .room-desk-nb-page {
+    border-radius: 3px;
+    box-shadow: var(--room-desk-rim);
+  }
+
+  .room-desk-notebook.is-single .room-desk-nb-list {
+    margin-top: 18px;
+    padding-top: 10px;
+    border-top: 1px solid var(--room-hairline);
+  }
+
+  /* One page, no spine: the ribbon hangs at its outer edge, in the margin. */
+  .room-desk-notebook.is-single .room-desk-nb-ribbon {
+    left: auto;
+    right: 7px;
+  }
+
+  /* Touch: every target at least 44px tall. */
+  .room-desk-nb-row {
+    min-height: 48px;
+    align-items: center;
+  }
+
+  .room-desk-action {
+    min-height: 44px;
+  }
+
+  .room-desk .room-scrap-input {
+    min-height: 44px;
+  }
+
+  /* Phone: no label under 12px. */
+  .room-desk-nb-row-stamp,
+  .room-desk-nb-course,
+  .room-desk-nb-kind,
+  .room-desk-nb-latest .room-sheet-tags,
+  .room-desk .room-scrap-foot,
+  .room-desk-frame .room-scene-inner,
+  .room-desk-frame .room-scene-add {
+    font-size: 12px;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   The stage (wide screens, from 1100px: DeskStage.jsx). Blender renders the room from one
+   seated camera (room-harness/blender); these rules only stack its pictures and put the
+   page's words on the quads it wrote (scene.json). Plain 2D: no 3D context, no perspective
+   anywhere — a matrix3d carries words onto a quad, nothing else. Pictures carry all the
+   light and shade; no gradient, glow or blur here. Two filters only, both on the books' gilt:
+   the letters' impression (an SVG filter, DeskStage IMPRESSIONS) and the gilt's brightening on
+   hover. At rest only the flame's film and the candle light's opacity move; between night and
+   day, opacity and colour only (the swap, below).
+   ───────────────────────────────────────────────────────────────────────────── */
+
+html[data-design='room'] {
+  /* Beyond 16:10 the window's extra height above the stage: the wall's own colour. */
+  --room-stage-wall: #120f0d;
+  /* The notebook's pages are matte black paper at night, cream by day. */
+  --room-stage-page-ink: #efe6d6;
+  /* Measured on the rendered pages (round 5B, 1900 x 950): every word at least 4.5:1. Round seven:
+     0.9 (was 0.82): at the least scale the words stand larger against the page and the last rows'
+     stamps reach its candlelit foot (4.37:1 on their worst 5% at 0.82, at 1536 x 750). */
+  --room-stage-page-soft: rgba(239, 230, 214, 0.9);
+  --room-stage-page-action: #f8c692;
+  --room-stage-gilt: #dcb874;
+  --room-stage-gilt-dash: rgba(220, 184, 116, 0.6);
+  --room-stage-dash: rgba(242, 232, 216, 0.3);
+  --room-stage-dash-ink: rgba(242, 232, 216, 0.8);
+  /* The card is cream paper lit by the candle (and a little of the lamp, scene.py CARD_LIFT):
+     a dark ink by night as by day. */
+  --room-stage-scrap-ink: #241a12;
+  --room-stage-ring: #e9b45a;
+  /* The sheet the plaque and the top line's links sit on: the room's night sheet (smoked
+     glass) made a little denser, because here it has no frost to lean on. */
+  --room-stage-sheet: rgba(30, 21, 15, 0.8);
+  --room-stage-sheet-rim: rgba(236, 178, 120, 0.16);
+}
+
+/* The day's inks follow the stage's own room (DeskStage data-room, turned over by the candle's click)
+   rather than the saved mood, so they move with the pictures, on the swap's curve. */
+html[data-design='room']:has(.room-stage-backdrop[data-room='day']) {
+  --room-stage-wall: #5f5b56;
+  --room-stage-page-ink: #241c16;
+  --room-stage-page-soft: #4a3f36;
+  --room-stage-page-action: #64340c;
+  --room-stage-gilt: #5e4214;
+  --room-stage-gilt-dash: rgba(94, 66, 20, 0.62);
+  --room-stage-dash: rgba(36, 28, 22, 0.3);
+  --room-stage-dash-ink: #241c16;
+  --room-stage-scrap-ink: #2a221b;
+  --room-stage-ring: #9a581c;
+  --room-stage-sheet: rgba(251, 250, 246, 0.9);
+  --room-stage-sheet-rim: rgba(31, 38, 34, 0.1);
+}
+
+/* The stage IS the window: it is sized to the window (innerWidth), the page under it does not
+   scroll, and no scrollbar gutter is kept at the right (room.css keeps one on every page, which
+   left a 10-17px strip of ground beside the photograph and clipped the stage's edge). */
+html:has(.room-desk-page.is-stage) {
+  scrollbar-gutter: auto;
+  overflow: hidden;
+}
+
+.room-desk-page.is-stage {
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.room-desk-page.is-stage .room-desk-wall {
+  position: relative;
+  z-index: 1;
+}
+
+/* Over the photograph the top line's words cross the shelf's dark and the window's bright: the
+   wordmark and the links each sit on one of the room's sheets, a pill (flat, one colour, no blur).
+   The plaque has left the wall for the notebook's left page. */
+/* Under the stage the room's own atmosphere (its rain, mist and city lights) is covered by the
+   picture: it is not drawn at all, so nothing moves at rest but the flame and the candle light's
+   breath (round six; it ran 53 animations by night under the stage). */
+html:has(.room-desk-page.is-stage) .room-atmos {
+  display: none;
+}
+
+html:has(.room-desk-page.is-stage) .room-topline .room-wordmark {
+  position: relative;
+}
+
+html:has(.room-desk-page.is-stage) .room-topline .room-wordmark::before {
+  content: '';
+  position: absolute;
+  inset: -7px -16px -7px -16px;
+  z-index: -1;
+  border: 1px solid var(--room-stage-sheet-rim);
+  border-radius: var(--room-r-pill);
+  background: var(--room-stage-sheet);
+  transition:
+    background-color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at),
+    border-color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+html:has(.room-desk-page.is-stage) .room-topline-nav {
+  position: relative;
+}
+
+html:has(.room-desk-page.is-stage) .room-topline-nav::before {
+  content: '';
+  position: absolute;
+  inset: -7px -8px -7px -18px;
+  z-index: -1;
+  border: 1px solid var(--room-stage-sheet-rim);
+  border-radius: var(--room-r-pill);
+  background: var(--room-stage-sheet);
+  transition:
+    background-color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at),
+    border-color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+.room-stage-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: var(--room-stage-wall);
+}
+
+/* Not clipped: the rendered wings reach past the frame's sides (the backdrop clips at the
+   window's edges). It shows once the room's pictures are in (DeskStage is-ready): nothing floats
+   on the bare wall while they load. */
+.room-stage {
+  position: absolute;
+  isolation: isolate;
+  overflow: visible;
+  opacity: 0;
+  transition: opacity 600ms ease;
+}
+
+/* A night's stack is a layer of its own, ready before the click (both stacks are mounted once the
+   other mood is decoded): the swap only changes its opacity. */
+.room-stage-mood.is-night {
+  will-change: opacity;
+}
+
+.room-stage.is-ready {
+  opacity: 1;
+}
+
+/* ── Night and day: the swap (round seven) ───────────────────────────────────────
+   One choreography, opacity and colour only, 2 s in all on one curve (ease-in-out). The candle's
+   click turns the stage's data-room over (DeskStage useMoods). Each mood is one stack, everything of
+   that mood drawn as at rest (.room-stage-mood); the night's stack, always over the day's, is the
+   only one that fades (opaque over opaque: an exact crossfade, two layers for the compositor).
+     Lighting (day -> night): 0 ms the flame (240 ms, the cause first); 120 ms the night's stack
+       starts coming in, over 1700 ms; 400 ms the candle's light starts to rise inside it (the warmth
+       after the room has begun to darken), breathing as it comes.
+     Blowing out (night -> day): 0 ms the flame goes (240 ms); 150 ms the day comes in (the night's
+       stack goes) over 1700 ms; from 250 ms the candle's light goes with it.
+   The words above the stacks (the notebook's, the card's, the dashes, the date, the top line's)
+   turn their colour on the same curve from the same start. The night's stack mounts unseen
+   (@starting-style); a click mid-swap turns its transition round from where it is. Still and
+   reduced motion: at once. */
+html[data-design='room'] {
+  --room-stage-swap: 1700ms;
+  --room-stage-swap-ease: cubic-bezier(0.45, 0, 0.55, 1);
+  --room-stage-swap-at: 120ms;
+  /* The candle's light: in from 400 ms over 1200 ms (ROUND7-BRIEF: 1500 ms); out from 250 ms over
+     1400 ms (the brief: from 0 ms over 900 ms). Measured: every colour here crosses in sRGB, so a
+     room's luminance falls mostly early in its crossing; a light still rising after that (until
+     1900 ms) left the room darker than the night it ends at (Y 5.62% at 1600 ms against 5.93%), and a
+     light gone before the day had come (from 0 ms, the day from 150 ms) made it dip under the night it
+     started from (4.52% at 400 ms against 5.76%). These keep both curves monotone
+     (room-harness/swapstrip.py); the flame still answers first, at 0 ms. */
+  --room-stage-light-in: 1200ms;
+  --room-stage-light-out: 1400ms;
+  --room-stage-light-out-at: 250ms;
+}
+
+html[data-design='room']:has(.room-stage-backdrop[data-room='day']) {
+  --room-stage-swap-at: 150ms;
+}
+
+/* A mood's stack: isolated, so every blend in it (the dyes' multiply, the light's screen, the frame's
+   light) meets that mood's own room, exactly as at rest. */
+.room-stage-mood {
+  position: absolute;
+  inset: 0;
+  isolation: isolate;
+  pointer-events: none;
+}
+
+/* Each candle place has its own night (round seven, run three: 'night' by the notebook, 'nightC1'
+   beside the card), each a stack over the day's, a later place's over an earlier's; the one the room
+   is at shows. A candle moved by night: the stack it left stays whole under the one coming in (at
+   once, no transition), which fades in over it on the swap's curve, or (going back to an earlier
+   place) fades out from over it. */
+.room-stage-mood.is-night {
+  opacity: 0;
+  transition: opacity var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+.room-stage[data-room='night'] .room-stage-mood[data-m='night'],
+.room-stage[data-room='nightC1'] .room-stage-mood[data-m='nightC1'] {
+  opacity: 1;
+}
+
+.room-stage[data-room='nightC1'][data-leaving='night'] .room-stage-mood[data-m='night'],
+.room-stage[data-room='night'][data-leaving='nightC1'] .room-stage-mood[data-m='night'] {
+  opacity: 1;
+  transition: none;
+}
+
+@starting-style {
+  .room-stage[data-swapping] .room-stage-mood.is-night {
+    opacity: 0;
+  }
+}
+
+/* Warming (DeskStage data-warm, 700ms once both stacks are mounted): the hidden stack drawn at 0.2%,
+   at once, so its tiles are rastered and its pictures decoded before the first swap. By night the
+   day's stack shows through the night's at 99.8%; by day the night's (its light too) at 0.2%: under
+   half a level either way. */
+.room-stage[data-warm][data-room='night']:not([data-swapping]) .room-stage-mood[data-m='night'],
+.room-stage[data-warm][data-room='nightC1']:not([data-swapping]) .room-stage-mood[data-m='nightC1'] {
+  opacity: 0.998;
+  transition: none;
+}
+
+.room-stage[data-warm][data-room='day']:not([data-swapping]) .room-stage-mood.is-night,
+.room-stage[data-warm][data-room='day']:not([data-swapping]) .room-stage-light-layer {
+  opacity: 0.002;
+  transition: none;
+}
+
+/* Above the stacks: what belongs to no mood (the books' hit areas, the dashed places, the words). */
+.room-stage-overlay {
+  position: absolute;
+  inset: 0;
+}
+
+/* The candle's light (the night's room only): its own timing. The lit room, opaque, over the dark
+   one: no blend (round seven: the screened light breathing over the whole stage was redrawn by the
+   compositor every frame at rest). */
+.room-stage-light-layer {
+  position: absolute;
+  inset: 0;
+  transition: opacity var(--room-stage-light-in) var(--room-stage-swap-ease) 400ms;
+}
+
+.room-stage[data-room='day'] .room-stage-light-layer {
+  opacity: 0;
+  transition: opacity var(--room-stage-light-out) var(--room-stage-swap-ease) var(--room-stage-light-out-at);
+}
+
+/* From the day the light rises after the room; between two nights (a candle moved) it is lit from
+   the start. */
+@starting-style {
+  .room-stage[data-swapping]:not([data-leaving^='night']) .room-stage-light-layer {
+    opacity: 0;
+  }
+}
+
+/* The top line's words over the room (room.css: the shell's colour 600 ms, the links' 350 ms, from the
+   saved mood) turn with their sheets on the swap's curve while the stage is up: a word turning
+   before its sheet stood pale on pale for a moment. The shell itself does not animate its colour
+   here (every word in the room inherits it: animated, it recalculated the whole page's style every
+   frame of the swap); the wordmark, which inherits it, turns on its own. Nor does the body (index.css
+   eases its colour and background with the mood: every element under it recalculated its style each
+   frame of the swap, 640 of them, 13-15 ms a frame on the Intel UHD; the stage covers it anyway). A
+   link's hover keeps its own time outside a swap. */
+html:has(.room-desk-page.is-stage) .room,
+html:has(.room-desk-page.is-stage) body {
+  transition: none;
+}
+
+html:has(.room-desk-page.is-stage) .room-topline .room-wordmark {
+  color: var(--room-on-ground);
+  transition: color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+html:has(.room-stage[data-swapping]) :is(.room-topline-link, .room-back, .room-avatar) {
+  transition: color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+/* The inks: every word on the stage turns its colour on the same curve. */
+.room-stage-page,
+.room-stage-clock,
+.room-stage-day-line,
+.room-stage-row-stamp,
+.room-stage-page-meta,
+.room-stage-page-lines,
+.room-stage-page-action,
+.room-stage-page .room-sheet-tags,
+.room-stage-scrap .room-stage-scrap-paper,
+.room-stage-scrap .room-scrap-input,
+.room-stage-scrap .room-scrap-foot,
+.room-stage-dashed-label,
+.room-stage-page-empty {
+  transition: color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+.room-stage img {
+  position: absolute;
+  display: block;
+  max-width: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* The surround past the frame when the window wants it (with the room from the first paint: round
+   seven loads it with the centre, so the room is never seen growing). */
+.room-stage-surround {
+  position: absolute;
+  inset: 0;
+}
+
+/* The books' shadows past the frame (run three, DeskStage MoodStack): clipped to the room outside the
+   frame, the stage's own box being the frame (each layer runs a few px on inside it, unseen, so its
+   resampling never thins at the edge). */
+.room-stage-wide-shadows {
+  position: absolute;
+  inset: 0;
+  clip-path: polygon(evenodd, -200% -50%, 300% -50%, 300% 150%, -200% 150%, -200% -50%, 0 0, 0 100%, 100% 100%, 100% 0, 0 0);
+}
+
+/* The candle's light breathes a little, slowly and never on a beat, around the candle only: the dark
+   room there (its alpha an ellipse round the wick) over the lit one at 0 to 0.09, which is the old
+   whole light at 1 to 0.91 where it is whole. A small layer of its own, nothing else redrawn. */
+.room-stage-breath {
+  opacity: 0;
+  animation: room-stage-breath 9.7s linear infinite;
+}
+
+@keyframes room-stage-breath {
+  0% {
+    opacity: 0;
+  }
+  11% {
+    opacity: 0.05;
+  }
+  23% {
+    opacity: 0.015;
+  }
+  37% {
+    opacity: 0.09;
+  }
+  52% {
+    opacity: 0.03;
+  }
+  64% {
+    opacity: 0.065;
+  }
+  78% {
+    opacity: 0.005;
+  }
+  89% {
+    opacity: 0.05;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The night's light does not breathe while the day's room shows (its stack is mounted, unseen): it
+   takes up the breathing again as a swap begins (DeskStage keeps the breath's phase). */
+.room-stage[data-room='day']:not([data-swapping]) .room-stage-breath {
+  animation-play-state: paused;
+}
+
+html[data-design='room'][data-motion='still'] .room-stage-breath {
+  animation: none;
+  opacity: 0;
+}
+
+/* Still: a mood arrives at once (it still waits for its pictures), its inks too. */
+html[data-design='room'][data-motion='still'] :is(.room-stage, .room-stage-mood, .room-stage-light-layer, .room-stage-backdrop, .room-stage-page, .room-stage-clock, .room-stage-day-line, .room-stage-row-stamp, .room-stage-page-meta, .room-stage-page-lines, .room-stage-page-action, .room-stage-page .room-sheet-tags, .room-stage-scrap .room-stage-scrap-paper, .room-stage-scrap .room-scrap-input, .room-stage-scrap .room-scrap-foot, .room-stage-dashed-label, .room-stage-page-empty, .room-stage-flamefilm, .room-stage-flame-still),
+html[data-design='room'][data-motion='still'] .room-stage-dashed-line polygon {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-stage-breath {
+    animation: none;
+    opacity: 0;
+  }
+
+  :is(.room-stage, .room-stage-mood, .room-stage-light-layer, .room-stage-backdrop, .room-stage-page, .room-stage-clock, .room-stage-day-line, .room-stage-row-stamp, .room-stage-page-meta, .room-stage-page-lines, .room-stage-page-action, .room-stage-page .room-sheet-tags, .room-stage-scrap .room-stage-scrap-paper, .room-stage-scrap .room-scrap-input, .room-stage-scrap .room-scrap-foot, .room-stage-dashed-label, .room-stage-page-empty, .room-stage-flamefilm, .room-stage-flame-still),
+  .room-stage-dashed-line polygon {
+    transition: none;
+  }
+}
+
+/* ── The Home's picture, in the frame on the wall ─────────────────────────────── */
+
+.room-stage-picture {
+  position: absolute;
+  overflow: hidden;
+}
+
+/* In a mood's stack: the picture itself, or the bare backing board and its "+". */
+.room-stage-picture.is-drawn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #d9d1c3;
+}
+
+.room-stage-picture.is-drawn img {
+  position: static;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Above the stacks: SceneSlot's controls, drawn clear (the stacks draw what they show); its menu
+   stays seen. Focused from the keyboard, a ring inside the opening. */
+html[data-design='room'] .room-stage-picture.is-slot .room-scene {
+  background: transparent;
+}
+
+.room-stage-picture.is-slot .room-scene-img,
+.room-stage-picture.is-slot .room-scene-busy {
+  opacity: 0;
+}
+
+/* The empty board's "+": above the frame's light, in the page's ink (9:1 by night, 5:1 by day on the
+   board as lit); under the light it was the board's own shade. */
+html[data-design='room'] .room-stage-picture.is-slot .room-scene-add {
+  color: var(--room-stage-page-ink);
+  transition: color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+.room-stage-picture.is-slot:has(:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--room-stage-ring);
+}
+
+/* The light where the picture hangs (a white card in the render), multiplied over it; the
+   frame and its glass go on top. */
+.room-stage-frame-light {
+  mix-blend-mode: multiply;
+}
+
+.room-stage-frame-glass {
+  mix-blend-mode: screen;
+}
+
+html[data-design='room'] .room-stage-picture .room-scene {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  aspect-ratio: auto;
+  rotate: none;
+  transform: none;
+  border-radius: 0;
+  /* No picture yet: bare backing board in the mat, lit by the room through the light card. */
+  background: #d9d1c3;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.room-stage-picture .room-scene-frame,
+.room-stage-picture .room-scene-inner {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.room-stage-picture .room-scene-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 0;
+}
+
+/* Too small for a sentence: only its "+", the sentence kept for screen readers. */
+.room-stage-picture .room-scene-inner > span:first-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.room-stage-picture .room-scene-add {
+  font-size: 0;
+}
+
+.room-stage-picture .room-scene-add::first-letter {
+  font-size: var(--room-stage-type-frame-add, 20px);
+}
+
+/* ── The books ──────────────────────────────────────────────────────────────── */
+
+.room-stage-piles,
+.room-stage-candle {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.room-stage-slab,
+.room-stage-dashed {
+  position: absolute;
+}
+
+.room-stage-slab-hit,
+.room-stage-dashed-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.room-stage-slab-hit:focus-visible,
+.room-stage-dashed-hit:focus-visible {
+  outline: none;
+}
+
+/* Not isolated and never moved: the dye multiplies what the stack has drawn under the book's soft
+   edge as well, which its mask (the cloth's share of the light there) is made for. Isolated (by
+   `isolation` or by a transform), the edge's transparent backdrop let the dye's own colour through
+   as a rim (round 5B, measured at 2x). The stack itself is isolated, with its whole room in it. */
+.room-stage-slab-visual,
+.room-stage-slab-mark {
+  position: absolute;
+  inset: 0;
+}
+
+/* Hovered, focused or lifted: light, not motion (round six). The gilt brightens about a quarter
+   and a warm 1px rim catches the spine's top edge, 150ms ease-out; pointer-down dims them back, a
+   press that does not move. The flight on a click is unchanged. */
+@media (hover: hover) {
+  .room-stage-slab-hit:hover ~ .room-stage-slab-mark .room-stage-spine {
+    --spine-rim: rgba(255, 214, 150, 0.55);
+  }
+}
+
+.room-stage-slab-hit:focus-visible ~ .room-stage-slab-mark .room-stage-spine,
+.room-stage-slab.is-lifted .room-stage-spine,
+.room-stage-slab.is-picked .room-stage-spine {
+  --spine-rim: rgba(255, 214, 150, 0.55);
+}
+
+/* The gilt is in the stacks, lit by its hit area above them (data-lit, data-focus, data-press). */
+.room-stage-slab[data-lit] .room-stage-gilt-gold,
+.room-stage-slab[data-focus] .room-stage-gilt-gold,
+.room-stage-slab.is-lifted .room-stage-gilt-gold,
+.room-stage-slab.is-picked .room-stage-gilt-gold {
+  filter: brightness(1.25);
+}
+
+.room-stage-slab-hit:active ~ .room-stage-slab-mark .room-stage-spine {
+  --spine-rim: rgba(255, 214, 150, 0.2);
+  transition-duration: 90ms;
+}
+
+.room-stage-slab[data-press] .room-stage-gilt-gold {
+  filter: none;
+  transition-duration: 90ms;
+}
+
+/* The course's leather, multiplied into the leather only (its mask: the leather's share of the
+   light that is diffuse, so its highlights stay the light's), and the label's into the label; never
+   into the pages or the gilt. */
+.room-stage-slab-dye {
+  position: absolute;
+  mix-blend-mode: multiply;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+/* ── Moving a book (round seven): a drag, its targets, the menu ─────────────────────────────────
+   A book can be taken (6 css px of movement with the pointer down; on touch a 350ms long press):
+   grab on hover, grabbing while it travels. While it travels its picture, dyes and gilt are hidden
+   in the stacks (its shadow and its place's look stay) and drawn under the pointer by the drag
+   layer, moved by its left/top (a transform would isolate the dye: the rim above). */
+.room-stage-slab-hit {
+  cursor: grab;
+}
+
+.room-stage[data-dragging],
+.room-stage[data-dragging] .room-stage-slab-hit,
+.room-stage[data-dragging] .room-stage-dashed-hit {
+  cursor: grabbing;
+}
+
+.room-stage-slab.is-dragging .room-stage-slab-visual,
+.room-stage-slab.is-gilt.is-dragging {
+  visibility: hidden;
+}
+
+/* The candle taken (run three): by day its picture leaves the day's room (the day's set has no candle
+   in it: a clean table where it stood); by night it stays in its room, which is lit from there and has
+   its dish's dark footprint under it, until the room turns to the new place's light (a copy travels and
+   is parked at the new place meanwhile, fading on the swap's curve as the new room comes in). Its flame
+   is out while it travels and while it is parked. */
+.room-stage[data-candle-from='day'] .room-stage-mood[data-m='day'] .room-stage-candle,
+.room-stage[data-candle-moving] .room-stage-candle .room-stage-flamefilm,
+.room-stage[data-candle-moving] .room-stage-candle .room-stage-flame-still {
+  visibility: hidden;
+}
+
+.room-stage-drag.is-arrived {
+  opacity: 0;
+  transition: opacity var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+/* By day a moved candle arrives over 300ms (its picture and its shadow, at their new place). */
+.room-stage-mood[data-m='day'] :is(.room-stage-candle, .room-stage-candle-link) {
+  animation: room-stage-arrive 300ms ease-out both;
+}
+
+/* The candle's places: dashed rings on the table, the one under the pointer whole. */
+.room-stage-targets polygon.is-candle {
+  stroke: var(--room-stage-dash-ink);
+}
+
+/* Arriving at its new place: the book fades in as the dragged copy fades out (200ms). */
+.room-stage-slab.is-arriving .room-stage-slab-visual,
+.room-stage-slab.is-gilt.is-arriving {
+  animation: room-stage-arrive 200ms ease-out both;
+}
+
+@keyframes room-stage-arrive {
+  from {
+    opacity: 0;
+  }
+}
+
+.room-stage-drag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.room-stage-drag.is-leaving {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+/* Where it may go: the room's dashes (the next free slot on each pile, the near place, its own
+   place); the one under the pointer in the focus ring's colour, whole. */
+.room-stage-targets {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.room-stage-targets polygon {
+  fill: none;
+  stroke: var(--room-stage-dash-ink);
+  stroke-width: 1.6px;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+}
+
+.room-stage-targets polygon.is-own {
+  stroke: var(--room-stage-dash);
+}
+
+.room-stage-targets polygon.is-over {
+  stroke: var(--room-stage-ring);
+  stroke-width: 2px;
+  stroke-dasharray: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-stage-slab.is-arriving .room-stage-slab-visual,
+  .room-stage-slab.is-gilt.is-arriving {
+    animation: none;
+  }
+
+  .room-stage-drag.is-leaving {
+    transition: none;
+  }
+}
+
+/* A book's menu: a small sheet in the room's words (Figtree), dark by night and pale by day as the
+   stage's room is; no glow, a hairline rim. Every line 15px, 4.5:1 or more on its sheet. */
+.room-stage-menu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 236px;
+  padding: 6px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background: #1b1510;
+  box-shadow: 0 0 0 1px rgba(236, 178, 120, 0.22);
+  font-family: var(--room-font);
+}
+
+.room-stage-menu-item {
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #efe6d6;
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.room-stage-menu-item:hover,
+.room-stage-menu-item:focus-visible {
+  background: rgba(239, 230, 214, 0.1);
+  outline: none;
+}
+
+.room-stage-menu-item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--room-stage-ring);
+}
+
+/* A choice of places: the one it stands at marked, in words' weight, not a glyph. */
+.room-stage-menu-item.is-checked {
+  font-weight: 600;
+}
+
+.room-stage-menu-item.is-checked::after {
+  content: ' (here)';
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.room-stage-backdrop[data-room='day'] .room-stage-menu {
+  background: #fbfaf6;
+  box-shadow: 0 0 0 1px rgba(31, 38, 34, 0.16);
+}
+
+.room-stage-backdrop[data-room='day'] .room-stage-menu-item {
+  color: #241c16;
+}
+
+.room-stage-backdrop[data-room='day'] .room-stage-menu-item:hover,
+.room-stage-backdrop[data-room='day'] .room-stage-menu-item:focus-visible {
+  background: rgba(36, 28, 22, 0.07);
+}
+
+.room-stage-spine,
+.room-stage-dashed-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.room-stage-spine {
+  --spine-rim: rgba(255, 214, 150, 0);
+  box-shadow: inset 0 1px 0 var(--spine-rim);
+  transition: box-shadow 150ms ease-out;
+}
+
+/* The gilt lettering (round six; its face and its tooling round seven's): a title or a count on its
+   label, in EB Garamond 700 small caps, its letters filled with the place's gilt strip (background-clip: text:
+   the render's own gold under the room's light, worn where the strip is) over a pressed layer (the
+   leather in the letters where the gold is worn). Its tooling goes by its size on the screen
+   (DeskStage Gilt): from 18 device px the mood's SVG impression, round six's look; under it no
+   filter, the press one device pixel below (--gilt-press) and the wear eased (is-small: the place's
+   flat gilt under the strip). Sizes come from deskStage.js fitSpineTitle / fitSpineCount: never
+   under 13 css px. */
+.room-stage-gilt {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.room-stage-gilt-press,
+.room-stage-gilt-gold {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: 'EB Garamond', 'Amiri', Georgia, serif;
+  font-weight: 700;
+  font-variant-caps: small-caps;
+  line-height: 0.94;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* Arabic untracked: letter-spacing pulls its joined letters apart (deskStage.js spineMeasure counts
+   it so); Amiri's own weight. */
+.room-stage-gilt-press[dir='rtl'],
+.room-stage-gilt-gold[dir='rtl'] {
+  font-weight: 700;
+  font-variant-caps: normal;
+  letter-spacing: 0;
+}
+
+/* A count's figures: Spectral SC 700, lining and tabular (deskStage.js fitSpineCount, COUNT_FACE). */
+.room-stage-gilt.is-count .room-stage-gilt-press,
+.room-stage-gilt.is-count .room-stage-gilt-gold {
+  font-family: 'Spectral SC', Georgia, serif;
+  font-weight: 700;
+  font-variant-caps: normal;
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: 0;
+}
+
+.room-stage-gilt-press > span,
+.room-stage-gilt-gold > span {
+  display: block;
+}
+
+.room-stage-gilt-press {
+  color: rgba(16, 8, 3, 0.42);
+}
+
+/* Small on the screen: the impression is the press alone, one device pixel below the gold. */
+.room-stage-gilt.is-small .room-stage-gilt-press {
+  translate: 0 var(--gilt-press, 0);
+}
+
+.room-stage-gilt-gold {
+  color: transparent;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  transition: filter 150ms ease-out;
+}
+
+/* The impressions' filters (DeskStage): defined once, drawing nothing. */
+.room-stage-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.room-stage-slab-ring,
+.room-stage-dashed-line {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.room-stage-slab-ring {
+  opacity: 0;
+}
+
+.room-stage-slab-ring polygon {
+  fill: none;
+  stroke: var(--room-stage-ring);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+.room-stage-slab-hit:focus-visible ~ .room-stage-slab-mark .room-stage-slab-ring {
+  opacity: 1;
+}
+
+/* "+ New course" and "and N more": the next spine's place on a pile, in the room's dashed
+   idiom — quieter than any book, its words at a spine title's size. */
+.room-stage-dashed-line polygon {
+  fill: none;
+  stroke: var(--room-stage-dash);
+  stroke-width: 1.2px;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+  transition: stroke 160ms ease;
+}
+
+/* In a swap the dashes turn on the swap's curve (a hover's 160 ms otherwise). */
+.room-stage[data-swapping] .room-stage-dashed-line polygon {
+  transition: stroke var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+/* Its size comes from DeskStage (deskStage.js moreSize / stageType): a spine title's, never under
+   13 css px. */
+.room-stage-dashed-label {
+  padding: 0 12px 0 14px;
+  color: #e6cf9a;
+  font-family: var(--room-display);
+  font-weight: 500;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.room-stage-dashed:hover .room-stage-dashed-line polygon {
+  stroke: var(--room-stage-dash-ink);
+}
+
+.room-stage-dashed:focus-within .room-stage-dashed-line polygon {
+  stroke: var(--room-stage-ring);
+  stroke-dasharray: none;
+}
+
+/* "+ New course": the ghost of the next book, a dashed spine where it will lie on the shorter pile,
+   in gilt dash; its label at a spine title's size (never under 14.5px at 1x: 13px at the stage's
+   floor). */
+.room-stage-dashed.is-new .room-stage-dashed-line polygon {
+  stroke: var(--room-stage-gilt-dash);
+  stroke-width: 1.6px;
+}
+
+.room-stage-dashed.is-new .room-stage-dashed-label {
+  justify-content: center;
+  color: #e6cf9a;
+  font-family: 'EB Garamond', Georgia, serif;
+  font-weight: 700;
+  font-variant-caps: small-caps;
+  font-size: var(--room-stage-type-ghost, 17px);
+  letter-spacing: 0.02em;
+}
+
+/* Its label: dark morocco with a gilt rule, as the books' own, in both moods (by day the gilt dash
+   alone stood on the window's dark frame at 1.3:1); "and N more" wears the same, its words in the
+   ghost's gilt. */
+.room-stage-ghost-label {
+  padding: 1px 10px 2px;
+  border-radius: 1px;
+  background: rgba(16, 11, 8, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(220, 184, 116, 0.42);
+  line-height: 1.15;
+}
+
+.room-stage-dashed.is-new:hover .room-stage-dashed-line polygon {
+  stroke: var(--room-stage-gilt);
+}
+
+/* ── The notebook's pages ───────────────────────────────────────────────────── */
+
+/* Every word's size is DeskStage's --room-stage-type-<kind> (deskStage.js stageType: its own size,
+   or 13 css px at the scale where that is more), and every line height here is one deskStage.js
+   PAGE_LAYOUT counts with: the page holds whole lines only (pageCapacity), however large the words
+   are against the picture. */
+.room-stage-page {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  padding: 30px 24px 20px 26px;
+  overflow: hidden;
+  color: var(--room-stage-page-ink);
+  transform-origin: 0 0;
+}
+
+/* The left page's words may run nearer the gutter than the outer edge: a note's title keeps its
+   last letters before it gives way to an ellipsis. The date sits in its top margin, which grows with
+   the date's size (PAGE_LAYOUT clockTop). */
+.room-stage-page.is-left {
+  padding-top: max(30px, calc(var(--room-stage-type-clock, 14.5px) * 1.3 + 12px));
+  padding-right: 14px;
+}
+
+.room-stage-page.is-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* The day's page: the plaque's words, written into the notebook. */
+.room-stage-day {
+  display: block;
+}
+
+.room-stage-greeting {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: var(--room-stage-type-greeting, 22px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The date, in the page's top corner, inside its top margin: the greeting keeps the line. */
+.room-stage-clock {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  font-family: var(--room-mono);
+  font-size: var(--room-stage-type-clock, 14.5px);
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  color: var(--room-stage-page-soft);
+  white-space: nowrap;
+}
+
+.room-stage-day-line {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  margin: 8px 0 0;
+  overflow: hidden;
+  font-family: var(--room-font);
+  font-size: var(--room-stage-type-sentence, 14.5px);
+  line-height: 1.42;
+  color: var(--room-stage-page-soft);
+}
+
+/* A ruled line, as a notebook has: the page ink, faint. */
+.room-stage-page-rule {
+  height: 0;
+  margin: 14px 0 13px;
+  border: 0;
+  border-top: 1px solid currentColor;
+  opacity: 0.16;
+}
+
+.room-stage-page-heading {
+  margin: 0 0 12px;
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: var(--room-stage-type-heading, 16px);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.room-stage-rows {
+  display: grid;
+  /* minmax(0, 1fr): a long title ellipsizes inside the page instead of widening the column. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 11px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.room-stage-row {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.room-stage-row-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.room-stage-row-title {
+  overflow: hidden;
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: var(--room-stage-type-row-title, 14.5px);
+  line-height: 1.22;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.room-stage-row-stamp,
+.room-stage-page-meta {
+  font-family: var(--room-mono);
+  font-size: var(--room-stage-type-row-stamp, 14.5px);
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--room-stage-page-soft);
+}
+
+.room-stage-row:hover .room-stage-row-title,
+.room-stage-page-action:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* One line: the course's name gives way to an ellipsis before the kind does. */
+.room-stage-page-meta {
+  display: flex;
+  gap: 10px;
+  max-width: 100%;
+  margin: 0 0 8px;
+  font-size: var(--room-stage-type-meta, 14.5px);
+  white-space: nowrap;
+}
+
+.room-stage-page-course {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-stage-page-kind {
+  flex: none;
+}
+
+/* Two lines at most (PAGE_LAYOUT titleLines). */
+.room-stage-page-title {
+  display: -webkit-box;
+  margin: 0 0 10px;
+  overflow: hidden;
+  font-family: var(--room-display);
+  font-weight: 600;
+  font-size: var(--room-stage-type-page-title, 21px);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.room-stage-page-lines {
+  display: -webkit-box;
+  margin: 0 0 12px;
+  overflow: hidden;
+  font-size: var(--room-stage-type-lines, 14.5px);
+  line-height: 1.45;
+  white-space: pre-line;
+  color: var(--room-stage-page-soft);
+  -webkit-box-orient: vertical;
+}
+
+/* One line of tags: a tag that will not fit goes whole to a second line, which is never shown. */
+.room-stage-page .room-sheet-tags {
+  max-width: 100%;
+  color: var(--room-stage-page-soft);
+  height: calc(var(--room-stage-type-tags, 14.5px) * 1.3);
+  margin: 0 0 12px;
+  overflow: hidden;
+  font-size: var(--room-stage-type-tags, 14.5px);
+  line-height: 1.3;
+}
+
+.room-stage-page-action {
+  margin: auto 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--room-stage-page-action);
+  font-family: var(--room-font);
+  font-weight: 600;
+  font-size: var(--room-stage-type-action, 14.5px);
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.room-stage-page-empty {
+  margin: 0;
+  font-size: var(--room-stage-type-empty, 14.5px);
+  line-height: 1.45;
+  color: var(--room-stage-page-soft);
+}
+
+/* ── The scrap: the room's quick capture, its real field on the slip ───────────── */
+
+.room-stage-scrap {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+html[data-design='room'] .room-stage-scrap .room-stage-scrap-paper {
+  --room-paper: transparent;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 14px 14px 10px;
+  background: none;
+  box-shadow: none;
+  rotate: none;
+  transform: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--room-stage-scrap-ink);
+  font-family: var(--room-font);
+}
+
+/* The card's words: the line to write on at its top, the hint at its foot. */
+html[data-design='room'] .room-stage-scrap .room-stage-scrap-paper form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.room-stage-scrap .room-scrap-input {
+  color: var(--room-stage-scrap-ink);
+  font-size: var(--room-stage-type-card-input, 16px);
+  text-overflow: ellipsis;
+}
+
+/* At least 4.5:1 on the rendered slip, by night and by day (round 5B: the day's white slip
+   left 0.62 at 3.3:1). */
+.room-stage-scrap .room-scrap-input::placeholder {
+  color: var(--room-stage-scrap-ink);
+  opacity: 0.85;
+}
+
+.room-stage-scrap .room-scrap-foot {
+  margin-top: auto;
+  font-size: var(--room-stage-type-card-foot, 14.5px);
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  color: var(--room-stage-scrap-ink);
+  opacity: 0.85;
+}
+
+/* ── The candle: its film flame at the wick, its switch ──────────────────────── */
+
+.room-stage-flamefilm,
+.room-stage-flame-still,
+.room-stage-smoke {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* The flame answers the click at once, before the room (the cause first): 240 ms, from the candle's
+   own state (DeskStage is-lit), not the saved mood. */
+/* The alpha film (flame-stage.webm) is drawn plainly: a screened layer makes its stacking context a
+   surface of its own, and the compositor redrew the whole stage for each frame of the film. Only the
+   mp4 (Safari, no alpha) is screened. */
+.room-stage-flamefilm {
+  display: block;
+  object-fit: fill;
+  visibility: hidden;
+}
+
+.room-stage-candle[data-film='screen'] .room-stage-flamefilm {
+  mix-blend-mode: screen;
+}
+
+.room-stage-flamefilm,
+.room-stage-flame-still {
+  opacity: 0;
+  transition: opacity 240ms var(--room-stage-swap-ease);
+}
+
+.room-stage-candle.is-lit .room-stage-flamefilm,
+.room-stage-candle.is-lit .room-stage-flame-still {
+  opacity: 1;
+}
+
+.room-stage-candle[data-flame='video'] .room-stage-flamefilm {
+  visibility: visible;
+}
+
+.room-stage-candle[data-flame='video'] .room-stage-flame-still {
+  visibility: hidden;
+}
+
+.room-stage-smoke {
+  overflow: visible;
+  opacity: 0;
+  animation: room-desk-smoke 900ms ease-out forwards;
+}
+
+.room-stage-candle-button {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+}

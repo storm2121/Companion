@@ -39,9 +39,13 @@ provider key never reaches the browser — the client calls a Cloud Function tha
   block, and all geometry is re-clamped server-side;
 - enforces a per-user daily quota in a collection the client cannot write to at all.
 
-The layout half of the prompt is closer to a spec than a request: the model is given the exact
-grid equations, a six-pattern row library, and a per-request seed for variety.
-→ [`app/functions/index.js`](app/functions/index.js)
+The model never places blocks. It reads the note and tags each block with one of 8 roles
+(lead, concept, steps, example, caveat, formula, terms, summary) and the block it belongs to.
+A deterministic layout engine turns those roles into a page, and the browser measures rendered
+heights, since only it has the fonts. An earlier prompt asked the model for coordinates it
+cannot measure.
+→ [`app/functions/index.js`](app/functions/index.js) ·
+[`app/src/services/sageLayout.js`](app/src/services/sageLayout.js)
 
 **Security rules as the actual boundary.** Firestore and Storage both default-deny and scope
 every path to the authenticated UID; Storage additionally enforces content-type allowlists and

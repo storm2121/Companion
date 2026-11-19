@@ -16,6 +16,7 @@ import { tiltFor } from './roomPrefs';
 import { markGone, offerUndo, sayInRoom, unmarkGone } from './roomUndo';
 import { MOD_KEY } from './platform';
 import { usePageActions } from './roomCommands';
+import { useCourseFlight } from './deskFlightRun';
 
 // Course — design 6b. See a course's notes and start a new one.
 //
@@ -68,6 +69,9 @@ const RoomCourse = () => {
   const hold = useRef({ timer: null, fired: false, x: 0, y: 0 });
 
   const course = courses.find((item) => item.id === courseId);
+  // The desk's book flies in to this title, and home again on the way out (deskFlightRun.js).
+  const titleRef = useRef(null);
+  useCourseFlight(courseId, titleRef);
   const own = sortCourseNotes(notes.filter((note) => note.classId === courseId));
   const others = courses.filter((item) => item.id !== courseId);
   const selectMode = selecting || selected.size > 0;
@@ -249,7 +253,7 @@ const RoomCourse = () => {
     <RoomShell back="Desk" onBack={() => navigate('/room')}>
       <div className="room-course-head room-rise">
         <div>
-          <h1 className="room-course-title">
+          <h1 ref={titleRef} className="room-course-title">
             <Dot size={18} color={course?.color} />
             {course?.name || (loading ? '' : 'That course is gone')}
           </h1>

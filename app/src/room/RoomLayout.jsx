@@ -7,6 +7,7 @@ import { RoomCoursesContext, RoomNotesContext, useRoomDataSource } from './roomD
 import { settleNow, undoNow, useRoomUndo } from './roomUndo';
 import RoomSearch from './RoomSearch';
 import Atmosphere from './components/Atmosphere';
+import DeskFlightLayer from './components/desk/DeskFlightLayer';
 import { Pill } from './components/primitives';
 import './room.css';
 
@@ -146,6 +147,7 @@ const RoomLayout = () => {
           </div>
           <RoomSearch />
           <RoomUndoLine />
+          <DeskFlightLayer />
         </div>
       </RoomNotesContext.Provider>
     </RoomCoursesContext.Provider>
