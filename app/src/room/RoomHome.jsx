@@ -17,8 +17,11 @@ import { tiltFor, useMinuteClock } from './roomPrefs';
 // schedule renders no schedule line, one with no room notes renders no count and no
 // "LAST" row, and "Where you left off" does not exist until there is something to
 // return to. Never a placeholder dash.
+//
+// `notice`: a line under the top line, from RoomHomeDoor when the desk could not open and this
+// Home stands in for it. Absent otherwise.
 
-const RoomHome = () => {
+const RoomHome = ({ notice = '' }) => {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { courses, recent, trouble, retry } = useRoomDesk();
@@ -31,7 +34,7 @@ const RoomHome = () => {
   const breaks = useMemo(() => cleanBreaks(profile?.roomPrefs?.breaks), [profile?.roomPrefs?.breaks]);
 
   return (
-    <RoomShell ownTrouble>
+    <RoomShell ownTrouble notice={notice}>
       <div className="room-home">
         {/* ── Left: where you are, and one line you can throw somewhere ── */}
         <div className="room-home-left">

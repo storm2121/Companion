@@ -7,7 +7,8 @@
 // The attributes must sit above body, exactly like the existing data-theme.
 
 import { useEffect, useMemo, useState } from 'react';
-import { rememberMood } from '../designModes';
+// With its extension, so the unit tests can load this file under Node.
+import { rememberMood } from '../designModes.js';
 
 /* ── Mood ─────────────────────────────────────────────────────────────────────
    Two moods, two states of one theme: 'candlelight' — a room at night, candles lit, a
@@ -47,10 +48,34 @@ export const resolveMood = (preference, date = new Date()) => {
 /* ── Prefs ────────────────────────────────────────────────────────────────────
    `handDrawn: false` means square-ish radii, no tilts, no pencil rules — handled
    entirely by flipping shape tokens in room.css, never by branching in JSX.
-   `motion: 'still'` disables everything except the mood cross-fade.            */
+   `motion: 'still'` disables everything except the mood cross-fade.
+   `home`: which Home the room opens on (below).                                  */
 
 export const MOTION_CALM = 'calm';
 export const MOTION_STILL = 'still';
+
+/* ── Home ─────────────────────────────────────────────────────────────────────
+   Which Home the room opens on (roomPrefs.home): the papers (RoomHome, the courses and recent
+   notes as a list) or the desk (RoomDesk, a preview). The papers unless the person chose the
+   desk: anything else stored, or nothing, is the papers. RoomHomeDoor reads it.            */
+
+export const HOME_PAPERS = 'papers';
+export const HOME_DESK = 'desk';
+
+// "The desk" holds together (a no-break space): on a phone the chip broke it over two lines.
+export const HOME_OPTIONS = [
+  { id: HOME_PAPERS, label: 'Papers' },
+  { id: HOME_DESK, label: 'The desk' },
+];
+
+// roomPrefs (as stored, or nothing) -> 'papers' | 'desk'.
+export const homeFor = (stored) => (stored && typeof stored === 'object' && stored.home === HOME_DESK ? HOME_DESK : HOME_PAPERS);
+
+// The Ctrl K action that switches Home over (RoomSearch): where it goes, and what it says.
+export const homeSwitch = (home) =>
+  home === HOME_DESK
+    ? { to: HOME_PAPERS, label: 'Home: use the papers' }
+    : { to: HOME_DESK, label: 'Home: use the desk' };
 
 export const ROOM_PREFS_DEFAULT = {
   mood: MOOD_CANDLELIGHT,
@@ -58,6 +83,7 @@ export const ROOM_PREFS_DEFAULT = {
   handDrawn: true,
   motion: MOTION_CALM,
   radio: false,
+  home: HOME_PAPERS,
 };
 
 export const resolveRoomPrefs = (stored) => {
@@ -69,6 +95,7 @@ export const resolveRoomPrefs = (stored) => {
     handDrawn: typeof raw.handDrawn === 'boolean' ? raw.handDrawn : ROOM_PREFS_DEFAULT.handDrawn,
     motion: raw.motion === MOTION_STILL ? MOTION_STILL : MOTION_CALM,
     radio: typeof raw.radio === 'boolean' ? raw.radio : ROOM_PREFS_DEFAULT.radio,
+    home: homeFor(raw),
   };
 };
 

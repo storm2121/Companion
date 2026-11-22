@@ -1680,3 +1680,52 @@ test('courses: an older course becomes the room’s only when nothing of classic
     await assert.rejects(writeRoomPrefs({ mood: 'lamp' }), /not open/);
   });
 }
+
+// ── Step A: which Home the room opens on (roomPrefs.home, RoomHomeDoor) ──
+{
+  const { HOME_DESK, HOME_OPTIONS, HOME_PAPERS, ROOM_PREFS_DEFAULT, homeFor, homeSwitch, resolveRoomPrefs } = await import(
+    '../src/room/roomPrefs.js'
+  );
+
+  test('room home: the papers by default, for everyone who never chose', () => {
+    assert.equal(ROOM_PREFS_DEFAULT.home, HOME_PAPERS);
+    assert.equal(HOME_PAPERS, 'papers');
+    assert.equal(HOME_DESK, 'desk');
+    assert.deepEqual(HOME_OPTIONS, [
+      { id: 'papers', label: 'Papers' },
+      { id: 'desk', label: 'The desk' },
+    ]);
+    // No profile yet, no roomPrefs, roomPrefs without the field.
+    for (const stored of [undefined, null, {}, { mood: 'rain', grain: false }]) {
+      assert.equal(homeFor(stored), HOME_PAPERS);
+      assert.equal(resolveRoomPrefs(stored).home, HOME_PAPERS);
+    }
+  });
+
+  test('room home: a stored desk opens the desk, a stored papers the papers', () => {
+    assert.equal(homeFor({ home: 'desk' }), HOME_DESK);
+    assert.equal(resolveRoomPrefs({ home: 'desk', mood: 'rain' }).home, HOME_DESK);
+    assert.equal(resolveRoomPrefs({ home: 'desk', mood: 'rain' }).mood, 'rain', 'the other switches are untouched');
+    assert.equal(homeFor({ home: 'papers' }), HOME_PAPERS);
+  });
+
+  test('room home: anything else stored is the papers', () => {
+    for (const home of ['Desk', 'DESK', ' desk', 'desk ', 'stage', '', 0, 1, true, false, null, ['desk'], { id: 'desk' }]) {
+      assert.equal(homeFor({ home }), HOME_PAPERS, `home: ${JSON.stringify(home)}`);
+      assert.equal(resolveRoomPrefs({ home }).home, HOME_PAPERS);
+    }
+    // Not an object at all.
+    for (const stored of ['desk', 42, true, ['desk']]) assert.equal(homeFor(stored), HOME_PAPERS);
+  });
+
+  test('room home: the Ctrl K switch offers the other Home, and is found by its words', () => {
+    assert.deepEqual(homeSwitch(HOME_DESK), { to: HOME_PAPERS, label: 'Home: use the papers' });
+    assert.deepEqual(homeSwitch(HOME_PAPERS), { to: HOME_DESK, label: 'Home: use the desk' });
+    assert.deepEqual(homeSwitch(undefined), { to: HOME_DESK, label: 'Home: use the desk' });
+    const action = (home) => ({ id: 'home-switch', label: homeSwitch(home).label, keywords: ['settings'] });
+    assert.equal(matchActions('home', [action(HOME_PAPERS)])[0]?.strong, true);
+    assert.equal(matchActions('use the desk', [action(HOME_PAPERS)])[0]?.strong, true);
+    assert.equal(matchActions('papers', [action(HOME_DESK)])[0]?.strong, true);
+    assert.equal(matchActions('papers', [action(HOME_PAPERS)]).length, 0, 'the desk off: nothing offers the papers');
+  });
+}

@@ -51,8 +51,10 @@ import { useDeskReturn } from './deskFlightRun';
 import scene from './assets/desk/scene.json';
 import './desk.css';
 
-// PROTOTYPE — "the desk in the room", a Home to replace RoomHome's card grid. Not routed
-// in App.jsx; the room-harness shows it at /room with ?proto=desk.
+// PROTOTYPE — "the desk in the room", a Home to replace RoomHome's card grid. A preview behind
+// a switch: RoomHomeDoor opens it (lazily) only for someone whose roomPrefs.home is 'desk' (the
+// You page's Home row, or Ctrl K); everyone else keeps RoomHome. The room-harness also forces it
+// at /room with ?proto=desk.
 //
 // The room stays the room: Candlelight's picture (or Rain's grey day) is the wall, and in
 // front of it a wooden desk with real things on it — the candle (the mood switch), the open

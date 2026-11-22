@@ -25,7 +25,7 @@ const AuthCompletePage = lazy(() => import('./public/AuthCompletePage'));
 // none of it — code or CSS — reaches a user who never switches designs.
 // The room's parent route owns the ground and weather, so they persist between pages.
 const RoomLayout = lazy(() => import('./room/RoomLayout'));
-const RoomHome = lazy(() => import('./room/RoomHome'));
+const RoomHomeDoor = lazy(() => import('./room/RoomHomeDoor'));
 const RoomCourse = lazy(() => import('./room/RoomCourse'));
 const RoomYou = lazy(() => import('./room/RoomYou'));
 const RoomNote = lazy(() => import('./room/RoomNote'));
@@ -190,7 +190,7 @@ const App = () => {
             }
           >
             {/* Pages both designs have: same address, the design you picked. */}
-            <Route path="/dashboard" element={<ByDesign classic={<Dashboard />} room={<RoomHome />} />} />
+            <Route path="/dashboard" element={<ByDesign classic={<Dashboard />} room={<RoomHomeDoor />} />} />
             <Route path="/settings" element={<ByDesign classic={<Settings />} room={<RoomYou />} />} />
             <Route
               path="/class/:classId"
@@ -204,7 +204,7 @@ const App = () => {
             <Route path="/template/new" element={<NoteEditor />} />
 
             {/* Room only. */}
-            <Route path="/room" element={<RoomHome />} />
+            <Route path="/room" element={<RoomHomeDoor />} />
             <Route path="/room/course/:courseId" element={<RoomCourse />} />
             <Route path="/room/you" element={<RoomYou />} />
             <Route path="/room/note/:courseId/:noteId" element={<RoomNote />} />

@@ -59,7 +59,7 @@ const TopLine = ({
         Inbox
         {inboxCount > 0 && <span className="room-kbd">{inboxCount}</span>}
       </button>
-      <button type="button" className="room-avatar" onClick={onAvatar} aria-label="You">
+      <button type="button" className="room-avatar" onClick={onAvatar} aria-label="You and settings" title="You and settings">
         {initial}
       </button>
     </div>

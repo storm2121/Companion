@@ -1449,6 +1449,18 @@ html:has(.room-desk-page.is-stage) .room-topline-nav {
   position: relative;
 }
 
+/* The top line's row runs the window's width but is see-through: on the stage it took the clicks
+   meant for the tops of the piles under it (a 1280x650 window, 22+ courses). The row lets them
+   through; its own two parts, the wordmark's pill and the links' pill, keep theirs. Nothing drawn
+   changes. */
+html:has(.room-desk-page.is-stage) .room-topline {
+  pointer-events: none;
+}
+
+html:has(.room-desk-page.is-stage) .room-topline > * {
+  pointer-events: auto;
+}
+
 html:has(.room-desk-page.is-stage) .room-topline-nav::before {
   content: '';
   position: absolute;

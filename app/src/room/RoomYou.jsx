@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { storage } from '../firebase';
@@ -21,7 +21,7 @@ import { sayInRoom } from './roomUndo';
 import { SAGE_VOICES } from './sageChoices';
 import { IMMUTABLE_CACHE, prepareImage } from './imageScale';
 import { useRoomCourses } from './roomData';
-import { MOOD_OPTIONS, MOTION_CALM, MOTION_STILL, resolveRoomPrefs } from './roomPrefs';
+import { HOME_OPTIONS, MOOD_OPTIONS, MOTION_CALM, MOTION_STILL, resolveRoomPrefs } from './roomPrefs';
 
 // You — design 6e. The few switches that matter.
 //
@@ -32,6 +32,9 @@ import { MOOD_OPTIONS, MOTION_CALM, MOTION_STILL, resolveRoomPrefs } from './roo
 // Design 6e has no sign out, no photo, no major. Full parity puts the profile fields
 // behind "Edit profile" and sign out at the foot as plain text in accent-on-paper —
 // the design has no red anywhere (dualmode.md §4.2).
+
+// How long a Home choice waits for the server's answer before going Home anyway (see chooseHome).
+const HOME_WRITE_WAIT_MS = 1200;
 
 const NUMBERS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 const numberWord = (n) => NUMBERS[n] || String(n);
@@ -88,6 +91,37 @@ const RoomYou = () => {
   const [sageOpen, setSageOpen] = useState(() => location.state?.open === 'sage');
 
   const set = (patch) => updateRoomPrefs(patch).catch((err) => console.error(err));
+
+  // Home: the papers or the desk. Written, then Home, so the choice is seen at once. A refused
+  // write keeps you here and says so. The wait is bounded: offline, Firestore answers only once
+  // the connection is back, but the choice is on this device already (the profile shows it at
+  // once), so after a moment Home opens anyway; a refusal after that is said on Home, which then
+  // shows what is saved.
+  const choosing = useRef(false);
+  const here = useRef(true);
+  useEffect(() => {
+    here.current = true;
+    return () => {
+      here.current = false;
+    };
+  }, []);
+  const chooseHome = (home) => {
+    if (home === prefs.home || choosing.current) return;
+    choosing.current = true;
+    let refused = false;
+    const written = Promise.resolve()
+      .then(() => updateRoomPrefs({ home }))
+      .catch((err) => {
+        refused = true;
+        console.error('Could not change Home', err);
+        sayInRoom('Home did not change. Try again.');
+      });
+    Promise.race([written, new Promise((resolve) => setTimeout(resolve, HOME_WRITE_WAIT_MS))]).then(() => {
+      choosing.current = false;
+      // Not if the page was left meanwhile: Home must not take over wherever you went.
+      if (!refused && here.current) navigate('/room');
+    });
+  };
 
   // "Here since August." — omitted entirely when the profile has no createdAt, rather
   // than guessing or printing a dash.
@@ -232,6 +266,11 @@ const RoomYou = () => {
 
         <Paper className="room-you-sheet room-rise" tilt={0.4} style={{ animationDelay: '0.07s' }}>
           <p className="room-you-group">The room</p>
+          {row(
+            'Home',
+            'Papers: your courses and recent notes as a list. The desk: the same things in a study, seen from your chair. A preview.',
+            <Segmented options={HOME_OPTIONS} value={prefs.home} onChange={chooseHome} />,
+          )}
           {row(
             'Mood',
             'Candlelight: a room at night, rain on the window, the city beyond. Rain: a grey, quiet day.',

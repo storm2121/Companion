@@ -16,7 +16,7 @@ import {
 import { cleanTag } from './noteTags';
 import { noteStamp, noteTime, useRoomDesk } from './roomData';
 import { pageActions } from './roomCommands';
-import { MOOD_CANDLELIGHT, MOOD_RAIN, resolveRoomPrefs } from './roomPrefs';
+import { homeFor, homeSwitch, MOOD_CANDLELIGHT, MOOD_RAIN, resolveRoomPrefs } from './roomPrefs';
 import { sayInRoom } from './roomUndo';
 import CourseSheet from './components/CourseSheet';
 import { Dot } from './components/primitives';
@@ -33,7 +33,7 @@ import { Overlay } from './components/Overlay';
 // last changed, so an unchanged note is never read twice.
 //
 // It DOES: goes to a page, starts a note, adds a course or something on the calendar,
-// switches the mood — plus whatever the open page offers (roomCommands.js): a note's Sage,
+// switches the mood or which Home the room opens on — plus whatever the open page offers (roomCommands.js): a note's Sage,
 // tags, PDF, "Insert a formula"… And anything typed that nothing answers can become a new
 // note with that title, or a line in the inbox.
 
@@ -52,7 +52,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 // The room-wide actions. A page action with the same id replaces its room-wide twin — on a
 // course page "New note in …" becomes "New note here", on the calendar "Add something"
 // opens its own form rather than navigating to itself.
-const roomActions = ({ go, courses, course, newNote, addCourse, mood, setMood }) =>
+const roomActions = ({ go, courses, course, newNote, addCourse, mood, setMood, home, setHome }) =>
   [
     course && {
       id: 'new-note',
@@ -103,6 +103,13 @@ const roomActions = ({ go, courses, course, newNote, addCourse, mood, setMood })
       label: 'Switch to the rain mood',
       keywords: ['day', 'light', 'grey', 'theme', 'mood'],
       run: () => setMood(MOOD_RAIN),
+    },
+    // Which Home the room opens on (roomPrefs.home): the other one, then Home, to see it.
+    {
+      id: 'home-switch',
+      label: homeSwitch(home).label,
+      keywords: ['switch', 'change', 'settings', 'preview', 'start'],
+      run: () => setHome(homeSwitch(home).to),
     },
     // "new note stat" → New note in Statistics.
     ...courses
@@ -214,6 +221,19 @@ const SearchSheet = ({ onAddCourse }) => {
   const setMood = (mood) =>
     updateRoomPrefs?.({ mood })?.catch?.((err) => console.error('Could not change the mood', err));
 
+  // The written choice shows at once (the profile has it before the server answers), so Home
+  // opens on it straight away; a refusal puts the old Home back and says so.
+  const setHome = (home) => {
+    Promise.resolve()
+      .then(() => updateRoomPrefs?.({ home }))
+      .catch((err) => {
+        console.error('Could not change Home', err);
+        sayInRoom('Home did not change. Try again.');
+      });
+    // Already Home: the same page in place, not a second history entry for Back to walk through.
+    navigate('/room', { replace: location.pathname === '/room' });
+  };
+
   // Read fresh on every render: a page's actions follow its state ("Pin" / "Unpin").
   const offered = pageActions();
   const offeredIds = new Set(offered.map((action) => action.id));
@@ -227,6 +247,8 @@ const SearchSheet = ({ onAddCourse }) => {
       addCourse: onAddCourse,
       mood: resolveRoomPrefs(profile?.roomPrefs).mood,
       setMood,
+      home: homeFor(profile?.roomPrefs),
+      setHome,
     }).filter((action) => !offeredIds.has(action.id)),
   ];
 

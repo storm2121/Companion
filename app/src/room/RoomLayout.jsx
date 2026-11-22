@@ -35,7 +35,9 @@ const Weather = ({ stored }) => {
 const preloadRoom = () => {
   const connection = navigator.connection;
   if (!navigator.onLine) return;
-  import('./RoomHome');
+  // Home's door (RoomHomeDoor.jsx, which holds the papers' RoomHome). Not the desk: that loads
+  // only when chosen.
+  import('./RoomHomeDoor');
   import('./RoomCourse');
   import('./RoomYou');
   import('./RoomInbox');

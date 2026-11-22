@@ -18,9 +18,10 @@ import { inboxLines } from './inboxLines';
 //
 // When a course or note listener was refused, every page says so in one line under the top
 // line. A page that says it in a sentence of its own (Home, a course, All notes) passes
-// `ownTrouble` so it is not said twice.
+// `ownTrouble` so it is not said twice. `notice`: one more plain line in the same place (the
+// Home door's, when the desk could not open).
 
-const RoomShell = ({ children, back, onBack, trailing, ownTrouble = false, ...topLine }) => {
+const RoomShell = ({ children, back, onBack, trailing, ownTrouble = false, notice = '', ...topLine }) => {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const initial = (profile?.displayName || profile?.email || 'M').slice(0, 1).toUpperCase();
@@ -42,6 +43,11 @@ const RoomShell = ({ children, back, onBack, trailing, ownTrouble = false, ...to
         {...topLine}
       />
       {trouble && !ownTrouble && <DataTrouble trouble={trouble} onRetry={retry} className="room-status room-trouble" />}
+      {notice && (
+        <p className="room-status room-trouble" role="status">
+          {notice}
+        </p>
+      )}
       {children}
     </>
   );
