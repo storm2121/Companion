@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/authState';
-import { createPageNote, deleteNotes, moveNotes } from '../services/library';
+import { createPageNote, deleteNotes, moveRoomNotes } from '../services/library';
 import { startingBlocks } from './pageBlocks';
 import RoomShell from './RoomShell';
 import Paper from './components/Paper';
@@ -39,8 +39,8 @@ const isTyping = (target) =>
   Boolean(target?.closest?.('input, textarea, select, [contenteditable="true"]'));
 
 // The room decorates notes with where they live (`classId`, `className`). Those are
-// NEVER stored — and `moveNotes` writes every field of what it is handed into the moved
-// document, so they have to come off first or every move would bake them into Firestore.
+// NEVER stored. The room's move (`moveRoomNotes`) uses only the ids and moves what the server
+// holds, but they still come off here, so nothing handed to the library carries them.
 const storedFields = (note) => {
   const stored = { ...note };
   delete stored.classId;
@@ -58,7 +58,7 @@ const RoomCourse = () => {
   const navigate = useNavigate();
   const { firebaseUser } = useAuth();
   // Notes waiting out a delete's undo window are already left out by useRoomDesk.
-  const { courses, notes, loading } = useRoomDesk();
+  const { courses, notes, loading, trouble, retry } = useRoomDesk();
 
   const [selected, setSelected] = useState(() => new Set());
   // Entered from the Select pill, before anything is picked.
@@ -175,30 +175,40 @@ const RoomCourse = () => {
 
   /* ── Move, with undo ──────────────────────────────────────────────────── */
 
-  // Not awaited: the batch lands in the local cache at once and the live listeners
-  // redraw both courses; the server gets it when it can.
+  // Through library.js `moveRoomNotes`, which moves what the SERVER holds — every content
+  // doc of each note — and refuses when it cannot read them (offline, or no answer). Classic's
+  // `moveNotes` copied this device's cached page, which could be an old one, and then deleted
+  // the newer source. So "moved" is said only once it has happened, and a refusal says why.
   const moveSelected = (target) => {
     if (!firebaseUser) return;
     const moving = own.filter((note) => selected.has(note.id)).map(storedFields);
     if (!moving.length) return;
     const uid = firebaseUser.uid;
     const from = courseId;
-    moveNotes(uid, from, target.id, moving).catch((err) => {
-      console.error('Could not move those notes', err);
-      sayInRoom(
-        navigator.onLine
-          ? 'Those notes could not be moved'
-          : 'A note not yet opened on this device cannot move offline',
-      );
-    });
     clearSelection();
-    offerUndo({
-      message: `${plural(moving.length, 'note')} moved to ${target.name}`,
-      undo: () =>
-        moveNotes(uid, target.id, from, moving).catch((err) =>
-          console.error('Could not move them back', err),
-        ),
-    });
+    moveRoomNotes(uid, from, target.id, moving)
+      .then(({ moved }) => {
+        if (!moved) {
+          sayInRoom('Those notes are no longer there to move');
+          return;
+        }
+        offerUndo({
+          message: `${plural(moved, 'note')} moved to ${target.name}`,
+          undo: () =>
+            moveRoomNotes(uid, target.id, from, moving).catch((err) => {
+              console.error('Could not move them back', err);
+              sayInRoom('They could not be moved back');
+            }),
+        });
+      })
+      .catch((err) => {
+        console.error('Could not move those notes', err);
+        sayInRoom(
+          err?.code === 'move/unreadable'
+            ? 'Notes can only be moved with a connection — nothing was moved'
+            : 'Those notes could not be moved',
+        );
+      });
   };
 
   /* ── Keys ─────────────────────────────────────────────────────────────── */
@@ -250,14 +260,19 @@ const RoomCourse = () => {
     .join(' · ');
 
   return (
-    <RoomShell back="Desk" onBack={() => navigate('/room')}>
+    <RoomShell back="Desk" onBack={() => navigate('/room')} ownTrouble>
       <div className="room-course-head room-rise">
         <div>
           <h1 ref={titleRef} className="room-course-title">
             <Dot size={18} color={course?.color} />
-            {course?.name || (loading ? '' : 'That course is gone')}
+            {/* Not "gone" when the courses simply could not be read. */}
+            {course?.name || (loading || trouble === 'courses' ? '' : 'That course is gone')}
           </h1>
-          {meta && <p className="room-course-sub">{meta}</p>}
+          {trouble ? (
+            <DataTrouble trouble={trouble} onRetry={retry} className="room-course-sub" />
+          ) : (
+            meta && <p className="room-course-sub">{meta}</p>
+          )}
         </div>
         <div className="room-seg">
           {course && (

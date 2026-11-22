@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../context/authState';
 import {
   deleteNoteVersion,
   getNoteVersion,
   listenSageUsage,
   saveNoteVersion,
+  saveSageAnswer,
   updateNote,
 } from '../../services/library';
 import { describeSageRun, readSageBalance, sageDayKey, sageRunWeight } from '../../services/sage';
@@ -20,6 +21,8 @@ import {
   toSageBlocks,
 } from '../sageBridge';
 import { callRoomSage } from '../sageCall';
+import { isNoteOpen, notePageKey, sageLanding, sageLandingDelta } from '../sageLanding';
+import { sayWhenFree } from '../roomUndo';
 import { SAGE_EXTRAS, SAGE_GOALS, SAGE_PHRASES, SAGE_VOICES, CLASSIC_ADDONS } from '../sageChoices';
 import Paper from './Paper';
 import { Chip, Pill, Segmented } from './primitives';
@@ -40,7 +43,14 @@ import { Chip, Pill, Segmented } from './primitives';
 // named slot beside the content (`content/original`), and "Before / After" swaps them.
 //
 // The panel stays mounted while the note is open (it only HIDES when closed), so a run you
-// start carries on and lands even if you close the panel to keep writing.
+// start carries on and lands even if you close the panel to keep writing. Leaving the NOTE
+// unmounts it; an answer that arrives after that is written to the note by the library
+// (sageLanding.js), so a run that was charged is not lost.
+//
+// Closed, it does no work: what a run would send, and what it would cost, are worked out only
+// while the panel is showing (they used to be rebuilt on every keystroke in the note). It is
+// memoised, and the note hands it stable props and no page while it is closed, so typing does
+// not render it at all. A run never reads `blocks`: it takes the page from `getBlocks()`.
 
 const PLAN = {
   patch: 'Quick edit — only the blocks that need it change.',
@@ -60,6 +70,8 @@ const readable = (err) => {
 };
 
 const shorten = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+const NO_BLOCKS = [];
 
 const SagePanel = ({
   open,
@@ -115,6 +127,15 @@ const SagePanel = ({
   const [usage, setUsage] = useState(null);
   const [confirmKeep, setConfirmKeep] = useState(false);
 
+  // False once the note has been left: a run's answer can arrive after that.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!uid) return undefined;
     return listenSageUsage(uid, setUsage, (err) => console.warn('Could not read the Sage allowance', err));
@@ -135,10 +156,16 @@ const SagePanel = ({
   // quick edit add blocks too, since it may ask for something new.
   const baseMode = describeSageRun(goals, extras).mode;
   const mode = baseMode === 'patch' && comment.trim() ? 'reflow' : baseMode;
-  const outgoing = useMemo(() => toPageBlocks(sageScope(blocks, sectionId)), [blocks, sectionId]);
-  const cost = sageRunWeight(
-    outgoing.map((block) => ({ type: block.type === 'image' ? 'image' : 'text', value: block.value, title: block.label })),
-    mode,
+  // Only while the panel shows: closed, `shown` is one constant and neither memo re-runs.
+  const shown = open ? blocks : NO_BLOCKS;
+  const outgoing = useMemo(() => toPageBlocks(sageScope(shown, sectionId)), [shown, sectionId]);
+  const cost = useMemo(
+    () =>
+      sageRunWeight(
+        outgoing.map((block) => ({ type: block.type === 'image' ? 'image' : 'text', value: block.value, title: block.label })),
+        mode,
+      ),
+    [outgoing, mode],
   );
   const balance = readSageBalance(usage);
   const phrases = SAGE_PHRASES[busy] || SAGE_PHRASES.default;
@@ -151,6 +178,33 @@ const SagePanel = ({
   const toggleExtra = toggle(setExtras, 3);
 
   const say = (text, error = false) => setMessage({ text, error });
+
+  // The answer came back and the note is no longer on screen (sageLanding.js). Its page, as
+  // it was left, is still in `getBlocks()`: the unmount flush has handed exactly that to
+  // Firestore, so the answer is applied to it and the difference written.
+  const landAfterLeaving = (applied, before) => {
+    if (!applied.changed && !applied.added) return;
+    const name = `“${shorten(noteTitle, 40)}”`;
+    const where = sageLanding({ alive: false, reopened: isNoteOpen(notePageKey(courseId, noteId)) });
+    if (where === 'nowhere') {
+      sayWhenFree(`Sage finished ${name} after you left it. Nothing was changed.`);
+      return;
+    }
+    const { changedBlocks, removedBlockIds, order } = sageLandingDelta(getBlocks(), applied.blocks);
+    saveSageAnswer(uid, courseId, noteId, {
+      changedBlocks,
+      removedBlockIds,
+      order,
+      original: versions.has ? null : before.map(toStored),
+      canvasHeight: CANVAS_HEIGHT,
+    }).then(
+      () => sayWhenFree(`Sage finished ${name}. Its version is saved in the note.`),
+      (err) => {
+        console.error('Could not save Sage’s answer to a note that was left', err);
+        sayWhenFree(`Sage finished ${name}, but its answer could not be saved. Nothing was changed.`);
+      },
+    );
+  };
 
   const run = async () => {
     if (busy || !uid) return;
@@ -201,6 +255,10 @@ const SagePanel = ({
         sectionId,
       });
       if (!applied) throw new Error('Sage returned an unusable result — please try again.');
+      if (!aliveRef.current) {
+        landAfterLeaving(applied, before);
+        return;
+      }
       const suggested = cleanTags(applied.tags).filter((tag) => !tags.includes(tag));
       if (!applied.changed && !applied.added) {
         setMessage({ text: applied.note || 'Sage read it through and found nothing worth changing.', says: Boolean(applied.note), tags: suggested });
@@ -209,6 +267,12 @@ const SagePanel = ({
       // The note as it was is banked once, before the first run that changes anything.
       if (!versions.has) {
         await saveNoteVersion(uid, courseId, noteId, 'original', before.map(toStored), CANVAS_HEIGHT);
+        // Left while the copy was being banked: the copy is exactly what a first run keeps,
+        // and the library writes the rest.
+        if (!aliveRef.current) {
+          landAfterLeaving(applied, before);
+          return;
+        }
       }
       onReplace(applied.blocks);
       onVersions({ has: true, view: 'improved' });
@@ -233,6 +297,9 @@ const SagePanel = ({
   // Classic's swap: what is on the page goes into ITS slot, the other slot comes out.
   const switchTo = async (next) => {
     if (busy || !uid || next === versions.view) return;
+    // Both halves of a swap wait for the server. Offline they never settle, and the panel
+    // stayed busy until a reload, so offline it is refused before anything starts.
+    if (!online) return say('Switching versions needs a connection.', true);
     setBusy('switch');
     setConfirmKeep(false);
     try {
@@ -257,12 +324,19 @@ const SagePanel = ({
   // Irreversible — the other version is deleted — so this one asks first (the documented
   // exception to undo-instead-of-confirm, like clearing a device).
   const keep = async () => {
-    if (!uid) return;
+    if (!uid || busy) return;
+    // The deletes wait for the server too: refused offline, before it asks "Delete?".
+    if (!online) {
+      setConfirmKeep(false);
+      return say('Sage needs a connection.', true);
+    }
     if (!confirmKeep) {
       setConfirmKeep(true);
       return;
     }
     setConfirmKeep(false);
+    // Held busy, so a version switch cannot start while the two deletes are in flight.
+    setBusy('switch');
     try {
       await Promise.all([
         deleteNoteVersion(uid, courseId, noteId, 'original'),
@@ -274,6 +348,8 @@ const SagePanel = ({
     } catch (err) {
       console.error('Could not keep this version', err);
       say('That did not go through — try again.', true);
+    } finally {
+      setBusy('');
     }
   };
 
@@ -480,4 +556,4 @@ const SagePanel = ({
   );
 };
 
-export default SagePanel;
+export default memo(SagePanel);

@@ -48,6 +48,21 @@ export const offerUndo = ({ message, undo, commit, hides, action, ms = UNDO_MS }
 // A line with nothing to undo — "Deleting needs a connection".
 export const sayInRoom = (message) => offerUndo({ message });
 
+// A line about something that finished by itself — nobody clicked for it — must not cost
+// anyone their Undo: `offerUndo` settles the line that is showing. This one waits for it.
+export const sayWhenFree = (message) => {
+  if (!state.entry) {
+    sayInRoom(message);
+    return;
+  }
+  const wait = () => {
+    if (state.entry) return;
+    listeners.delete(wait);
+    sayInRoom(message);
+  };
+  listeners.add(wait);
+};
+
 export const undoNow = () => {
   const { entry } = state;
   if (!entry) return;

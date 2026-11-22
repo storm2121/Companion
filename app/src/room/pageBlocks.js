@@ -124,6 +124,25 @@ export const firstLineOf = (html) =>
     .map((part) => stripHtml(part))
     .find(Boolean) || '';
 
+// What a section block is called in the outline ('' when it says nothing yet), remembered per
+// block OBJECT. Blocks are never changed in place — an edit makes a new object — so a
+// keystroke in one section reads that one block's HTML again, not every section's.
+const SECTION_TITLES = new WeakMap();
+const sectionTitleOf = (block) => {
+  const known = SECTION_TITLES.get(block);
+  if (known !== undefined) return known;
+  // A two-column block keeps its text in its columns, so the outline reads from the
+  // first child that actually has some.
+  const fromColumns = [...(block.colA || []), ...(block.colB || [])]
+    .map((child) => firstLineOf(child.value))
+    .find(Boolean);
+  // A section that opens with a formula is called that — not its LaTeX source.
+  const text = block.type === BLOCK_MATH ? 'Formula' : firstLineOf(block.value) || fromColumns || '';
+  const title = text.split(/[.;:—]/)[0].slice(0, 44).trim();
+  SECTION_TITLES.set(block, title);
+  return title;
+};
+
 // Returns [{ id, index, title }] for every block that opens a section.
 export const sectionsOf = (blocks = []) => {
   let n = 0;
@@ -131,16 +150,47 @@ export const sectionsOf = (blocks = []) => {
     .filter((block) => block?.section && !block?.rail)
     .map((block) => {
       n += 1;
-      // A two-column block keeps its text in its columns, so the outline reads from the
-      // first child that actually has some.
-      const fromColumns = [...(block.colA || []), ...(block.colB || [])]
-        .map((child) => firstLineOf(child.value))
-        .find(Boolean);
-      // A section that opens with a formula is called that — not its LaTeX source.
-      const text = block.type === BLOCK_MATH ? 'Formula' : firstLineOf(block.value) || fromColumns || '';
-      const title = text.split(/[.;:—]/)[0].slice(0, 44).trim();
-      return { id: block.id, index: n, title: title || `Section ${n}` };
+      return { id: block.id, index: n, title: sectionTitleOf(block) || `Section ${n}` };
     });
+};
+
+/* ── Lists that keep their identity ───────────────────────────────────────────
+   Typing replaces ONE block object and leaves the others as they were. The outline and the
+   board are derived from the whole array, so both used to be rebuilt, as new arrays, on every
+   keystroke — every section's HTML stripped again, and everything downstream of them
+   (the board, Sage's panel) re-rendered for a change that did not concern it. These remember
+   the last answer and hand the SAME array back while what it was built from is unchanged.
+   Each is a cache around a pure function: same input, same output.                     */
+
+export const keepList = (prev, next) =>
+  prev && prev.length === next.length && prev.every((item, index) => item === next[index]) ? prev : next;
+
+// `select(blocks)`, as the same array for as long as it holds the same objects in the same order.
+export const keptList = (select) => {
+  let kept = null;
+  return (blocks) => {
+    kept = keepList(kept, select(blocks));
+    return kept;
+  };
+};
+
+const sameOutline = (a, b) =>
+  a.length === b.length &&
+  a.every((item, index) => item.id === b[index].id && item.index === b[index].index && item.title === b[index].title);
+
+// `sectionsOf`, rebuilt only when a block that opens a section changed (or one was added,
+// removed or moved) — and even then the old array is kept if it reads the same.
+export const keptSections = () => {
+  let sources = null;
+  let sections = [];
+  return (blocks) => {
+    const next = blocks.filter((block) => block?.section && !block?.rail);
+    if (sources && keepList(sources, next) === sources) return sections;
+    sources = next;
+    const built = sectionsOf(blocks);
+    if (!sameOutline(sections, built)) sections = built;
+    return sections;
+  };
 };
 
 /* ── Plain text ───────────────────────────────────────────────────────────────
@@ -234,7 +284,12 @@ export const fromStored = (block, index = 0) => {
 
 // Per-block diff against the last saved snapshot: one field path per changed block
 // rather than rewriting the whole document on every keystroke.
-export const diffBlocks = (blocks, lastSaved) => {
+//
+// `savedOrder` is the order last saved (an array of ids). With it, the same blocks in
+// ANOTHER order are a change too — a Sage answer or a version swap can hand back exactly
+// that, and without the comparison the new order was never written. Without it the order
+// is not compared (it is still returned, to be written with any other change).
+export const diffBlocks = (blocks, lastSaved, savedOrder) => {
   const changedBlocks = {};
   const seen = new Set();
   blocks.forEach((block) => {
@@ -246,8 +301,18 @@ export const diffBlocks = (blocks, lastSaved) => {
   });
   const removedBlockIds = Object.keys(lastSaved || {}).filter((id) => !seen.has(id));
   const order = blocks.map((block) => block.id);
-  const changed = Object.keys(changedBlocks).length > 0 || removedBlockIds.length > 0;
+  const reordered =
+    Array.isArray(savedOrder) &&
+    (savedOrder.length !== order.length || savedOrder.some((id, index) => id !== order[index]));
+  const changed = Object.keys(changedBlocks).length > 0 || removedBlockIds.length > 0 || reordered;
   return { changedBlocks, removedBlockIds, order, changed };
+};
+
+// The title to write for what is in the field, or null when it is what was last written.
+// One rule for every way out of the field: blur, leaving the note, the tab being hidden.
+export const titleToSave = (typed, saved) => {
+  const next = String(typed || '').trim() || 'Untitled';
+  return next === saved ? null : next;
 };
 
 export const snapshotOf = (blocks) =>

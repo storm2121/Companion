@@ -23,7 +23,7 @@ const plural = (n, word) => (n === 1 ? word : `${word}s`);
 const RoomNotes = () => {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const { courses, notes } = useRoomDesk();
+  const { courses, notes, trouble, retry } = useRoomDesk();
   const tagsInUse = useTagsInUse();
   const tag = cleanTag(params.get('tag'));
 
@@ -49,11 +49,15 @@ const RoomNotes = () => {
   const openTag = (name) => navigate(name ? `/room/notes?tag=${encodeURIComponent(name)}` : '/room/notes');
 
   return (
-    <RoomShell back="Desk" onBack={() => navigate('/room')}>
+    <RoomShell back="Desk" onBack={() => navigate('/room')} ownTrouble>
       <div className="room-course-head room-rise">
         <div>
           <h1 className="room-course-title">{tag ? `#${tag}` : 'All notes'}</h1>
-          <p className="room-course-sub">{summary}</p>
+          {trouble ? (
+            <DataTrouble trouble={trouble} onRetry={retry} className="room-course-sub" />
+          ) : (
+            <p className="room-course-sub">{summary}</p>
+          )}
           {tagsInUse.length > 0 && (
             <p className="room-tag-line" aria-label="Tags">
               {tagsInUse.slice(0, 16).map(({ tag: name, count }) => (

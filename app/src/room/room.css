@@ -309,7 +309,9 @@ html[data-design='room'][data-motion='still'] *::after {
 }
 
 /* Rain beyond the glass — thin, faint, a little slanted by the wind. Each streak is a
-   full-height column whose top tenth is the streak, so one translate carries it across. */
+   full-height column whose top tenth is the streak, so one translate carries it across.
+   The fall itself (-12% to 100%, linear, forever) is started by Atmosphere.jsx with
+   element.animate(): as a CSS animation every loop restart woke the page. */
 .room-cl-rain {
   position: absolute;
   inset: -12% -8%;
@@ -329,9 +331,6 @@ html[data-design='room'][data-motion='still'] *::after {
     transparent 100%
   );
   will-change: transform;
-  animation-name: room-cl-fall;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
 }
 
 /* A drop on the pane, sliding down slowly, a faint wet trail above it. */
@@ -491,15 +490,6 @@ html[data-design='room'][data-motion='still'] *::after {
   }
   to {
     opacity: 1;
-  }
-}
-
-@keyframes room-cl-fall {
-  from {
-    transform: translateY(-12%);
-  }
-  to {
-    transform: translateY(100%);
   }
 }
 
@@ -925,6 +915,12 @@ html[data-design='room'][data-hand-drawn='off'] .room-rule {
   padding: 28px 34px 24px;
 }
 
+/* A sheet with no field to type in takes focus itself (Overlay.jsx). It is not a control:
+   no ring round the whole sheet. */
+.room-overlay-sheet:focus {
+  outline: none;
+}
+
 .room-overlay-title {
   font-family: var(--room-display);
   font-weight: 600;
@@ -962,8 +958,16 @@ html[data-design='room'][data-hand-drawn='off'] .room-rule {
   border-radius: 0 0 var(--room-r-btn) var(--room-r-btn);
 }
 
-.room-menu-item:hover {
+.room-menu-item:hover,
+.room-menu-item:focus-visible {
   color: var(--room-accent-on-paper);
+}
+
+/* The row the arrow keys are on. Inset, so the ring stays inside the card's padding. */
+.room-menu-item:focus-visible {
+  outline: 2px solid var(--room-accent-on-paper);
+  outline-offset: -2px;
+  border-radius: var(--room-r-btn);
 }
 
 /* ── Segmented control ────────────────────────────────────────────────────── */

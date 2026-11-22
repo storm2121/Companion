@@ -38,6 +38,7 @@ import {
   snapshotOf,
   stripHtml,
   textBlock,
+  titleToSave,
   toPdfBlocks,
   toStored,
 } from '../src/room/pageBlocks.js';
@@ -372,6 +373,44 @@ test('room page: the save diff writes one path per changed block', () => {
   const removed = diffBlocks([blocks[0]], saved);
   assert.deepEqual(removed.removedBlockIds, ['b']);
   assert.deepEqual(removed.order, ['a']);
+});
+
+test('room page: the same blocks in another order are a change to save', () => {
+  const blocks = [
+    { id: 'a', type: BLOCK_TEXT, value: 'one', section: true },
+    { id: 'b', type: BLOCK_TEXT, value: 'two', section: false },
+    { id: 'c', type: BLOCK_TEXT, value: 'three', section: false },
+  ];
+  const saved = snapshotOf(blocks);
+  const savedOrder = blocks.map((block) => block.id);
+
+  // Unchanged, in the saved order: nothing to write.
+  assert.equal(diffBlocks(blocks, saved, savedOrder).changed, false);
+
+  // A Sage answer or a version swap that returns the same blocks rearranged.
+  const swapped = diffBlocks([blocks[0], blocks[2], blocks[1]], saved, savedOrder);
+  assert.equal(swapped.changed, true);
+  assert.deepEqual(swapped.changedBlocks, {});
+  assert.deepEqual(swapped.removedBlockIds, []);
+  assert.deepEqual(swapped.order, ['a', 'c', 'b']);
+
+  // Without a saved order to compare against, the order alone is not judged (as before).
+  assert.equal(diffBlocks([blocks[0], blocks[2], blocks[1]], saved).changed, false);
+  // A saved order that is shorter or longer is a change even when every id matches so far.
+  assert.equal(diffBlocks(blocks, saved, ['a', 'b']).changed, true);
+});
+
+test('room note: the title is written when it differs from what was last written, and only then', () => {
+  // Typed and not yet written — whichever way the field is left.
+  assert.equal(titleToSave('Heaps', 'Untitled'), 'Heaps');
+  assert.equal(titleToSave('  Heaps and queues  ', 'Heaps'), 'Heaps and queues');
+  // Nothing new: no write (this ran on every blur once, a write each time).
+  assert.equal(titleToSave('Heaps', 'Heaps'), null);
+  assert.equal(titleToSave(' Heaps ', 'Heaps'), null);
+  // An emptied field is "Untitled" — written once, not again.
+  assert.equal(titleToSave('', 'Heaps'), 'Untitled');
+  assert.equal(titleToSave('   ', 'Untitled'), null);
+  assert.equal(titleToSave(undefined, 'Untitled'), null);
 });
 
 test('room page: PDF export prints the page, then the photos top to bottom', () => {
@@ -1511,3 +1550,133 @@ test('courses: an older course becomes the room’s only when nothing of classic
   assert.equal(readyToMarkRoom({ course: { design: 'room', noteCount: 1 }, pageCount: 1, serverSeen: true }), false);
 });
 
+
+// ── Run room2: typing cost, Sage's landing, the waiting line, the latest writer ──
+{
+  const { keepList, keptList, keptSections, railBlocksOf } = await import('../src/room/pageBlocks.js');
+  const { applySageResult } = await import('../src/room/sageBridge.js');
+  const { isNoteOpen, noteOpened, notePageKey, sageLanding, sageLandingDelta } = await import('../src/room/sageLanding.js');
+  const { offerUndo, sayWhenFree, settleNow, undoNow } = await import('../src/room/roomUndo.js');
+  const { setRoomPrefsWriter, writeRoomPrefs } = await import('../src/room/roomPrefsWriter.js');
+
+  const text = (id, value, extra = {}) => ({ id, type: BLOCK_TEXT, value, ...extra });
+
+  test('typing: a list is kept, as the same array, while it holds the same objects', () => {
+    const a = { id: 'a' };
+    const b = { id: 'b' };
+    const first = [a, b];
+    assert.equal(keepList(first, [a, b]), first);
+    assert.notEqual(keepList(first, [b, a]), first);
+    assert.notEqual(keepList(first, [a]), first);
+    assert.notEqual(keepList(first, [a, { id: 'b' }]), first, 'an equal copy is still a different block');
+    assert.deepEqual(keepList(null, [a]), [a]);
+  });
+
+  test('typing: the board’s photos keep their identity while you type in a block', () => {
+    const pinsFor = keptList(railBlocksOf);
+    const photo = { id: 'p1', type: BLOCK_IMAGE, rail: true, value: 'u', y: 0 };
+    const before = [text('a', '<p>x</p>'), photo];
+    const after = [text('a', '<p>xy</p>'), photo];
+    const pins = pinsFor(before);
+    assert.equal(pinsFor(after), pins);
+    assert.notEqual(pinsFor([text('a', '<p>xy</p>'), { ...photo, y: 40 }]), pins, 'a moved photo is a new list');
+  });
+
+  test('typing: the outline is rebuilt only when a section block changed', () => {
+    const sectionsFor = keptSections();
+    const head = text('a', '<h2>Heaps</h2><p>intro</p>', { section: true });
+    const body = text('b', '<p>body</p>');
+    const first = sectionsFor([head, body]);
+    assert.deepEqual(first, [{ id: 'a', index: 1, title: 'Heaps' }]);
+    // A keystroke in a block that opens no section: the very same array comes back.
+    assert.equal(sectionsFor([head, text('b', '<p>body!</p>')]), first);
+    // A keystroke in the section block that leaves its title alone: rebuilt, reads the same, kept.
+    assert.equal(sectionsFor([text('a', '<h2>Heaps</h2><p>intro, longer</p>', { section: true }), body]), first);
+    // Its title changed: a new outline.
+    const renamed = sectionsFor([text('a', '<h2>Tries</h2>', { section: true }), body]);
+    assert.notEqual(renamed, first);
+    assert.equal(renamed[0].title, 'Tries');
+    // A new section further down, and the § taken off again.
+    const two = sectionsFor([text('a', '<h2>Tries</h2>', { section: true }), text('b', '<p>body</p>', { section: true })]);
+    assert.deepEqual(two.map((item) => item.index), [1, 2]);
+    assert.equal(sectionsFor([text('a', '<h2>Tries</h2>', { section: true }), body]).length, 1);
+    // Always what sectionsOf itself says.
+    const page = [text('x', '<p>One</p>', { section: true }), text('y', '<p>Two</p>', { section: true })];
+    assert.deepEqual(keptSections()(page), sectionsOf(page));
+  });
+
+  test('sage landing: on the page while it is open, in the library once it was left, nowhere if reopened', () => {
+    assert.equal(sageLanding({ alive: true, reopened: true }), 'page');
+    assert.equal(sageLanding({ alive: false, reopened: false }), 'library');
+    assert.equal(sageLanding({ alive: false, reopened: true }), 'nowhere');
+  });
+
+  test('sage landing: a note counts as open until every page on it has closed', () => {
+    const key = notePageKey('c1', 'n1');
+    assert.equal(isNoteOpen(key), false);
+    const closeFirst = noteOpened(key);
+    const closeSecond = noteOpened(key);
+    closeFirst();
+    closeFirst(); // twice does not take the second page's place
+    assert.equal(isNoteOpen(key), true);
+    closeSecond();
+    assert.equal(isNoteOpen(key), false);
+    assert.equal(isNoteOpen(notePageKey('c1', 'n2')), false);
+  });
+
+  test('sage landing: what is written is the difference between the page as it was left and the answer', () => {
+    const left = [text('a', '<p>A degenerate tree</p>', { section: true }), text('b', '<p>stays</p>'), text('c', '<p>goes</p>')];
+    const applied = applySageResult(
+      left,
+      { format: 'page', mode: 'reflow', changed: [{ id: 'a', value: '<p>A degenerate (unbalanced) tree</p>' }], added: [{ after: 'a', type: 'callout', label: 'Example', value: '<p>1, 2, 3</p>' }] },
+      { sent: new Set(['a', 'b', 'c']) },
+    );
+    assert.ok(applied && (applied.changed || applied.added));
+    const delta = sageLandingDelta(left, applied.blocks);
+    assert.equal(delta.changed, true);
+    assert.equal(delta.changedBlocks.a.value, '<p>A degenerate (unbalanced) tree</p>');
+    assert.equal('b' in delta.changedBlocks, false, 'an untouched block is not rewritten');
+    assert.equal(delta.order.length, 4);
+    assert.equal(delta.order[0], 'a');
+    const added = delta.order[1];
+    assert.equal(delta.changedBlocks[added].type, 'callout');
+    assert.deepEqual(delta.removedBlockIds, []);
+    // Nothing changed: nothing to write.
+    assert.equal(sageLandingDelta(left, left).changed, false);
+    // A block the answer dropped is removed by id.
+    assert.deepEqual(sageLandingDelta(left, left.slice(0, 2)).removedBlockIds, ['c']);
+  });
+
+  test('room line: a line nobody asked for waits for the Undo that is showing', () => {
+    const done = [];
+    settleNow();
+    offerUndo({ message: 'Note deleted', undo: () => done.push('undone'), commit: () => done.push('committed'), ms: 60_000 });
+    sayWhenFree('Sage finished “Heaps”.');
+    // The Undo is still on offer: pressing it works, and nothing was committed early.
+    undoNow();
+    assert.deepEqual(done, ['undone']);
+    // …and the waiting line took its turn; settle it so no timer outlives the test.
+    settleNow();
+    sayWhenFree('Straight away when the line is free');
+    settleNow();
+    assert.deepEqual(done, ['undone']);
+  });
+
+  test('room prefs: an Undo writes through the latest writer, not the one it was made with', async () => {
+    const calls = [];
+    const old = async (patch) => calls.push(['old', patch]);
+    const fresh = async (patch) => calls.push(['fresh', patch]);
+    const releaseOld = setRoomPrefsWriter(old);
+    const undo = () => writeRoomPrefs({ breaks: [] }); // made while `old` was the writer
+    releaseOld();
+    const releaseFresh = setRoomPrefsWriter(fresh);
+    await undo();
+    assert.deepEqual(calls, [['fresh', { breaks: [] }]]);
+    // A stale release (React cleans the old effect up after the new one ran) leaves the latest in place.
+    releaseOld();
+    await writeRoomPrefs({ mood: 'rain' });
+    assert.equal(calls.length, 2);
+    releaseFresh();
+    await assert.rejects(writeRoomPrefs({ mood: 'lamp' }), /not open/);
+  });
+}

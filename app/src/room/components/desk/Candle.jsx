@@ -34,7 +34,6 @@ const Candle = ({ lit, onToggle, style }) => {
       <button
         type="button"
         className="room-desk-candle-button"
-        aria-pressed={lit}
         aria-label={lit ? 'Candle lit. Blow out for daylight' : 'Candle out. Light it for the evening'}
         onClick={toggle}
       >

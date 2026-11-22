@@ -110,6 +110,7 @@ import {
   nightKeyOf,
   pointInPolygon,
 } from '../src/room/deskStage.js';
+import { cannotArrange, cannotMove, frameHidden, keepPlaces } from '../src/room/deskStage.js';
 import { PAGE_LINE_CHARS, PAGE_LINES, pageLines } from '../src/room/deskPage.js';
 
 // The palettes are read from their own files (read only), so the test follows them.
@@ -1182,3 +1183,74 @@ test('desk arrangement: a book moves to the top of the other pile, or one place 
   assert.deepEqual(again.map, across);
   assert.equal(again.changed, false);
 });
+
+// Run desk1 (improvement pass, 2026-11-19).
+test('a course waiting out its delete keeps its place in every map written meanwhile (D2)', () => {
+  const saved = { a: 'L0', b: 'L1', c: 'L2', d: 'R0' };
+  // b is hidden for its undo window: the desk shows a, c, d, and c settles down onto b's place.
+  const hidden = arrangePiles(['a', 'c', 'd'], saved);
+  assert.equal(hidden.changed, true);
+  assert.equal(hidden.map.b, undefined);
+  // Written as it is, b's place was gone: back from Undo, it took whichever place was free.
+  assert.notEqual(arrangePiles(['a', 'b', 'c', 'd'], hidden.map).map.b, 'L1');
+  // A move made meanwhile is written with b's saved place kept; an id with no saved place adds nothing.
+  const moved = moveToOtherPile(hidden, 'd');
+  const written = keepPlaces(moved, saved, ['b', 'ghost']);
+  assert.equal(written.b, 'L1');
+  assert.equal(written.ghost, undefined);
+  assert.equal(written.d, moved.d);
+  // A place the map already gives a course is left to it, and nothing is kept without ids.
+  assert.equal(keepPlaces({ b: 'R3' }, saved, ['b']).b, 'R3');
+  assert.deepEqual(keepPlaces(moved, saved, undefined), moved);
+  // With the settle held back (RoomDesk), Undo finds the saved map untouched and b where it lay.
+  const back = arrangePiles(['a', 'b', 'c', 'd'], saved);
+  assert.deepEqual(back.map, saved);
+  assert.equal(back.changed, false);
+});
+
+test("the frame's controls are left out once a pile stands above the frame's lower rule (ROUND7 §9)", () => {
+  const scene = JSON.parse(readFileSync(new URL('../src/room/assets/desk/scene.json', import.meta.url), 'utf8'));
+  const pile = (side, n) => Array.from({ length: n }, (_, k) => `${side}${k}`);
+  const rule = Math.max(...scene.quads.frameOuter.map((p) => p[1]));
+  // Pile R stands before the frame: its first book whose top is above the rule hides the controls.
+  const first = pile('R', 12).findIndex((place) => Math.min(...scene.quads.spines[place].map((p) => p[1])) < rule);
+  assert.ok(first > 0, 'a low pile R leaves the frame alone');
+  assert.equal(frameHidden(scene.quads, pile('R', first)), false);
+  assert.equal(frameHidden(scene.quads, pile('R', first + 1)), true);
+  assert.equal(frameHidden(scene.quads, pile('R', 12)), true);
+  // Pile L, however tall, is not in front of it; nor is a book brought closer.
+  assert.equal(frameHidden(scene.quads, pile('L', 12)), false);
+  assert.equal(frameHidden(scene.quads, ['N0']), false);
+  assert.equal(frameHidden(scene.quads, []), false);
+  // The rule is stricter than the old one (the opening's middle under a book): never later.
+  const opening = scene.quads.frameOpening;
+  const mid = [opening.reduce((s, p) => s + p[0], 0) / 4, opening.reduce((s, p) => s + p[1], 0) / 4];
+  pile('R', 12).forEach((place, k) => {
+    const top = scene.quads.tops[place];
+    const spine = scene.quads.spines[place];
+    if (pointInPolygon([top[0], top[1], spine[1], spine[2], spine[3], spine[0]], mid)) assert.equal(frameHidden(scene.quads, pile('R', k + 1)), true);
+  });
+});
+
+test('a move that cannot happen has its words (D9)', () => {
+  const r = arrangePiles(['a', 'b', 'c', 'd'], null);
+  assert.equal(moveInPile(r, 'c', 1), null);
+  assert.equal(cannotMove(r, 'c', 'up', 'Logic'), 'Logic is already on top.');
+  assert.equal(cannotMove(r, 'a', 'down', 'Algebra'), 'Algebra is already at the bottom.');
+  assert.equal(cannotMove(r, 'a', 'left', 'Algebra'), 'Algebra is already on the left pile.');
+  assert.equal(cannotMove(r, 'b', 'right', 'Poetry'), 'Poetry is already on the right pile.');
+  const full = arrangePiles(Array.from({ length: 24 }, (_, i) => `c${i}`), {});
+  assert.equal(moveToOtherPile(full, 'c0'), null);
+  assert.equal(cannotMove(full, 'c0', 'across', 'X'), 'The right pile is full.');
+  assert.equal(cannotMove(full, 'c1', 'left', 'X'), 'The left pile is full.');
+  assert.equal(cannotMove(r, 'nobody', 'up', 'X'), '');
+  // A book brought closer is on no pile.
+  const near = { ...r, map: { ...r.map, a: 'N0' } };
+  assert.equal(cannotMove(near, 'a', 'up', 'Algebra'), 'Algebra is not on a pile.');
+  assert.equal(cannotArrange(near, 'a', 'closer', 'Algebra'), 'Algebra is closer already.');
+  assert.equal(cannotArrange(r, 'a', 'back', 'Algebra'), 'Algebra is on a pile already.');
+  assert.equal(cannotArrange(r, 'a', { to: 'L0' }, 'Algebra'), '');
+  // Every sentence is plain words, and none says "class".
+  [cannotMove(r, 'c', 'up', 'Logic'), cannotMove(full, 'c0', 'across', 'X'), cannotArrange(near, 'a', 'closer', 'A')].forEach((line) => assert.doesNotMatch(line, /class|undefined|null/));
+});
+

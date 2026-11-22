@@ -33,7 +33,10 @@ import {
   bringCloser,
   candleOf,
   candlePlaces,
+  cannotArrange,
+  cannotMove,
   isNearPlace,
+  keepPlaces,
   moveInPile,
   moveTo,
   moveToOtherPile,
@@ -42,7 +45,7 @@ import {
   spineLook,
 } from './deskStage';
 import { usePageActions } from './roomCommands';
-import { offerUndo } from './roomUndo';
+import { offerUndo, sayInRoom, useRoomUndo } from './roomUndo';
 import { rememberPick } from './deskFlight';
 import { useDeskReturn } from './deskFlightRun';
 import scene from './assets/desk/scene.json';
@@ -113,7 +116,7 @@ const flowLook = (course, i, layout) => {
 const RoomDesk = () => {
   const navigate = useNavigate();
   const { firebaseUser, profile, updateRoomPrefs } = useAuth();
-  const { courses, notes, recent } = useRoomDesk();
+  const { courses, notes, recent, loading, trouble } = useRoomDesk();
   const [newCourseOpen, setNewCourseOpen] = useState(false);
   const [pickedId, setPickedId] = useState(null);
   const pickTimer = useRef(null);
@@ -129,6 +132,10 @@ const RoomDesk = () => {
   // The candle answers its click at once: the wished state holds until the saved one catches up.
   const savedLit = prefs.mood !== MOOD_RAIN;
   const [litWish, setLitWish] = useState(null);
+  // The wish is spent once the saved mood has caught up with it (run desk1, D3: kept, it came back
+  // to life when the mood was later changed from elsewhere, Ctrl K or another tab, to where the
+  // wish had started, and the desk stayed in the old light until the next click on the candle).
+  if (litWish && litWish.to === savedLit) setLitWish(null);
   const lit = litWish && litWish.from === savedLit ? litWish.to : savedLit;
   const reduced = useReducedMotion();
   const still = prefs.motion === MOTION_STILL || reduced;
@@ -149,19 +156,57 @@ const RoomDesk = () => {
 
   useEffect(() => () => clearTimeout(pickTimer.current), []);
 
+  // The LATEST preference writer, for a write made later than its click (run desk1, R7's desk half).
+  // `updateRoomPrefs` (AuthContext) writes the whole roomPrefs object from the profile of the render
+  // it was made in: an Undo pressed seconds later through an old one put every other preference
+  // back (move a book, blow the candle out, Undo: the candle was lit again). Kept while the desk is
+  // mounted; an Undo pressed after leaving the desk uses the last one the desk saw.
+  const writePrefs = useRef(updateRoomPrefs);
+  useEffect(() => {
+    writePrefs.current = updateRoomPrefs;
+  });
+
+  // What the desk says when a move cannot happen (a book already on top, a full pile): a line for
+  // a screen reader only (desk.css .room-desk-said), since nothing moved for the eye to follow.
+  // The same words twice in a row are said twice (a trailing space the second time).
+  const [said, setSaid] = useState({ text: '', n: 0 });
+  const say = useCallback((text) => text && setSaid((was) => ({ text, n: was.n + 1 })), []);
+
+  // One write of the desk's arrangement and its undo line. The line is offered as the write is
+  // issued, not when it settles (run desk1, D6): offline a write settles only on the server's
+  // answer, though the book has moved already, so the line came on reconnecting, stale.
+  const writeMove = useCallback((patch, before, message, what) => {
+    Promise.resolve(writePrefs.current?.(patch)).catch((err) => {
+      console.error(`Could not move ${what}`, err);
+      sayInRoom('That move could not be saved');
+    });
+    offerUndo({
+      message,
+      undo: () => Promise.resolve(writePrefs.current?.(before)).catch((err) => console.error(`Could not put ${what} back`, err)),
+    });
+  }, []);
+
   // Where each course's book lies on the stage's piles: the student's own arrangement
   // (roomPrefs.deskPlaces) where there is one, settled so a pile never has a gap; written back
   // once when settling changed a saved place.
   const savedPlaces = profile?.roomPrefs?.deskPlaces;
   const arrangement = useMemo(() => arrangePiles(courses.map((course) => course.id), savedPlaces), [courses, savedPlaces]);
+  // Not while a course waits out its delete's undo (run desk1, D2): it is hidden meanwhile, the
+  // books above it settle, and that write dropped its place and took theirs, so Undo put it back
+  // on whichever pile had room. Its place is kept in every write made meanwhile (keepPlaces), and
+  // the piles settle for good only once the delete is final. Nor while the courses are not in.
+  const { entry: undoEntry } = useRoomUndo();
+  const waiting = undoEntry?.hides;
+  const holding = Boolean(waiting?.some((id) => typeof savedPlaces?.[id] === 'string'));
+  const placesToWrite = useCallback((map) => keepPlaces(map, savedPlaces, waiting), [savedPlaces, waiting]);
   const settled = useRef('');
   useEffect(() => {
-    if (flow || !arrangement.changed) return;
+    if (flow || loading || trouble || holding || !arrangement.changed) return;
     const key = JSON.stringify(arrangement.map);
     if (settled.current === key) return;
     settled.current = key;
     Promise.resolve(updateRoomPrefs?.({ deskPlaces: arrangement.map })).catch((err) => console.error('Could not settle the piles', err));
-  }, [arrangement, flow, updateRoomPrefs]);
+  }, [arrangement, flow, loading, trouble, holding, updateRoomPrefs]);
 
   // Where the candle stands (round seven, run three: roomPrefs.deskCandle, C0 by the notebook or C1
   // beside the card; scene.json candles): by night the room is lit from there.
@@ -170,17 +215,9 @@ const RoomDesk = () => {
   const moveCandle = useCallback(
     (place) => {
       if (!candlePlaces(scene).includes(place) || place === candle) return;
-      const before = candle;
-      Promise.resolve(updateRoomPrefs?.({ deskCandle: place }))
-        .then(() =>
-          offerUndo({
-            message: `The candle is ${scene.candles[place].name} now.`,
-            undo: () => updateRoomPrefs?.({ deskCandle: before })?.catch?.((err) => console.error('Could not move the candle back', err)),
-          }),
-        )
-        .catch((err) => console.error('Could not move the candle', err));
+      writeMove({ deskCandle: place }, { deskCandle: candle }, `The candle is ${scene.candles[place].name} now.`, 'the candle');
     },
-    [candle, updateRoomPrefs],
+    [candle, writeMove],
   );
 
   // Where each book brought closer lay before (roomPrefs.deskNearFrom: courseId -> 'L' | 'R'), so
@@ -206,19 +243,14 @@ const RoomDesk = () => {
       } else {
         map = moveInPile(arrangement, courseId, how === 'up' ? 1 : -1);
       }
-      if (!map) return;
-      const before = arrangement.map;
+      if (!map) {
+        say(cannotMove(arrangement, courseId, how, course.name));
+        return;
+      }
       const where = map[courseId][0] === 'L' ? 'the left pile' : 'the right pile';
-      Promise.resolve(updateRoomPrefs?.({ deskPlaces: map }))
-        .then(() =>
-          offerUndo({
-            message: `${course.name} is on ${where} now.`,
-            undo: () => updateRoomPrefs?.({ deskPlaces: before })?.catch?.((err) => console.error('Could not put the book back', err)),
-          }),
-        )
-        .catch((err) => console.error('Could not move the book', err));
+      writeMove({ deskPlaces: placesToWrite(map) }, { deskPlaces: placesToWrite(arrangement.map) }, `${course.name} is on ${where} now.`, 'the book');
     },
-    [arrangement, courses, updateRoomPrefs, nearFrom],
+    [arrangement, courses, nearFrom, say, writeMove, placesToWrite],
   );
 
   // Bringing a book closer (onto the near place, in front of the piles), putting it back, or a drop
@@ -233,7 +265,10 @@ const RoomDesk = () => {
       if (how === 'closer') next = bringCloser(arrangement, courseId, memory);
       else if (how === 'back') next = putBack(arrangement, courseId, memory);
       else if (how && how.to) next = moveTo(arrangement, courseId, how.to, memory);
-      if (!next) return;
+      if (!next) {
+        say(cannotArrange(arrangement, courseId, how, course.name));
+        return;
+      }
       const pileName = (place) => (place[0] === 'L' ? 'the left pile' : 'the right pile');
       const now = next.map[courseId];
       // The book a "Bring closer" sent back to its pile, if the near place was taken.
@@ -244,17 +279,14 @@ const RoomDesk = () => {
         : isNearPlace(arrangement.map[courseId])
           ? `${course.name} is back on ${pileName(now)}.`
           : `${course.name} is on ${pileName(now)} now.`;
-      const before = { deskPlaces: arrangement.map, deskNearFrom: memory };
-      Promise.resolve(updateRoomPrefs?.({ deskPlaces: next.map, deskNearFrom: next.from }))
-        .then(() =>
-          offerUndo({
-            message,
-            undo: () => updateRoomPrefs?.(before)?.catch?.((err) => console.error('Could not put the book back', err)),
-          }),
-        )
-        .catch((err) => console.error('Could not move the book', err));
+      writeMove(
+        { deskPlaces: placesToWrite(next.map), deskNearFrom: next.from },
+        { deskPlaces: placesToWrite(arrangement.map), deskNearFrom: memory },
+        message,
+        'the book',
+      );
     },
-    [arrangement, courses, updateRoomPrefs, nearFrom],
+    [arrangement, courses, nearFrom, say, writeMove, placesToWrite],
   );
 
   // What ⌘K offers on the desk: moving the candle to its other place, moving any book on the piles,
@@ -449,6 +481,10 @@ const RoomDesk = () => {
         {flow ? flowDesk() : stageDesk()}
       </div>
 
+      <p className="room-desk-said" role="status">
+        {said.text}
+        {said.n % 2 ? '\u00a0' : ''}
+      </p>
       <CourseSheet open={newCourseOpen} onClose={() => setNewCourseOpen(false)} />
     </RoomShell>
   );

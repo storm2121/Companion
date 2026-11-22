@@ -6,7 +6,7 @@ import Paper from './components/Paper';
 import CaptureScrap from './components/CaptureScrap';
 import CourseSheet from './components/CourseSheet';
 import SceneSlot from './components/SceneSlot';
-import { Dot, PencilRule } from './components/primitives';
+import { DataTrouble, Dot, PencilRule } from './components/primitives';
 import { cleanBreaks, courseMeta } from './calendarDays';
 import { deskClock, deskStatus, noteStamp, timeOfDayWord, useRoomDesk } from './roomData';
 import { tiltFor, useMinuteClock } from './roomPrefs';
@@ -21,7 +21,7 @@ import { tiltFor, useMinuteClock } from './roomPrefs';
 const RoomHome = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const { courses, recent } = useRoomDesk();
+  const { courses, recent, trouble, retry } = useRoomDesk();
   const [newCourseOpen, setNewCourseOpen] = useState(false);
 
   // Ticks on the minute, so the clock line and the greeting word stay true.
@@ -31,7 +31,7 @@ const RoomHome = () => {
   const breaks = useMemo(() => cleanBreaks(profile?.roomPrefs?.breaks), [profile?.roomPrefs?.breaks]);
 
   return (
-    <RoomShell>
+    <RoomShell ownTrouble>
       <div className="room-home">
         {/* ── Left: where you are, and one line you can throw somewhere ── */}
         <div className="room-home-left">
@@ -39,9 +39,19 @@ const RoomHome = () => {
           <h1 className="room-greeting room-rise" style={{ animationDelay: '0.07s' }}>
             {timeOfDayWord(now)}, {firstName}.
           </h1>
-          <p className="room-status room-rise" style={{ animationDelay: '0.14s' }}>
-            {deskStatus({ courses, recent, now, breaks })}
-          </p>
+          {/* A refused listener is not an empty desk: say so where the day's sentence goes. */}
+          {trouble ? (
+            <DataTrouble
+              trouble={trouble}
+              onRetry={retry}
+              className="room-status room-rise"
+              style={{ animationDelay: '0.14s' }}
+            />
+          ) : (
+            <p className="room-status room-rise" style={{ animationDelay: '0.14s' }}>
+              {deskStatus({ courses, recent, now, breaks })}
+            </p>
+          )}
 
           <SceneSlot stagger={3} />
 

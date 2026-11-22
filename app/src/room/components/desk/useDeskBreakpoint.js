@@ -37,6 +37,12 @@ export const useReducedMotion = () => useSyncExternalStore(subscribeReduced, () 
 let size = typeof window === 'undefined' ? { width: 1440, height: 900 } : { width: window.innerWidth, height: window.innerHeight };
 const sizeListeners = new Set();
 let sizeFrame = 0;
+// The window as it is now; the same object for as long as it has not changed.
+const readSize = () => {
+  if (typeof window === 'undefined') return size;
+  if (window.innerWidth !== size.width || window.innerHeight !== size.height) size = { width: window.innerWidth, height: window.innerHeight };
+  return size;
+};
 const onResize = () => {
   if (sizeFrame) return;
   sizeFrame = requestAnimationFrame(() => {
@@ -49,7 +55,10 @@ const onResize = () => {
 };
 
 const subscribeSize = (onChange) => {
-  if (!sizeListeners.size && typeof window !== 'undefined') window.addEventListener('resize', onResize);
+  if (!sizeListeners.size && typeof window !== 'undefined') {
+    window.addEventListener('resize', onResize);
+    readSize();
+  }
   sizeListeners.add(onChange);
   return () => {
     sizeListeners.delete(onChange);
@@ -57,4 +66,10 @@ const subscribeSize = (onChange) => {
   };
 };
 
-export const useViewport = () => useSyncExternalStore(subscribeSize, () => size, () => size);
+// With nobody listening (the desk was away: a course page, a note) nothing heard the window change,
+// so `size` is whatever it was when the desk was last left (run desk1, D5: the stage came back fitted
+// to the old window until the next resize). Then the window is read again; while the desk is
+// mounted, the listener keeps it, once a frame at most, as before.
+const currentSize = () => (sizeListeners.size ? size : readSize());
+
+export const useViewport = () => useSyncExternalStore(subscribeSize, currentSize, () => size);

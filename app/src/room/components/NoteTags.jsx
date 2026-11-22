@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { suggestTags, TAGS_PER_NOTE, withoutTag, withTags } from '../noteTags';
 import { useTagsInUse } from '../roomData';
 
@@ -118,4 +118,5 @@ const NoteTags = ({ tags, onChange, onOpenTag, adding, onAdding }) => {
   );
 };
 
-export default NoteTags;
+// Memoised: the note re-renders on every keystroke, and its tags did not change.
+export default memo(NoteTags);

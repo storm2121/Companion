@@ -9,6 +9,7 @@ import {
   getCountFromServer,
   getDocFromServer,
   getDocs,
+  getDocsFromServer,
   increment,
   onSnapshot,
   orderBy,
@@ -380,12 +381,31 @@ const readNoteFromServer = async (uid, classId, noteId) => {
   return normalizeMergedNote(noteSnap.data(), contentSnap.data());
 };
 
+// Whether a note's content is on NEITHER the server nor this device. `getNote` swallows that
+// failure and hands back an empty block list, which an editor shows as a blank page — and the
+// first thing typed on it was then saved over the real note's block order. Only asked when
+// the list came back empty: a doc that was read (or is known to be missing) is in the cache.
+const contentOutOfReach = async (uid, classId, noteId, note) => {
+  if (!note || note.blocks.length) return false;
+  try {
+    await getDocFromCache(getNoteContentRef(uid, classId, noteId));
+    return false;
+  } catch {
+    return true;
+  }
+};
+
 // For an editor: the server's copy whenever it answers within a moment, this device's copy
 // when it does not (offline, or a slow connection) — so a note still opens at once with no
 // connection. `later`, when set, is the server's answer still on its way; the caller may
 // use it if nothing has been typed yet. Reading from the server also refreshes the cache.
+// `unavailable` is true when the content could be read from nowhere: the note's `blocks` are
+// then empty because they are UNKNOWN, and nothing may be saved over them.
 export const getNoteFresh = async (uid, classId, noteId, { waitMs = SERVER_WAIT_MS } = {}) => {
-  const cached = async () => ({ note: await getNote(uid, classId, noteId), fresh: false, later: null });
+  const cached = async () => {
+    const note = await getNote(uid, classId, noteId);
+    return { note, fresh: false, later: null, unavailable: await contentOutOfReach(uid, classId, noteId, note) };
+  };
   if (globalThis.navigator?.onLine === false) return cached();
   const server = readNoteFromServer(uid, classId, noteId);
   let timer;
@@ -394,7 +414,7 @@ export const getNoteFresh = async (uid, classId, noteId, { waitMs = SERVER_WAIT_
   });
   try {
     const first = await Promise.race([server, waited]);
-    if (first !== WAITED) return { note: first, fresh: true, later: null };
+    if (first !== WAITED) return { note: first, fresh: true, later: null, unavailable: false };
   } catch {
     return cached();
   } finally {
@@ -578,6 +598,96 @@ export const moveNotes = async (uid, fromClassId, toClassId, notes = []) => {
   }
 };
 
+/* ── The room's move ──────────────────────────────────────────────────────────
+   `moveNotes` above is classic's and stays as it is. It copies the content it finds in THIS
+   DEVICE'S cache and then deletes the source — and a cached content doc never refreshes by
+   itself, so a note edited on another device and moved from this one arrived in its OLD
+   version while the newer source was deleted. It also took only `content/main`, leaving
+   Sage's `original` / `improved` copies behind under the deleted note.
+
+   This one reads every note and every one of its `content/*` docs FROM THE SERVER and writes
+   nothing unless all of them answered. Offline, or when the server does not answer in time,
+   it refuses with `code: 'move/unreadable'` and the notes stay where they are. Only the ids
+   of `notes` are used: what moves is what the server holds. Resolves to how many moved.  */
+
+const MOVE_WAIT_MS = 10000;
+// A batch holds 500 writes; a note costs two for itself and two per content doc.
+const MOVE_BATCH_WRITES = 440;
+
+export const moveRoomNotes = async (uid, fromClassId, toClassId, notes = [], { waitMs = MOVE_WAIT_MS } = {}) => {
+  if (!uid || !fromClassId || !toClassId || fromClassId === toClassId) return { moved: 0, missing: 0 };
+  const ids = [...new Set((Array.isArray(notes) ? notes : []).map((note) => note?.id).filter(Boolean))];
+  if (!ids.length) return { moved: 0, missing: 0 };
+
+  const refuse = (cause) =>
+    Object.assign(new Error('These notes could not be read from the server, so they were not moved.'), {
+      code: 'move/unreadable',
+      cause,
+    });
+  if (globalThis.navigator?.onLine === false) throw refuse();
+
+  const contentOf = (classId, noteId) => collection(db, 'users', uid, 'classes', classId, 'notes', noteId, 'content');
+  const reading = Promise.all(
+    ids.map(async (id) => {
+      const [noteSnap, contentSnap] = await Promise.all([
+        getDocFromServer(getNoteRef(uid, fromClassId, id)),
+        getDocsFromServer(contentOf(fromClassId, id)),
+      ]);
+      return {
+        id,
+        meta: noteSnap.exists() ? noteSnap.data() : null,
+        content: contentSnap.docs.map((docSnap) => ({ id: docSnap.id, data: docSnap.data() })),
+      };
+    }),
+  );
+  // Still running if the wait below gives up on it: its own failure must not go unhandled.
+  reading.catch(() => undefined);
+  let timer;
+  const waited = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(WAITED), waitMs);
+  });
+  let read;
+  try {
+    read = await Promise.race([reading, waited]);
+  } catch (err) {
+    throw refuse(err);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (read === WAITED) throw refuse();
+
+  // A note the server no longer has (deleted elsewhere) is left out, not recreated.
+  const found = read.filter((entry) => entry.meta);
+  let moved = 0;
+  let batch = writeBatch(db);
+  let writes = 0;
+  let count = 0;
+  const commit = async () => {
+    if (!count) return;
+    batch.update(doc(db, 'users', uid, 'classes', fromClassId), { noteCount: increment(-count) });
+    batch.update(doc(db, 'users', uid, 'classes', toClassId), { noteCount: increment(count) });
+    await batch.commit();
+    moved += count;
+    batch = writeBatch(db);
+    writes = 0;
+    count = 0;
+  };
+  for (const entry of found) {
+    const cost = 2 + entry.content.length * 2;
+    if (writes && writes + cost > MOVE_BATCH_WRITES) await commit();
+    batch.set(getNoteRef(uid, toClassId, entry.id), { ...entry.meta, updatedAt: serverTimestamp() });
+    entry.content.forEach((item) => {
+      batch.set(doc(contentOf(toClassId, entry.id), item.id), item.data);
+      batch.delete(doc(contentOf(fromClassId, entry.id), item.id));
+    });
+    batch.delete(getNoteRef(uid, fromClassId, entry.id));
+    writes += cost;
+    count += 1;
+  }
+  await commit();
+  return { moved, missing: ids.length - found.length };
+};
+
 export const reorderNotes = async (uid, classId, orderedNotes) => {
   if (!uid || !classId || !Array.isArray(orderedNotes)) return;
   for (let offset = 0; offset < orderedNotes.length; offset += 400) {
@@ -663,6 +773,44 @@ export const getNoteVersion = async (uid, classId, noteId, versionId) => {
     blocks: blocksMapToArray(data.blocks, data.order),
     canvasHeight: sanitizeCanvasHeight(data.canvasHeight),
   };
+};
+
+// ROOM ONLY (run room2). Sage's answer for a note that is no longer on screen: the student
+// left it while Sage was working, so there is no editor to hand the answer to. One batch, so
+// it is all or nothing: the changed blocks and the order, the "before Sage" copy when this is
+// the first run (`original`: stored blocks, or null when a copy is already kept), and the two
+// marks on the note. `update` refuses a note or a page that is not there any more, and then
+// nothing is banked and nothing is marked. Classic does not call this.
+export const saveSageAnswer = async (uid, classId, noteId, { changedBlocks = {}, removedBlockIds = [], order, original = null, canvasHeight } = {}) => {
+  const update = {};
+  Object.entries(changedBlocks || {}).forEach(([id, block]) => {
+    if (id && block) update[`blocks.${id}`] = block;
+  });
+  (Array.isArray(removedBlockIds) ? removedBlockIds : []).forEach((id) => {
+    if (id) update[`blocks.${id}`] = deleteField();
+  });
+  if (!Array.isArray(order)) throw new Error('saveSageAnswer needs the page order');
+  update.order = order;
+  update.updatedAt = serverTimestamp();
+
+  const batch = writeBatch(db);
+  batch.update(getNoteContentRef(uid, classId, noteId), update);
+  batch.update(getNoteRef(uid, classId, noteId), {
+    sageHasVersions: true,
+    sageView: 'improved',
+    updatedAt: serverTimestamp(),
+    contentUpdatedAt: serverTimestamp(),
+  });
+  if (original) {
+    const { map, order: originalOrder } = blocksArrayToMap(sanitizeBlocks(original));
+    batch.set(doc(db, 'users', uid, 'classes', classId, 'notes', noteId, 'content', 'original'), {
+      blocks: map,
+      order: originalOrder,
+      canvasHeight: sanitizeCanvasHeight(canvasHeight),
+      updatedAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
 };
 
 // Preference: whether the "Upcoming" widget also appears on the dashboard sidebar.

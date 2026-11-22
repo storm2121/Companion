@@ -12,7 +12,7 @@
 // live listener on courses and one per course on PAGE notes only, and the persistent
 // cache means both keep working — from cache — when the connection drops.
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { countCourseNotes, listenToAllClasses, listenToPageNotes, markRoomCourse } from '../services/library';
 import { readyToMarkRoom, showInRoom } from './courseDesigns';
 import { classStatus } from './calendarDays';
@@ -64,7 +64,9 @@ export const stampFor = (ms, now = new Date()) => {
 
 // Two contexts, not one: the note editor only needs courses, and a single context would
 // re-render it every time its OWN save touched the note's `updatedAt`.
-export const RoomCoursesContext = createContext({ courses: [], loading: true });
+// `trouble` is '' while the room's listeners are answering, 'courses' when the course
+// listener was REFUSED and 'notes' when a course's note listener was; `retry` opens them again.
+export const RoomCoursesContext = createContext({ courses: [], loading: true, trouble: '', retry: () => {} });
 export const RoomNotesContext = createContext([]);
 
 // Owned by RoomLayout. Everything below the room reads from what this returns.
@@ -75,6 +77,17 @@ export const useRoomDataSource = (uid) => {
   // Courses whose room notes the SERVER has confirmed — the only ones safe to judge by them.
   const [serverSeen, setServerSeen] = useState(() => new Set());
   const checked = useRef(new Set());
+  // A listener the server refuses (rules, an expired verification, quota) is dead: it sends
+  // nothing more. The room used to carry on as if the account were simply empty — an empty
+  // desk offering "+ New course". Now it says so, and `retry` opens every listener again.
+  const [coursesRefused, setCoursesRefused] = useState(false);
+  const [notesRefused, setNotesRefused] = useState(() => new Set());
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => {
+    setCoursesRefused(false);
+    setNotesRefused(new Set());
+    setAttempt((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     if (!uid) return undefined;
@@ -82,14 +95,16 @@ export const useRoomDataSource = (uid) => {
       uid,
       (snapshot) => {
         setCourses(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) })));
+        setCoursesRefused(false);
         setLoading(false);
       },
       (err) => {
         console.error('Room course listener failed', err);
+        setCoursesRefused(true);
         setLoading(false);
       },
     );
-  }, [uid]);
+  }, [uid, attempt]);
 
   // Keyed on the SET of course ids, so a rename, a colour change or a note count ticking
   // up does not tear down and re-open every note listener.
@@ -109,15 +124,24 @@ export const useRoomDataSource = (uid) => {
             classId,
           }));
           setNotesByCourse((prev) => ({ ...prev, [classId]: list }));
+          setNotesRefused((prev) => {
+            if (!prev.has(classId)) return prev;
+            const next = new Set(prev);
+            next.delete(classId);
+            return next;
+          });
           if (!snapshot.metadata?.fromCache) {
             setServerSeen((prev) => (prev.has(classId) ? prev : new Set(prev).add(classId)));
           }
         },
-        (err) => console.error('Room note listener failed', err),
+        (err) => {
+          console.error('Room note listener failed', err);
+          setNotesRefused((prev) => (prev.has(classId) ? prev : new Set(prev).add(classId)));
+        },
       ),
     );
     return () => stops.forEach((stop) => stop());
-  }, [uid, courseIds]);
+  }, [uid, courseIds, attempt]);
 
   // Each design keeps its own courses (room/courseDesigns.js): the room lists what it made,
   // and an older course only while it holds room notes.
@@ -154,7 +178,11 @@ export const useRoomDataSource = (uid) => {
       .flatMap(([classId, list]) => list.map((note) => ({ ...note, className: names.get(classId) })));
   }, [roomCourses, notesByCourse]);
 
-  const coursesValue = useMemo(() => ({ courses: roomCourses, loading }), [roomCourses, loading]);
+  const trouble = (coursesRefused && 'courses') || (notesRefused.size > 0 && 'notes') || '';
+  const coursesValue = useMemo(
+    () => ({ courses: roomCourses, loading, trouble, retry }),
+    [roomCourses, loading, trouble, retry],
+  );
   return { coursesValue, notes };
 };
 
@@ -174,7 +202,7 @@ export const useRoomCourses = () => useVisibleCourses();
 
 // Courses decorated with their room notes, plus the three most recent notes.
 export const useRoomDesk = () => {
-  const { courses, loading } = useVisibleCourses();
+  const { courses, loading, trouble, retry } = useVisibleCourses();
   const allNotes = useContext(RoomNotesContext);
   const { hidden } = useRoomUndo();
 
@@ -215,7 +243,7 @@ export const useRoomDesk = () => {
     [notes],
   );
 
-  return { courses: desk, notes, recent, loading };
+  return { courses: desk, notes, recent, loading, trouble, retry };
 };
 
 // Every tag in use across the room's notes, most used first: [{ tag, count }]. Read from

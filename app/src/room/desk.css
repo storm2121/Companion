@@ -2635,3 +2635,28 @@ html[data-design='room'] .room-stage-scrap .room-stage-scrap-paper form {
   cursor: pointer;
   pointer-events: auto;
 }
+
+/* What the desk says when a move cannot happen (RoomDesk `said`, run desk1): for a screen reader
+   only; nothing is drawn. */
+.room-desk-said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A refused listener's line (RoomShell's DataTrouble) on the stage page (run desk1, D8): it lay
+   under the stage's opaque backdrop, unseen. Above it, on one of the room's sheets, like the top
+   line's words. */
+html:has(.room-desk-page.is-stage) .room-trouble {
+  position: relative;
+  z-index: 1;
+  width: fit-content;
+  padding: 6px 16px;
+  border: 1px solid var(--room-stage-sheet-rim);
+  border-radius: var(--room-r-pill);
+  background: var(--room-stage-sheet);
+}

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { MOOD_CANDLELIGHT, MOOD_DAY } from '../roomPrefs';
 
 // The room's weather. Absolutely-positioned, pointer-events:none layers.
@@ -13,7 +14,8 @@ import { MOOD_CANDLELIGHT, MOOD_DAY } from '../roomPrefs';
 // Everything is placed in the PICTURE's own coordinates — the stage is the picture, scaled
 // to cover the screen — so the flicker stays on the candles and the rain inside the window
 // whatever the screen's shape. Only opacity and transform ever animate, every loop returns to
-// its own start, and Still mode and reduced motion stop all of it (room.css).
+// its own start, and Still mode and reduced motion stop all of it (room.css; the window's
+// rain, which is moved from here, by `useWindowRain`).
 
 const RAIN_STREAKS = 22;
 
@@ -37,6 +39,50 @@ const WINDOW_RAIN = Array.from({ length: 28 }, (_, i) => ({
   delay: -((i * 0.41) % 2.3),
   alpha: 0.06 + ((i * 13) % 8) / 100,
 }));
+
+// The streaks fall by element.animate(), not by a CSS animation. A CSS animation has to wake
+// the page at every loop restart (the browser owes it an `animationiteration` event, and React
+// listens for those at the root), and 28 streaks restarting every 1.3 to 2.2 s kept the page
+// restyling about fifty times a second on every room page: 8 to 17% of the main thread, at
+// rest. The same keyframes from element.animate() fire no events, so the compositor moves the
+// rain alone (measured: 120 ms of style work per 3 s before, 2 ms after). Same keyframes, same
+// durations, same delays: the picture is unchanged.
+const RAIN_FALL = [{ transform: 'translateY(-12%)' }, { transform: 'translateY(100%)' }];
+
+// CSS cannot stop these (room.css's Still and reduced-motion rules reach CSS animations only),
+// so both are honoured here. Stopped, a streak rests above the glass, out of sight, exactly
+// where `animation: none` used to leave it.
+const useWindowRain = (still) => {
+  const boxRef = useRef(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box || still || typeof box.animate !== 'function') return undefined;
+    const quiet = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    let falling = [];
+    const stop = () => {
+      falling.forEach((animation) => animation.cancel());
+      falling = [];
+    };
+    const start = () => {
+      stop();
+      if (quiet?.matches) return;
+      falling = WINDOW_RAIN.map((drop, index) =>
+        box.children[index]?.animate(RAIN_FALL, {
+          duration: drop.time * 1000,
+          delay: drop.delay * 1000,
+          iterations: Infinity,
+        }),
+      ).filter(Boolean);
+    };
+    start();
+    quiet?.addEventListener?.('change', start);
+    return () => {
+      quiet?.removeEventListener?.('change', start);
+      stop();
+    };
+  }, [still]);
+  return boxRef;
+};
 
 // Drops on the pane itself, sliding down slowly, each fading before its loop restarts.
 const PANE_DROPS = [
@@ -63,7 +109,9 @@ const CITY_LIGHTS = [
   { x: 61.7, y: 54.9, time: 11, delay: -4 },
 ];
 
-const Candlelight = () => (
+const Candlelight = ({ still }) => {
+  const rainRef = useWindowRain(still);
+  return (
   <div className="room-candlelight">
     {/* The picture itself comes from room.css, with a sharper copy for high-density screens. */}
     <div className="room-cl-stage">
@@ -71,18 +119,9 @@ const Candlelight = () => (
       <div className="room-cl-window">
         <div className="room-cl-mist" />
         <div className="room-cl-water" />
-        <div className="room-cl-rain">
+        <div className="room-cl-rain" ref={rainRef}>
           {WINDOW_RAIN.map((drop) => (
-            <span
-              key={drop.key}
-              className="room-cl-streak"
-              style={{
-                left: `${drop.left}%`,
-                animationDuration: `${drop.time}s`,
-                animationDelay: `${drop.delay}s`,
-                '--a': drop.alpha,
-              }}
-            />
+            <span key={drop.key} className="room-cl-streak" style={{ left: `${drop.left}%`, '--a': drop.alpha }} />
           ))}
         </div>
         {PANE_DROPS.map((drop) => (
@@ -118,9 +157,10 @@ const Candlelight = () => (
       <div className="room-cl-flame room-cl-flame--right" />
     </div>
   </div>
-);
+  );
+};
 
-const Atmosphere = ({ mood, scene, grain = true }) => {
+const Atmosphere = ({ mood, scene, grain = true, still = false }) => {
   const isDay = mood === MOOD_DAY;
 
   let weather;
@@ -138,7 +178,7 @@ const Atmosphere = ({ mood, scene, grain = true }) => {
       />
     ));
   } else if (scene === MOOD_CANDLELIGHT) {
-    weather = <Candlelight />;
+    weather = <Candlelight still={still} />;
   } else {
     weather = (
       <>

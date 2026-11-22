@@ -15,6 +15,9 @@ import { noteTime } from '../../roomData';
 // Returns { lines, read }: `read` once this note's answer is in, whatever it was.
 
 let kept = { key: '', lines: [] };
+// Reads are numbered: only the latest one asked for is kept (run desk1, D11: an older note's read
+// answering last overwrote the newer note's lines, and the page stayed blank until the next visit).
+let asked = 0;
 
 const stampOf = (note) => note?.contentUpdatedAt?.toMillis?.() || noteTime(note);
 
@@ -22,17 +25,20 @@ export const usePageLines = (uid, note) => {
   const classId = note?.classId;
   const id = note?.id;
   const stamp = note ? stampOf(note) : 0;
-  const key = uid && classId && id ? `${classId}/${id}/${stamp}` : '';
+  // Under the account too, so the lines kept for one are never another's.
+  const key = uid && classId && id ? `${uid}/${classId}/${id}/${stamp}` : '';
   const [answered, setAnswered] = useState('');
 
   useEffect(() => {
     if (!key || kept.key === key) return undefined;
     let live = true;
     const read = () => {
+      asked += 1;
+      const mine = asked;
       getNoteAsOf(uid, classId, id, stamp)
         .then(
           (full) => {
-            kept = { key, lines: pageLines(full?.blocks) };
+            if (mine === asked) kept = { key, lines: pageLines(full?.blocks) };
           },
           () => undefined,
         )

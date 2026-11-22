@@ -472,6 +472,58 @@ export const moveInPile = (arrangement, id, step) => {
   return { ...arrangement.map, [id]: target, [neighbour]: place };
 };
 
+// A map of places to write (roomPrefs.deskPlaces) with the saved places of the courses in `ids`
+// kept (run desk1, D2): courses waiting out a delete's undo are hidden from the desk, so no map
+// made from the desk holds them; written without them, Undo brought the course back with no place.
+// A place the map already gives a book is left to the book (arrangePiles settles the two on return).
+export const keepPlaces = (map, saved, ids) => {
+  const out = { ...(map || {}) };
+  (Array.isArray(ids) ? ids : []).forEach((id) => {
+    if (saved && typeof saved[id] === 'string' && !Object.prototype.hasOwnProperty.call(out, id)) out[id] = saved[id];
+  });
+  return out;
+};
+
+// Whether the wall frame's own controls (its "+", change, take down) are left out: when a pile
+// stands in front of the frame with its top above the frame's lower rule (ROUND7-BRIEF §9, item 1;
+// EMPTY MEANS ABSENT: the "+" was lettered on a book's spine). `quads`: scene.json's (frameOuter,
+// spines, tops); `places`: the places in use.
+export const frameHidden = (quads, places) => {
+  const frame = quads?.frameOuter || quads?.frameOpening;
+  if (!frame) return false;
+  const xs = frame.map((p) => p[0]);
+  const [left, right, rule] = [Math.min(...xs), Math.max(...xs), Math.max(...frame.map((p) => p[1]))];
+  return (places || []).some((place) => {
+    const points = [...(quads.spines?.[place] || []), ...(quads.tops?.[place] || [])];
+    if (!points.length) return false;
+    const px = points.map((p) => p[0]);
+    return Math.max(...px) > left && Math.min(...px) < right && Math.min(...points.map((p) => p[1])) < rule;
+  });
+};
+
+// What to say when a move cannot happen (run desk1, D9: Alt + arrow at a pile's end and "Move to the
+// other pile" onto a full one did nothing and said nothing). `how`: 'up' | 'down' | 'left' | 'right'
+// | 'across' (RoomDesk moveBook).
+const pileWord = (side) => (side === 'L' ? 'the left pile' : 'the right pile');
+export const cannotMove = (arrangement, id, how, name) => {
+  const place = arrangement?.map?.[id];
+  if (!place) return '';
+  if (NEAR_SET.has(place)) return how === 'up' || how === 'down' ? `${name} is not on a pile.` : 'Both piles are full.';
+  const side = sideOf(place);
+  if (how === 'up') return `${name} is already on top.`;
+  if (how === 'down') return `${name} is already at the bottom.`;
+  if ((how === 'left' && side === 'L') || (how === 'right' && side === 'R')) return `${name} is already on ${pileWord(side)}.`;
+  return `${pileWord(side === 'L' ? 'R' : 'L').replace(/^t/, 'T')} is full.`;
+};
+// The same for bringing a book closer or putting it back (RoomDesk arrangeBook); '' for a drop on
+// its own place.
+export const cannotArrange = (arrangement, id, how, name) => {
+  const place = arrangement?.map?.[id];
+  if (!place || (how !== 'closer' && how !== 'back')) return '';
+  if (how === 'closer') return NEAR_SET.has(place) ? `${name} is closer already.` : 'Both piles are full.';
+  return NEAR_SET.has(place) ? 'Both piles are full.' : `${name} is on a pile already.`;
+};
+
 // A pile's height and its books in order (bottom first), in a map.
 const pileOf = (map, side) =>
   Object.entries(map)

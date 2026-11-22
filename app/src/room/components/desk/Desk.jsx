@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { useFlameFilm } from './useFlameFilm';
+import { saveData, useFlameFilm } from './useFlameFilm';
 
 // The flow desk (prototype Home, RoomDesk, phones and tablets below 1100px): a real wooden top
 // running edge to edge under the wall, and the page's own flow of things on it. Wide screens
@@ -25,9 +25,12 @@ const Desk = ({ night = true, still = false, children }) => {
   const deskRef = useRef(null);
   const videoRef = useRef(null);
 
+  // No film where it will not play (run desk1, D10): by day, with motion still or reduced, or when
+  // the browser asks to save data, it is not fetched and the candle's drawn flame stays.
+  const film = night && !still && !saveData();
   useFlameFilm(videoRef, {
     night,
-    still,
+    still: !film,
     onShow: (shown) => {
       const desk = deskRef.current;
       if (!desk) return;
@@ -51,7 +54,7 @@ const Desk = ({ night = true, still = false, children }) => {
           muted
           loop
           playsInline
-          preload="auto"
+          preload={film ? 'auto' : 'none'}
           disablePictureInPicture
           tabIndex={-1}
         >

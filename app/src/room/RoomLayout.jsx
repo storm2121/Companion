@@ -2,7 +2,8 @@ import { Component, Suspense, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/authState';
 import { applyDesignMode, clearBoot, DESIGN_CLASSIC, DESIGN_ROOM } from '../designModes';
-import { clearRoomAttributes, useRoomAtmosphere } from './roomPrefs';
+import { clearRoomAttributes, MOTION_STILL, useRoomAtmosphere } from './roomPrefs';
+import { useRoomPrefsWriter } from './roomPrefsWriter';
 import { RoomCoursesContext, RoomNotesContext, useRoomDataSource } from './roomData';
 import { settleNow, undoNow, useRoomUndo } from './roomUndo';
 import RoomSearch from './RoomSearch';
@@ -23,7 +24,7 @@ import './room.css';
 // else — not the page, and not an open editor.
 const Weather = ({ stored }) => {
   const { mood, prefs } = useRoomAtmosphere(stored);
-  return <Atmosphere mood={mood} scene={prefs.mood} grain={prefs.grain} />;
+  return <Atmosphere mood={mood} scene={prefs.mood} grain={prefs.grain} still={prefs.motion === MOTION_STILL} />;
 };
 
 // Every room page's code, fetched while the connection is good, so the room keeps
@@ -102,9 +103,11 @@ const RoomUndoLine = () => {
 };
 
 const RoomLayout = () => {
-  const { firebaseUser, profile } = useAuth();
+  const { firebaseUser, profile, updateRoomPrefs } = useAuth();
   const { pathname } = useLocation();
   const { coursesValue, notes } = useRoomDataSource(firebaseUser?.uid);
+  // The newest preference writer, for an Undo pressed seconds after its click (roomPrefsWriter.js).
+  useRoomPrefsWriter(updateRoomPrefs);
 
   useEffect(() => {
     applyDesignMode(DESIGN_ROOM);

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Paper from './Paper';
 import { IMAGE_ACCEPT } from '../../utils/imageUpload';
 import { aspectOf } from '../imageScale';
@@ -529,4 +529,6 @@ const PinRail = ({
   );
 };
 
-export default PinRail;
+// Memoised: the note re-renders on every keystroke; the outline and the photos it is given
+// keep their identity while a keystroke leaves them alone (pageBlocks.js `keptSections`).
+export default memo(PinRail);

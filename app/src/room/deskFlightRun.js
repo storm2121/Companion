@@ -179,9 +179,25 @@ export const useDeskReturn = (lookOf) => {
   // Only on arriving at the desk.
   useLayoutEffect(() => {
     const home = takeReturn();
-    if (!home) return;
+    if (!home) return undefined;
     const book = document.querySelector(`[data-course-id="${CSS.escape(home.courseId)}"]`);
-    if (!book) return;
+    if (!book) return undefined;
+    // Focus goes back to the book the course was opened from (run desk1, D9), unless something has
+    // taken it since; the stage is out of reach until its pictures are in (DeskStage: inert), so
+    // once it is not.
+    const stage = book.closest('.room-stage');
+    const focusBook = () => {
+      if (!document.activeElement || document.activeElement === document.body) book.focus({ preventScroll: true });
+    };
+    let watch = null;
+    if (stage?.inert && typeof MutationObserver === 'function') {
+      watch = new MutationObserver(() => {
+        if (stage.inert) return;
+        watch.disconnect();
+        focusBook();
+      });
+      watch.observe(stage, { attributes: true, attributeFilter: ['inert'] });
+    } else focusBook();
     const holder = book.closest('.room-stage-slab') || book;
     // On the stage the cloth lands on the book's spine (its words' box), not its whole picture.
     const target = holder.querySelector('.room-stage-spine') || book;
@@ -194,5 +210,6 @@ export const useDeskReturn = (lookOf) => {
         holder.style.visibility = '';
       },
     });
+    return () => watch?.disconnect();
   }, []);
 };

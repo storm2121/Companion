@@ -26,6 +26,7 @@ import {
 } from './calendarDays';
 import { useRoomCourses } from './roomData';
 import { tiltFor, useMinuteClock } from './roomPrefs';
+import { writeRoomPrefs } from './roomPrefsWriter';
 import { offerUndo } from './roomUndo';
 import { usePageActions } from './roomCommands';
 
@@ -289,7 +290,13 @@ const RoomCalendar = () => {
   const removeBreak = (entry) => {
     const before = breaks;
     writeBreaks(before.filter((item) => item.id !== entry.id));
-    offerUndo({ message: `${entry.name || 'Break'} removed`, undo: () => writeBreaks(before) });
+    // Undo runs up to six seconds later, and maybe from another page: through the room's
+    // LATEST writer, not this render's (roomPrefsWriter.js), or it would put every
+    // other preference back to what it was when the break was removed.
+    offerUndo({
+      message: `${entry.name || 'Break'} removed`,
+      undo: () => writeRoomPrefs({ breaks: before }).catch((err) => console.error('Could not put the break back', err)),
+    });
   };
 
   const { year, month } = view;

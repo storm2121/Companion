@@ -49,6 +49,17 @@ export const Segmented = ({ options = [], value, onChange, className = '' }) => 
   </div>
 );
 
+// One plain line for when the room's own data could not be read, with a way to ask again.
+// Never a toast or a modal. `trouble` is roomData's: 'courses' or 'notes'.
+export const DataTrouble = ({ trouble, onRetry, className = 'room-status', style }) => (
+  <p className={className} style={style} role="status">
+    {trouble === 'courses' ? 'Your courses could not be loaded.' : 'Some of your notes could not be loaded.'}{' '}
+    <button type="button" className="room-you-action" style={{ fontSize: 'inherit' }} onClick={onRetry}>
+      Try again
+    </button>
+  </p>
+);
+
 export const Dot = ({ color, size = 7, style, ...rest }) => (
   <span
     className="room-dot"

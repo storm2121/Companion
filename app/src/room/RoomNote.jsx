@@ -31,6 +31,7 @@ import PinRail from './components/PinRail';
 import SagePanel from './components/SagePanel';
 import NoteTags from './components/NoteTags';
 import { cleanTags, withTags } from './noteTags';
+import { noteOpened, notePageKey } from './sageLanding';
 import { usePageActions } from './roomCommands';
 import { Chip, Dot, PencilRule, Pill } from './components/primitives';
 import { MenuCard, Overlay } from './components/Overlay';
@@ -52,11 +53,13 @@ import {
   createPin,
   diffBlocks,
   fromStored,
+  keptList,
+  keptSections,
   pageBlocksOf,
   railBlocksOf,
-  sectionsOf,
   snapshotOf,
   startingBlocks,
+  titleToSave,
   toPdfBlocks,
 } from './pageBlocks';
 
@@ -214,6 +217,32 @@ const BlockRow = memo(function BlockRow({
   );
 });
 
+/* ── The title ─────────────────────────────────────────────────────────────────
+   Its own memoised field. As part of the page it was committed again on every keystroke in
+   the BODY: React rewrites an input's `name` attribute on each commit, two DOM writes a key
+   for a title nobody was touching.                                                    */
+
+const NoteTitle = memo(function NoteTitle({ value, readOnly, onType, onDone }) {
+  return (
+    <input
+      className="room-page-title"
+      value={value}
+      onChange={(e) => onType(e.target.value)}
+      onBlur={onDone}
+      readOnly={readOnly}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+      }}
+      placeholder="Untitled"
+      aria-label="Note title"
+    />
+  );
+});
+
+// What the closed Sage panel is given instead of the page: one constant, so nothing in it
+// re-renders while you type.
+const NO_BLOCKS = [];
+
 /* ── The editor ─────────────────────────────────────────────────────────────── */
 
 const RoomNote = ({ courseId, noteId }) => {
@@ -232,6 +261,11 @@ const RoomNote = ({ courseId, noteId }) => {
   const [tagging, setTagging] = useState(false);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  // Why there is no page to edit: 'unavailable' (its content is on neither the server nor
+  // this device), 'failed' (the note itself could not be read) or 'gone'. Empty when there is.
+  const [blocked, setBlocked] = useState('');
+  // Bumped to read the note again: "Try again", or the connection coming back.
+  const [reload, setReload] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
@@ -271,6 +305,13 @@ const RoomNote = ({ courseId, noteId }) => {
   const [activeBlockId, setActiveBlockId] = useState('');
 
   const lastSavedRef = useRef({});
+  // The block order last handed to Firestore, so a reorder alone counts as a change.
+  const lastOrderRef = useRef(null);
+  // True only while a note that was really READ is on the page. Nothing — blocks, title,
+  // tags, photos — is written before that, or over a note whose content is unknown.
+  const canSaveRef = useRef(false);
+  // The title field as typed, for the flushes that run outside render.
+  const titleRef = useRef('');
   const saveTimerRef = useRef(null);
   const undoTimerRef = useRef(null);
   const retryRef = useRef({ timer: null, delay: 0 });
@@ -302,9 +343,13 @@ const RoomNote = ({ courseId, noteId }) => {
     blocksRef.current = blocks;
   }, [blocks]);
 
-  const sections = useMemo(() => sectionsOf(blocks), [blocks]);
+  // The outline and the board keep their identity while a keystroke leaves them alone
+  // (pageBlocks.js `keptSections`, `keptList`): typing in one block changes neither.
+  const sectionsFor = useMemo(() => keptSections(), []);
+  const pinsFor = useMemo(() => keptList(railBlocksOf), []);
+  const sections = useMemo(() => sectionsFor(blocks), [sectionsFor, blocks]);
   const pageBlocks = useMemo(() => pageBlocksOf(blocks), [blocks]);
-  const pins = useMemo(() => railBlocksOf(blocks), [blocks]);
+  const pins = useMemo(() => pinsFor(blocks), [pinsFor, blocks]);
 
   // One lookup per render. The old per-block `sectionIndexOf` rebuilt every section —
   // and stripped every section's HTML — once for EACH block, on every keystroke.
@@ -327,31 +372,59 @@ const RoomNote = ({ courseId, noteId }) => {
       const loaded = (note.blocks || []).map(fromStored);
       const next = loaded.length ? loaded : startingBlocks();
       setBlocks(next);
-      savedTitleRef.current = note.title || 'Untitled';
-      setTitle(note.title === 'Untitled' ? '' : note.title || '');
-      setPinned(Boolean(note.pinned));
-      setTags(cleanTags(note.tags));
+      head(note);
       setSageVersions({
         has: Boolean(note.sageHasVersions),
         view: note.sageView === 'original' ? 'original' : 'improved',
       });
       lastSavedRef.current = snapshotOf(next);
+      lastOrderRef.current = next.map((block) => block.id);
+      canSaveRef.current = true;
+      setBlocked('');
+    };
+    // The note's own fields — title, pin, tags — which come from its meta doc.
+    function head(note) {
+      const shownTitle = note.title === 'Untitled' ? '' : note.title || '';
+      savedTitleRef.current = note.title || 'Untitled';
+      titleRef.current = shownTitle;
+      setTitle(shownTitle);
+      setPinned(Boolean(note.pinned));
+      setTags(cleanTags(note.tags));
+    }
+    // Its content could not be read: `note.blocks` is empty because it is UNKNOWN. Showing
+    // that as a blank page invited typing, and the first save then replaced the real note's
+    // block order. So: the title it has, a plain line, and nothing that can be written.
+    const hold = (note) => {
+      canSaveRef.current = false;
+      head(note);
+      setBlocks([]);
+      setStatus('');
+      setBlocked('unavailable');
     };
     // What the page was opened from, to tell whether a later answer says anything new.
     const versionOf = (note) => JSON.stringify([note.title, note.blocks, note.tags, note.pinned]);
     touchedRef.current = false;
+    canSaveRef.current = false;
     getNoteFresh(firebaseUser.uid, courseId, noteId)
-      .then(({ note, later }) => {
+      .then(({ note, later, unavailable }) => {
         if (cancelled) return;
         if (!note) {
           setStatus('That note is gone');
+          setBlocked('gone');
           setLoading(false);
           return;
         }
-        show(note);
+        if (unavailable) hold(note);
+        else show(note);
         setLoading(false);
         later?.then((fresh) => {
-          if (cancelled || !fresh || versionOf(fresh) === versionOf(note)) return;
+          if (cancelled || !fresh) return;
+          // A held note has nothing on screen to protect: the server's page is the first one.
+          if (unavailable) {
+            show(fresh);
+            return;
+          }
+          if (versionOf(fresh) === versionOf(note)) return;
           if (touchedRef.current) {
             setStatus('Changed on another device — reopen the note to see that version');
             return;
@@ -362,12 +435,27 @@ const RoomNote = ({ courseId, noteId }) => {
       .catch((err) => {
         console.error('Could not open that note', err);
         setStatus('Could not open this note');
+        setBlocked('failed');
         setLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [firebaseUser, courseId, noteId]);
+  }, [firebaseUser, courseId, noteId, reload]);
+
+  const retryOpen = useCallback(() => {
+    setLoading(true);
+    setBlocked('');
+    setStatus('');
+    setReload((n) => n + 1);
+  }, []);
+
+  // A note that could not be read is read again by itself when the connection returns.
+  useEffect(() => {
+    if (blocked !== 'unavailable' && blocked !== 'failed') return undefined;
+    window.addEventListener('online', retryOpen);
+    return () => window.removeEventListener('online', retryOpen);
+  }, [blocked, retryOpen]);
 
   /* ── Save ───────────────────────────────────────────────────────────────────
      A save counts as saved the moment it is HANDED to Firestore. With the persistent
@@ -382,13 +470,15 @@ const RoomNote = ({ courseId, noteId }) => {
      Offline writes WAIT; they do not fail. So a rejection is a real refusal (rules,
      quota, bad data): its changes are put back to be re-sent, with backoff.          */
   const flush = useCallback(() => {
-    if (!firebaseUser || !courseId || !noteId) return;
+    if (!firebaseUser || !courseId || !noteId || !canSaveRef.current) return;
     const current = blocksRef.current;
     const before = lastSavedRef.current;
-    const delta = diffBlocks(current, before);
+    const beforeOrder = lastOrderRef.current;
+    const delta = diffBlocks(current, before, beforeOrder);
     if (!delta.changed) return;
 
     lastSavedRef.current = snapshotOf(current);
+    lastOrderRef.current = delta.order;
     pendingRef.current += 1;
 
     saveNoteContentDelta(firebaseUser.uid, courseId, noteId, {
@@ -412,6 +502,7 @@ const RoomNote = ({ courseId, noteId }) => {
           next[id] = before[id] || { id };
         });
         lastSavedRef.current = next;
+        lastOrderRef.current = beforeOrder;
         if (!aliveRef.current) return;
         // One line of plain text, never a toast or a modal.
         setStatus('Not saved yet — trying again');
@@ -433,6 +524,10 @@ const RoomNote = ({ courseId, noteId }) => {
     };
   }, []);
 
+  // On the list of notes that are open, for a Sage answer that arrives after its note was
+  // left (sageLanding.js): it may be written straight to the note only while no editor is on it.
+  useEffect(() => noteOpened(notePageKey(courseId, noteId)), [courseId, noteId]);
+
   const scheduleSave = useCallback(() => {
     touchedRef.current = true;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -450,6 +545,20 @@ const RoomNote = ({ courseId, noteId }) => {
     [scheduleSave],
   );
 
+  // The title is written when it differs from what was last written — on blur, and by the
+  // two flushes below. It used to be written ONLY on blur: closing the tab, the tab being
+  // discarded, or going Back with the caret still in the field never blurs it (React hears no
+  // blur from a page that is going away), so a title typed last stayed "Untitled".
+  const flushTitle = useCallback(() => {
+    if (!firebaseUser || !canSaveRef.current) return;
+    const next = titleToSave(titleRef.current, savedTitleRef.current);
+    if (next === null) return;
+    savedTitleRef.current = next;
+    updateNote(firebaseUser.uid, courseId, noteId, { title: next }).catch((err) =>
+      console.error('Could not rename', err),
+    );
+  }, [firebaseUser, courseId, noteId]);
+
   // Flush on the way out so a fast exit never loses the last keystroke.
   useEffect(
     () => () => {
@@ -457,8 +566,9 @@ const RoomNote = ({ courseId, noteId }) => {
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
       clearTimeout(retryRef.current.timer);
       flush();
+      flushTitle();
     },
-    [flush],
+    [flush, flushTitle],
   );
 
   // …and when the tab is hidden or closed. React never unmounts on a page unload, so
@@ -467,6 +577,7 @@ const RoomNote = ({ courseId, noteId }) => {
     const now = () => {
       clearTimeout(saveTimerRef.current);
       flushRef.current?.();
+      flushTitle();
     };
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') now();
@@ -477,7 +588,7 @@ const RoomNote = ({ courseId, noteId }) => {
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', now);
     };
-  }, []);
+  }, [flushTitle]);
 
   /* ── Reading position ─────────────────────────────────────────────────── */
   useEffect(() => {
@@ -605,7 +716,7 @@ const RoomNote = ({ courseId, noteId }) => {
   // actually uploaded, not to the phone's original. One bad file never stops the rest.
   const addPhotos = useCallback(
     async (files, y) => {
-      if (!firebaseUser || !files?.length) return;
+      if (!firebaseUser || !files?.length || !canSaveRef.current) return;
       // Storage has no offline queue: an upload attempted offline just hangs. The board
       // itself says photos need a connection, so there is nothing to start here.
       if (!navigator.onLine) return;
@@ -675,29 +786,30 @@ const RoomNote = ({ courseId, noteId }) => {
 
   /* ── Everything else ──────────────────────────────────────────────────── */
 
-  // Only when it changed: this ran on every blur, so clicking into the title and out
-  // again cost a write each time.
-  const saveTitle = () => {
-    if (!firebaseUser) return;
-    const next = title.trim() || 'Untitled';
-    if (next === savedTitleRef.current) return;
-    savedTitleRef.current = next;
-    updateNote(firebaseUser.uid, courseId, noteId, { title: next }).catch((err) =>
-      console.error('Could not rename', err),
-    );
-  };
 
   // Tags are few and change one at a time, so each change is written as it happens — not
   // awaited: it lands in the local cache at once, online or not.
-  const saveTags = (next) => {
-    setTags(next);
-    if (!firebaseUser) return;
-    updateNote(firebaseUser.uid, courseId, noteId, { tags: next }).catch((err) =>
-      console.error('Could not save the tags', err),
-    );
-  };
+  // (Stable, like the block handlers: the tag row and Sage's panel are memoised.)
+  const saveTags = useCallback(
+    (next) => {
+      setTags(next);
+      if (!firebaseUser || !canSaveRef.current) return;
+      updateNote(firebaseUser.uid, courseId, noteId, { tags: next }).catch((err) =>
+        console.error('Could not save the tags', err),
+      );
+    },
+    [firebaseUser, courseId, noteId],
+  );
+  const addSageTag = useCallback((tag) => saveTags(withTags(tags, tag)), [saveTags, tags]);
+  const closeSage = useCallback(() => setSageOpen(false), []);
 
-  const openTag = (tag) => navigate(`/room/notes?tag=${encodeURIComponent(tag)}`);
+  const openTag = useCallback((tag) => navigate(`/room/notes?tag=${encodeURIComponent(tag)}`), [navigate]);
+
+  const typeTitle = useCallback((text) => {
+    touchedRef.current = true;
+    titleRef.current = text;
+    setTitle(text);
+  }, []);
 
   const applyLink = () => {
     const editor = activeEditor;
@@ -802,7 +914,7 @@ const RoomNote = ({ courseId, noteId }) => {
      Offered only while the note is blank; the row goes the moment anything is written. */
 
   const customTemplates = useMemo(() => savedTemplates(profile?.roomTemplates), [profile?.roomTemplates]);
-  const showTemplates = !loading && !templatesDismissed && isBlankPage(pageBlocks, pins.length);
+  const showTemplates = !loading && !blocked && !templatesDismissed && isBlankPage(pageBlocks, pins.length);
 
   const applyTemplate = (template) => {
     const fresh = instantiate(template.blocks);
@@ -843,7 +955,8 @@ const RoomNote = ({ courseId, noteId }) => {
     return currentSection || sections[0]?.id || '';
   }, [pageBlocks, activeBlockId, currentSection, sections]);
 
-  const menuItems = [
+  const backItem = { id: 'back', label: 'Back to the course', onSelect: () => navigate(`/room/course/${courseId}`) };
+  const pageItems = [
     {
       id: 'pin',
       label: pinned ? 'Unpin from the top' : 'Pin to the top',
@@ -871,13 +984,14 @@ const RoomNote = ({ courseId, noteId }) => {
         setSaveTemplateOpen(true);
       },
     },
-    { id: 'back', label: 'Back to the course', onSelect: () => navigate(`/room/course/${courseId}`) },
   ];
+  // With no page there is nothing to pin, print, search or take the structure of.
+  const menuItems = blocked ? [backItem] : [...pageItems, backItem];
 
   // What ⌘K offers while this note is open: Sage, tags, the ··· menu, and a new block
   // after the one the caret was last in (or at the end).
   usePageActions(() => {
-    if (loading) return [];
+    if (loading || blocked) return [];
     const insertTarget = pageBlocks.some((item) => item.id === activeBlockId)
       ? activeBlockId
       : pageBlocks[pageBlocks.length - 1]?.id;
@@ -921,13 +1035,13 @@ const RoomNote = ({ courseId, noteId }) => {
       trailing={
         <>
           <span className="room-stamp room-saved">
-            {online ? status : 'Offline · saved on this device'}
+            {online || blocked ? status : 'Offline · saved on this device'}
           </span>
           <Pill
             variant="accent"
             onClick={() => setSageOpen((shown) => !shown)}
             aria-expanded={sageOpen}
-            disabled={loading}
+            disabled={loading || Boolean(blocked)}
           >
             <Dot />
             Sage
@@ -1021,25 +1135,12 @@ const RoomNote = ({ courseId, noteId }) => {
               <span className="room-stamp">{course?.name}</span>
               {/* On a phone the save status moves here, out of a top line with no room for it. */}
               <span className="room-stamp room-saved room-saved--inline">
-                {online ? status : 'Offline · saved on this device'}
+                {online || blocked ? status : 'Offline · saved on this device'}
               </span>
             </div>
 
-            <input
-              className="room-page-title"
-              value={title}
-              onChange={(e) => {
-                touchedRef.current = true;
-                setTitle(e.target.value);
-              }}
-              onBlur={saveTitle}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') e.currentTarget.blur();
-              }}
-              placeholder="Untitled"
-              aria-label="Note title"
-            />
-            {!loading && (
+            <NoteTitle value={title} readOnly={Boolean(blocked)} onType={typeTitle} onDone={flushTitle} />
+            {!loading && !blocked && (
               <NoteTags
                 tags={tags}
                 onChange={saveTags}
@@ -1087,6 +1188,20 @@ const RoomNote = ({ courseId, noteId }) => {
               <p className="room-setting-copy" style={{ marginTop: 30 }}>
                 Opening…
               </p>
+            ) : blocked ? (
+              <p className="room-setting-copy" style={{ marginTop: 30 }} role="status">
+                {blocked === 'gone' && 'That note is gone.'}
+                {blocked === 'failed' && 'This note could not be opened.'}
+                {blocked === 'unavailable' &&
+                  (online
+                    ? 'This note could not be read just now. Nothing in it has been changed.'
+                    : 'This note is not available offline yet. It will open when the connection is back.')}{' '}
+                {blocked !== 'gone' && (
+                  <button type="button" className="room-you-action" onClick={retryOpen}>
+                    Try again
+                  </button>
+                )}
+              </p>
             ) : (
               pageBlocks.map((block, index) => (
                 <BlockRow
@@ -1124,11 +1239,11 @@ const RoomNote = ({ courseId, noteId }) => {
 
       <SagePanel
         open={sageOpen}
-        onClose={() => setSageOpen(false)}
+        onClose={closeSage}
         courseId={courseId}
         noteId={noteId}
         noteTitle={title.trim() || 'Untitled'}
-        blocks={blocks}
+        blocks={sageOpen ? blocks : NO_BLOCKS}
         getBlocks={getBlocks}
         onReplace={replaceBlocks}
         versions={sageVersions}
@@ -1137,7 +1252,7 @@ const RoomNote = ({ courseId, noteId }) => {
         sections={sections}
         focusSection={focusSection}
         tags={tags}
-        onAddTag={(tag) => saveTags(withTags(tags, tag))}
+        onAddTag={addSageTag}
       />
 
       {undo && (

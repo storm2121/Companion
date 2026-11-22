@@ -13,11 +13,11 @@ import {
   candlePlaces,
   candleRing,
   dragTargets,
+  frameHidden,
   isNightKey,
   isDrag,
   isNearPlace,
   pickTarget,
-  pointInPolygon,
   fitSpineCount,
   fitSpineTitle,
   ghostPlace,
@@ -33,7 +33,7 @@ import {
 } from '../../deskStage';
 import { textDirection } from '../../deskLayout';
 import StageCard from './StageCard';
-import { useFlameFilm } from './useFlameFilm';
+import { saveData, useFlameFilm } from './useFlameFilm';
 
 // The desk as Blender rendered it (prototype Home, RoomDesk on wide screens). One seated
 // camera (room-harness/blender): the empty room (its table, its window onto a photographed town,
@@ -104,17 +104,129 @@ const px = (n) => `${Math.round(n * 100) / 100}px`;
 const typeVars = (scale) =>
   Object.fromEntries(Object.keys(STAGE_TYPE).map((kind) => [`--room-stage-type-${kind.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, px(stageType(kind, scale))]));
 
+// scene.json never changes: what is worked out from a place alone is worked out once.
+const once = (make) => {
+  const kept = new Map();
+  return (key) => {
+    if (!kept.has(key)) kept.set(key, make(key));
+    return kept.get(key);
+  };
+};
+// A style made from a polygon, kept while the polygon, the scale and the origin are the same (run
+// desk1, D4: every render of the stage built every book's box and clip string again, twenty-four
+// polygons and the dashed places; the polygons themselves are kept from render to render, the hit
+// areas by DeskStage's useMemo and the scene's outlines for good).
+const keptStyle = (store, polygon, scale, x, y, make) => {
+  const was = store.get(polygon);
+  if (was && was.scale === scale && was.x === x && was.y === y) return was.style;
+  const style = make();
+  store.set(polygon, { scale, x, y, style });
+  return style;
+};
+const HIT_STYLES = new WeakMap();
+const CLIP_STYLES = new WeakMap();
 // A hit area (a polygon in stage px, deskStage.js pileHits) as a button's box and clip, relative
 // to its holder's box origin [x, y].
-const hitStyle = (polygon, origin, scale) => {
-  const box = quadBox(polygon);
-  return {
-    left: px((box[0] - origin[0]) * scale),
-    top: px((box[1] - origin[1]) * scale),
-    width: px(box[2] * scale),
-    height: px(box[3] * scale),
-    clipPath: clipPolygon(polygon, box, scale),
-  };
+const hitStyle = (polygon, origin, scale) =>
+  keptStyle(HIT_STYLES, polygon, scale, origin[0], origin[1], () => {
+    const box = quadBox(polygon);
+    return {
+      left: px((box[0] - origin[0]) * scale),
+      top: px((box[1] - origin[1]) * scale),
+      width: px(box[2] * scale),
+      height: px(box[3] * scale),
+      clipPath: clipPolygon(polygon, box, scale),
+    };
+  });
+// A whole holder clipped to a polygon (`filling`: the button fills its holder).
+const clipStyle = (polygon, box, scale, filling = false) =>
+  keptStyle(CLIP_STYLES, polygon, scale, box[0], box[1], () => ({ ...(filling ? { inset: 0 } : null), clipPath: clipPolygon(polygon, box, scale) }));
+
+// A press on a book or on the candle, from the pointer going down to the click it may end with: it
+// becomes a drag 6 css px from where it went down (on touch only after the long press), a long press
+// that did not move asks for the menu, and the click either ends with opens nothing.
+// The pointer may come up anywhere, off the thing too, where no click follows (run desk1, D1: the
+// press then stayed for good, so the next bare hover 6px from the old point took the book with no
+// button down, and after a drag that ended off the book the next Enter on it was swallowed as "the
+// drag's click"). So the window hears the pointer come up; after that the press only waits, a
+// moment, for that click. A move with no button down ends it too.
+const CLICK_AFTER_MS = 400;
+const usePress = () => {
+  const press = useRef(null);
+  const drop = useCallback(() => {
+    const state = press.current;
+    if (!state) return;
+    clearTimeout(state.timer);
+    state.unhear();
+    press.current = null;
+  }, []);
+  useEffect(() => drop, [drop]);
+  return useMemo(
+    () => ({
+      down(event) {
+        drop();
+        if (event.button !== 0) return;
+        const touch = event.pointerType === 'touch';
+        const state = { x: event.clientX, y: event.clientY, pointer: event.pointerId, touch, ready: !touch, timer: 0, done: false, upAt: null };
+        const heard = (e) => {
+          if (e.pointerId !== state.pointer) return;
+          state.upAt = e.timeStamp;
+          state.unhear();
+        };
+        state.unhear = () => {
+          window.removeEventListener('pointerup', heard, true);
+          window.removeEventListener('pointercancel', heard, true);
+        };
+        window.addEventListener('pointerup', heard, true);
+        window.addEventListener('pointercancel', heard, true);
+        if (touch) {
+          state.timer = setTimeout(() => {
+            state.ready = true;
+          }, LONG_PRESS_MS);
+        }
+        press.current = state;
+      },
+      // A move: where the press began ([x, y]) when this move makes it a drag, else null.
+      move(event) {
+        const state = press.current;
+        if (!state || state.done || state.upAt != null || state.pointer !== event.pointerId) return null;
+        if (event.buttons === 0) {
+          drop();
+          return null;
+        }
+        if (!isDrag(event.clientX - state.x, event.clientY - state.y)) return null;
+        clearTimeout(state.timer);
+        // A touch that moved before its long press is not a drag (nor a click).
+        if (!state.ready) {
+          drop();
+          return null;
+        }
+        state.done = true;
+        return [state.x, state.y];
+      },
+      // The pointer up on the thing itself: true for a long press that did not become a drag (its menu).
+      up() {
+        const state = press.current;
+        if (!state) return false;
+        clearTimeout(state.timer);
+        if (!state.touch || !state.ready || state.done) return false;
+        state.done = true;
+        return true;
+      },
+      cancel: drop,
+      // Its menu opened (a right-click): the click that may follow opens nothing.
+      spend() {
+        if (press.current) press.current.done = true;
+      },
+      // The click: false for the one a drag or a long press ends with.
+      click(event) {
+        const state = press.current;
+        drop();
+        return !(state?.done && (state.upAt == null || event.timeStamp - state.upAt < CLICK_AFTER_MS));
+      },
+    }),
+    [drop],
+  );
 };
 const unionBox = (a, b) => {
   const x = Math.min(a[0], b[0]);
@@ -124,9 +236,6 @@ const unionBox = (a, b) => {
 
 // The 2x files when a stage px is drawn at 1.25 device px or more, else the 1x ones (and the 1x
 // when the browser asks to save data): deskStage.js pictureDensity.
-const saveData = () =>
-  typeof navigator !== 'undefined' &&
-  (Boolean(navigator.connection?.saveData) || Boolean(window.matchMedia?.('(prefers-reduced-data: reduce)').matches));
 const pick = (rec, scale) => file(pictureDensity(scale, typeof window !== 'undefined' ? window.devicePixelRatio : 1, saveData()) === 2 ? rec.x2 : rec.x1);
 // The scale the pictures are fetched for: the fit the stage ends at (DeskStage provides it), so a
 // picture is fetched once, at one density.
@@ -353,12 +462,12 @@ const stageHits = (books, dashedPlace, scale) => {
 
 // A place's silhouette: a pile position's top face's far corners, then its spine's four; a near
 // book's outline (the hull of its corners as the camera sees them).
-const silhouette = (place) => {
+const silhouette = once((place) => {
   if (isNearPlace(place)) return scene.quads.nearHulls[place];
   const top = scene.quads.tops[place];
   const spine = scene.quads.spines[place];
   return [top[0], top[1], spine[1], spine[2], spine[3], spine[0]];
-};
+});
 
 // Where the stage's origin is in the page and the device pixel ratio ({ x, y, dpr }, css px), for
 // the lettering's origin on whole device pixels; null until measured.
@@ -498,11 +607,12 @@ const pileLayout = (courses, arrangement) => {
 };
 
 // A book place's box: both moods' pictures of it (one origin for everything the book draws).
-const slabBox = (place) =>
+const slabBox = once((place) =>
   ORDER.map((m) => scene.images[m] && bookRec(m, place))
     .filter(Boolean)
     .map((rec) => rec.box)
-    .reduce(unionBox);
+    .reduce(unionBox),
+);
 
 // A book as one mood draws it, inside that mood's stack: its shadow on the table, the wall and the
 // books below; the book; its leather and label dyed with its course's leathers (multiplied under
@@ -629,18 +739,20 @@ const SlabGilt = ({ place, mood, scale, words, lifted, picked, dragging = false,
 // nothing). A click opens the course; 6 css px of movement with the pointer down is a drag instead
 // (on touch, after a 350ms long press; one that does not move opens the menu); a right-click opens
 // the menu (DeskStage); Alt + Enter brings it closer or puts it back.
-const SlabHit = ({ course, place, scale, hit, look, stageRef, lifted, picked, onPick, onMove, onArrange, onDrag, onMenu }) => {
+// Memoized, its handlers DeskStage's unchanging ones (run desk1, D4): a render of the stage (a drag
+// passing over a target, the minute, the undo line) renders no book's hit area again.
+const SlabHit = memo(function SlabHit({ course, place, scale, hit, room, stageRef, lifted, picked, onPick, onMove, onArrange, onDrag, onMenu }) {
   const box = slabBox(place);
   const [x, y, w, h] = box;
   const titleRef = useRef(null);
-  const press = useRef(null);
+  const press = usePress();
   const outline = silhouette(place);
   const face = faceOf(place);
   const near = isNearPlace(place);
   const count = course.noteCount;
   const gilts = () => [...(stageRef.current?.querySelectorAll(`.room-stage-slab.is-gilt[data-place="${place}"]`) || [])];
   const light = (key, on) => gilts().forEach((el) => (on ? el.setAttribute(key, '') : el.removeAttribute(key)));
-  const pick = () => onPick?.(course.id, titleRef.current?.closest('.room-stage-spine')?.getBoundingClientRect(), look);
+  const pick = () => onPick?.(course.id, titleRef.current?.closest('.room-stage-spine')?.getBoundingClientRect(), spineLook(scene, room, place, course.color));
   // Alt + arrows on a focused book: Left / Right to that pile's top, Up / Down one place; Alt + Enter
   // brings it closer (or puts a near book back).
   const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
@@ -658,47 +770,22 @@ const SlabHit = ({ course, place, scale, hit, look, stageRef, lifted, picked, on
   };
   const onPointerDown = (event) => {
     light('data-press', true);
-    if (event.button !== 0 || !onDrag) return;
-    const touch = event.pointerType === 'touch';
-    const state = { x: event.clientX, y: event.clientY, pointer: event.pointerId, touch, ready: !touch, timer: 0, done: false };
-    if (touch) {
-      state.timer = setTimeout(() => {
-        state.ready = true;
-      }, LONG_PRESS_MS);
-    }
-    press.current = state;
+    if (onDrag) press.down(event);
   };
   const onPointerMove = (event) => {
-    const state = press.current;
-    if (!state || state.done || state.pointer !== event.pointerId) return;
-    if (!isDrag(event.clientX - state.x, event.clientY - state.y)) return;
-    clearTimeout(state.timer);
-    // A touch that moved before its long press is not a drag (nor a click).
-    if (!state.ready) {
-      press.current = null;
-      return;
-    }
-    state.done = true;
+    const start = press.move(event);
+    if (!start) return;
     light('data-press', false);
-    onDrag(course.id, place, [state.x, state.y], event);
+    onDrag(course.id, place, start, event);
   };
   const onPointerUp = (event) => {
-    const state = press.current;
     light('data-press', false);
-    if (!state) return;
-    clearTimeout(state.timer);
     // A long press that did not become a drag: the menu.
-    if (state.touch && state.ready && !state.done) {
-      state.done = true;
-      onMenu?.(course.id, place, [event.clientX, event.clientY]);
-    }
+    if (press.up()) onMenu?.(course.id, place, [event.clientX, event.clientY]);
   };
   // The click a drag or a long press ends with opens nothing.
-  const onClick = () => {
-    const state = press.current;
-    press.current = null;
-    if (state?.done) return;
-    pick();
+  const onClick = (event) => {
+    if (press.click(event)) pick();
   };
   const onContextMenu = (event) => {
     if (!onMenu) return;
@@ -706,7 +793,7 @@ const SlabHit = ({ course, place, scale, hit, look, stageRef, lifted, picked, on
     const r = event.currentTarget.getBoundingClientRect();
     // From the keyboard (the context-menu key, Shift + F10): at the book.
     const at = event.clientX || event.clientY ? [event.clientX, event.clientY] : [r.left + r.width / 2, r.top + r.height / 2];
-    if (press.current) press.current.done = true;
+    press.spend();
     onMenu(course.id, place, at);
   };
   return (
@@ -720,9 +807,8 @@ const SlabHit = ({ course, place, scale, hit, look, stageRef, lifted, picked, on
         className="room-stage-slab-hit"
         data-course-id={course.id}
         aria-label={`${course.name}${count ? `, ${count} ${count === 1 ? 'note' : 'notes'}` : ''}${near ? ', brought closer' : ''}`}
-        aria-haspopup="menu"
         aria-keyshortcuts="Alt+Enter Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
-        style={hit ? hitStyle(hit, [x, y], scale) : { clipPath: clipPolygon(outline, box, scale) }}
+        style={hit ? hitStyle(hit, [x, y], scale) : clipStyle(outline, box, scale)}
         onClick={onClick}
         onKeyDown={onKeyDown}
         onContextMenu={onContextMenu}
@@ -735,8 +821,7 @@ const SlabHit = ({ course, place, scale, hit, look, stageRef, lifted, picked, on
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={() => {
-          clearTimeout(press.current?.timer);
-          press.current = null;
+          press.cancel();
           light('data-press', false);
         }}
         onFocus={(event) => event.currentTarget.matches(':focus-visible') && light('data-focus', true)}
@@ -752,7 +837,7 @@ const SlabHit = ({ course, place, scale, hit, look, stageRef, lifted, picked, on
       </div>
     </div>
   );
-};
+});
 
 // The frame's picture as a mood's stack draws it (under that mood's light on it and its frame):
 // the student's own picture, or the bare backing board. The picture's controls (add, change, take
@@ -989,7 +1074,7 @@ const inset = (quad, dx, dy) => {
   return quad.map(([qx, qy]) => [cx + (qx - cx) * sx, cy + (qy - cy) * sy]);
 };
 
-const DashedSlab = ({ place, scale, label, hit, onClick, className = '' }) => {
+const DashedSlab = memo(function DashedSlab({ place, scale, label, hit, onClick, className = '' }) {
   const spine = scene.quads.spines[place];
   const outline = inset(spine, 3, 2.5);
   const outer = quadBox(spine);
@@ -1006,11 +1091,12 @@ const DashedSlab = ({ place, scale, label, hit, onClick, className = '' }) => {
       <button
         type="button"
         className="room-stage-dashed-hit"
-        style={hit ? hitStyle(hit, [x, y], scale) : { inset: 0, clipPath: clipPolygon(spine, box, scale) }}
+        style={hit ? hitStyle(hit, [x, y], scale) : clipStyle(spine, box, scale, true)}
         onClick={onClick}
         aria-label={label}
       />
-      <OnQuad quad={spine} origin={[x, y]} scale={scale} className="room-stage-dashed-label" as="span" style={ghost ? undefined : { fontSize: px(size) }}>
+      {/* The drawn words are the button's name already: read once (run desk1, D9). */}
+      <OnQuad quad={spine} origin={[x, y]} scale={scale} className="room-stage-dashed-label" as="span" aria-hidden="true" style={ghost ? undefined : { fontSize: px(size) }}>
         {/* The ghost of the next book wears its label (a dark morocco plate, gilt), and so does "and
             N more": their words hold on whatever is behind the place, the wall, the window or its
             frame (round seven measured "and 7 more" without it at 1.15:1 on its worst 5% by day,
@@ -1019,7 +1105,7 @@ const DashedSlab = ({ place, scale, label, hit, onClick, className = '' }) => {
       </OnQuad>
     </div>
   );
-};
+});
 
 const Row = ({ note, color, stamp, onOpen }) => (
   <li>
@@ -1114,11 +1200,15 @@ const Pages = memo(function Pages({ notes, colorOf, stamp, onOpen, page, scale, 
 const StageCandle = ({ lit, onToggle, still, scale, candle = 'C0', nightKey = 'night', onDrag, onMenu }) => {
   const rootRef = useRef(null);
   const videoRef = useRef(null);
-  const press = useRef(null);
+  const press = usePress();
   const [wisp, setWisp] = useState(0);
+  // No film where it will not play (run desk1, D10): by day, with motion still or reduced, or when the
+  // browser asks to save data, it is not fetched at all (it was, 48 kB, with the room's pictures) and
+  // the render's own flame stands; lighting the candle fetches it.
+  const filmed = lit && !still && !saveData();
   useFlameFilm(videoRef, {
     night: lit,
-    still,
+    still: !filmed,
     onShow: (shown) => {
       const root = rootRef.current;
       if (!root) return;
@@ -1138,53 +1228,29 @@ const StageCandle = ({ lit, onToggle, still, scale, candle = 'C0', nightKey = 'n
   const k = (wy - ty) / (FILM.wickY - FILM.tipY);
   const film = { left: wx - FILM.wickX * k, top: wy - FILM.wickY * k, width: FILM.width * k, height: FILM.height * k };
   const stillFlame = (scene.images[nightKey] || scene.images.night).flame;
-  const toggle = () => {
+  const toggle = (event) => {
     // The click a drag or a long press ends with lights nothing.
-    const state = press.current;
-    press.current = null;
-    if (state?.done) return;
+    if (!press.click(event)) return;
     if (lit) setWisp((n) => n + 1);
     onToggle?.();
   };
   // Taken like a book (6 css px with the pointer down; on touch after a 350ms long press, which opens
   // its menu if it does not move); a right-click opens its menu (its places by name).
   const onPointerDown = (event) => {
-    if (event.button !== 0 || !onDrag) return;
-    const touch = event.pointerType === 'touch';
-    const state = { x: event.clientX, y: event.clientY, pointer: event.pointerId, touch, ready: !touch, timer: 0, done: false };
-    if (touch) {
-      state.timer = setTimeout(() => {
-        state.ready = true;
-      }, LONG_PRESS_MS);
-    }
-    press.current = state;
+    if (onDrag) press.down(event);
   };
   const onPointerMove = (event) => {
-    const state = press.current;
-    if (!state || state.done || state.pointer !== event.pointerId) return;
-    if (!isDrag(event.clientX - state.x, event.clientY - state.y)) return;
-    clearTimeout(state.timer);
-    if (!state.ready) {
-      press.current = null;
-      return;
-    }
-    state.done = true;
-    onDrag([state.x, state.y]);
+    const start = press.move(event);
+    if (start) onDrag(start);
   };
   const onPointerUp = (event) => {
-    const state = press.current;
-    if (!state) return;
-    clearTimeout(state.timer);
-    if (state.touch && state.ready && !state.done) {
-      state.done = true;
-      onMenu?.([event.clientX, event.clientY]);
-    }
+    if (press.up()) onMenu?.([event.clientX, event.clientY]);
   };
   const onContextMenu = (event) => {
     if (!onMenu) return;
     event.preventDefault();
     const r = event.currentTarget.getBoundingClientRect();
-    if (press.current) press.current.done = true;
+    press.spend();
     onMenu(event.clientX || event.clientY ? [event.clientX, event.clientY] : [r.left + r.width / 2, r.top + r.height / 2]);
   };
   return (
@@ -1195,7 +1261,7 @@ const StageCandle = ({ lit, onToggle, still, scale, candle = 'C0', nightKey = 'n
         muted
         loop
         playsInline
-        preload="auto"
+        preload={filmed ? 'auto' : 'none'}
         disablePictureInPicture
         tabIndex={-1}
         aria-hidden="true"
@@ -1220,17 +1286,12 @@ const StageCandle = ({ lit, onToggle, still, scale, candle = 'C0', nightKey = 'n
       <button
         type="button"
         className="room-stage-candle-button"
-        aria-pressed={lit}
         aria-label={lit ? 'Candle lit. Blow out for daylight' : 'Candle out. Light it for the evening'}
-        aria-haspopup={onMenu ? 'menu' : undefined}
         onClick={toggle}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => {
-          clearTimeout(press.current?.timer);
-          press.current = null;
-        }}
+        onPointerCancel={press.cancel}
         onContextMenu={onContextMenu}
         style={{ left: px(bx * scale), top: px((ty - 6) * scale), width: px((bx1 - bx) * scale), height: px((by1 - ty + 6) * scale) }}
       />
@@ -1483,9 +1544,28 @@ const DeskStage = ({
       { key: 'open', label: 'Open', run: openIt },
     ];
   };
-  // The frame's opening, where its picture's controls sit; covered when a book stands before its middle.
+  // The latest handlers behind names that never change (run desk1, D4), so the books' hit areas and
+  // the dashed places render again only when they themselves change.
+  const latest = useRef({});
+  useEffect(() => {
+    latest.current = { onPick, onMove, onArrange, onMore, onNewCourse, startDrag, openMenu };
+  });
+  const act = useMemo(
+    () => ({
+      pick: (...args) => latest.current.onPick?.(...args),
+      move: (...args) => latest.current.onMove?.(...args),
+      arrange: (...args) => latest.current.onArrange?.(...args),
+      drag: (...args) => latest.current.startDrag?.(...args),
+      menu: (...args) => latest.current.openMenu?.(...args),
+      more: () => latest.current.onMore?.(),
+      newCourse: () => latest.current.onNewCourse?.(),
+    }),
+    [],
+  );
+  // The frame's opening, where its picture's controls sit; left out when a pile stands before the
+  // frame with its top above the frame's lower rule (deskStage.js frameHidden).
   const opening = quadBox(scene.quads.frameOpening);
-  const frameCovered = books.some(({ place }) => !isNearPlace(place) && pointInPolygon(silhouette(place), [opening[0] + opening[2] / 2, opening[1] + opening[3] / 2]));
+  const frameCovered = useMemo(() => frameHidden(scene.quads, places.books), [places]);
   // The stage's origin in the window (its backdrop is fixed at the window's origin: desk.css) and the
   // device pixel ratio, for the lettering's origin on whole device pixels (Gilt).
   const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -1501,6 +1581,9 @@ const DeskStage = ({
           <div
             ref={stageRef}
             className={`room-stage is-${shown}${ready ? ' is-ready' : ''}`}
+            // Unseen until its pictures are in (desk.css: opacity 0), and until then out of reach too:
+            // no click, no focus, nothing read out (run desk1, D7).
+            inert={!ready}
             data-room={room}
             data-swapping={swapping ? '' : undefined}
           data-leaving={leaving || undefined}
@@ -1532,8 +1615,9 @@ const DeskStage = ({
             <div className="room-stage-overlay">
               {/* The frame's picture's controls (SceneSlot: add, change, take it down), drawn clear: the
                   stacks draw the picture. Under the books' hit areas, which may reach over it. Not there
-                  at all when pile R stands in front of the frame's middle (from R9, run three: its "+"
-                  floated over the books' spines at 1:1). */}
+                  at all once pile R's top is above the frame's lower rule (from its ninth book; ROUND7-BRIEF
+                  §9: until its tenth the "+" stood on a spine, and at thirty courses it was lettered on
+                  one at 1.06:1). */}
               {!frameCovered && <div
                 className="room-stage-picture is-slot"
                 style={{
@@ -1556,21 +1640,21 @@ const DeskStage = ({
                       place={place}
                       scale={scale}
                       hit={hits[place]}
-                      look={spineLook(scene, room, place, byId.get(id).color)}
+                      room={room}
                       stageRef={stageRef}
                       lifted={liftedId === id}
                       picked={pickedId === id}
-                      onPick={onPick}
-                      onMove={onMove}
-                      onArrange={onArrange}
-                      onDrag={onArrange ? startDrag : undefined}
-                      onMenu={onArrange ? openMenu : undefined}
+                      onPick={act.pick}
+                      onMove={onMove ? act.move : undefined}
+                      onArrange={onArrange ? act.arrange : undefined}
+                      onDrag={onArrange ? act.drag : undefined}
+                      onMenu={onArrange ? act.menu : undefined}
                     />
                   ) : null,
                 )}
-                {places.more && <DashedSlab place={places.more.place} scale={scale} hit={hits[places.more.place]} label={`and ${places.more.count} more`} onClick={onMore} />}
+                {places.more && <DashedSlab place={places.more.place} scale={scale} hit={hits[places.more.place]} label={`and ${places.more.count} more`} onClick={act.more} />}
                 {/* "+ New course": the ghost of the next book, in gilt dash, where it will lie. */}
-                {ghost && <DashedSlab place={ghost} scale={scale} hit={hits[ghost]} label="+ New course" onClick={onNewCourse} className="is-new" />}
+                {ghost && <DashedSlab place={ghost} scale={scale} hit={hits[ghost]} label="+ New course" onClick={act.newCourse} className="is-new" />}
               </div>
 
               {/* A dragged book and where it may go: above the books' hit areas, taking no pointer. */}

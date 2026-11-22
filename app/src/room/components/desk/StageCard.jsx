@@ -27,7 +27,8 @@ const StageCard = ({ className = '', width, size }) => {
     timer.current = setTimeout(() => setFiled(false), 2400);
     addInboxEntry(firebaseUser.uid, line).catch((err) => {
       console.error('Could not file that line', err);
-      setText(line);
+      // Back into the field, unless something has been typed there since (run desk1, D11).
+      setText((now) => now || line);
       setFiled(false);
     });
   };

@@ -6,6 +6,11 @@ import { useEffect, useRef } from 'react';
 // it tells `onShow(true)`, and the drawn (or rendered) flame steps aside; if it cannot play,
 // `onShow(false)` and that flame stays. The film is a flame on black, screened where it plays.
 
+// Whether the browser asks to save data (the 1x pictures then, and no film: DeskStage, Desk).
+export const saveData = () =>
+  typeof navigator !== 'undefined' &&
+  (Boolean(navigator.connection?.saveData) || Boolean(window.matchMedia?.('(prefers-reduced-data: reduce)').matches));
+
 export const useFlameFilm = (videoRef, { night, still, onShow }) => {
   const showRef = useRef(onShow);
   useEffect(() => {

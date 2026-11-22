@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/authState';
 import { addInboxEntry, createPageNote, getNoteAsOf } from '../services/library';
@@ -124,6 +124,9 @@ const SearchSheet = ({ onAddCourse }) => {
   const [texts, setTexts] = useState(() => new Map(bodies));
   const [failed, setFailed] = useState(() => new Set());
   const [active, setActive] = useState(0);
+  const listRef = useRef(null);
+  // Whether the chosen row was last moved by the pointer (see the scroll effect below).
+  const byPointerRef = useRef(false);
 
   const uid = firebaseUser?.uid;
   const newest = useMemo(() => [...notes].sort((a, b) => noteTime(b) - noteTime(a)), [notes]);
@@ -294,6 +297,15 @@ const SearchSheet = ({ onAddCourse }) => {
 
   const current = Math.min(active, Math.max(rows.length - 1, 0));
 
+  // The list scrolls inside the sheet (room.css caps its height), so the chosen row is brought
+  // into view when the KEYS move it or a new query resets it. Before, ↓ past the last visible
+  // row chose rows nobody could see. Not when the pointer chose it: that row is under the
+  // pointer already, and scrolling would slide the list beneath a mouse that is not moving.
+  useEffect(() => {
+    if (byPointerRef.current) return;
+    listRef.current?.querySelector('.room-search-row.is-active')?.scrollIntoView?.({ block: 'nearest' });
+  }, [current, trimmed]);
+
   const choose = (row) => {
     if (!row) return;
     closeRoomSearch();
@@ -320,6 +332,7 @@ const SearchSheet = ({ onAddCourse }) => {
       event.preventDefault();
       if (!rows.length) return;
       const step = event.key === 'ArrowDown' ? 1 : -1;
+      byPointerRef.current = false;
       setActive((current + step + rows.length) % rows.length);
     } else if (event.key === 'Enter') {
       event.preventDefault();
@@ -342,28 +355,51 @@ const SearchSheet = ({ onAddCourse }) => {
         value={query}
         onChange={(event) => {
           setQuery(event.target.value);
+          byPointerRef.current = false;
           setActive(0);
         }}
         onKeyDown={onKeyDown}
         placeholder="Search, or say what to do"
         aria-label="Search or run an action"
+        // A combobox: focus stays in the field, and the chosen row is named to assistive tech
+        // through aria-activedescendant as the arrows move it.
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={rows.length > 0}
+        aria-controls="room-search-results"
+        aria-activedescendant={rows.length ? `room-search-option-${current}` : undefined}
         autoFocus
       />
 
-      {status && <p className="room-stamp room-search-status">{status}</p>}
+      {status && (
+        <p className="room-stamp room-search-status" role="status">
+          {status}
+        </p>
+      )}
 
       {trimmed && !rows.length && !(wantBodies && unread.length) && (
         <p className="room-setting-copy room-search-none">Nothing here matches “{trimmed}”.</p>
       )}
 
       {rows.length > 0 && (
-        <ul className="room-search-list" role="listbox" aria-label="Results">
+        <ul className="room-search-list" role="listbox" id="room-search-results" aria-label="Results" ref={listRef}>
           {rows.map((row, i) => (
-            <li key={row.key} role="option" aria-selected={i === current}>
+            // The row itself is the option (an option may not CONTAIN a button).
+            <li key={row.key} role="presentation">
               <button
                 type="button"
+                role="option"
+                id={`room-search-option-${i}`}
+                aria-selected={i === current}
                 className={`room-search-row${i === current ? ' is-active' : ''}${row.kind === 'action' ? ' is-action' : ''}`}
-                onMouseEnter={() => setActive(i)}
+                // On MOVE, not on enter: a list that re-renders or scrolls under a resting
+                // pointer "enters" a new row without anyone moving, and took the choice off
+                // the top result.
+                onMouseMove={() => {
+                  if (i === current) return;
+                  byPointerRef.current = true;
+                  setActive(i);
+                }}
                 onClick={() => choose(row)}
               >
                 {row.kind === 'action' && (
