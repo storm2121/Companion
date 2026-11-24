@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/authState';
-import { addInboxEntry, createPageNote, getNoteAsOf } from '../services/library';
-import { pageText, startingBlocks } from './pageBlocks';
+import { addInboxEntry, getNoteAsOf } from '../services/library';
+import { pageText } from './pageBlocks';
+import { startNote } from './startNote';
 import {
   closeRoomSearch,
   courseFromPath,
   indexedText,
   isSearchOpen,
   matchActions,
+  noteCourseFor,
   searchDesk,
   subscribeSearch,
   toggleRoomSearch,
@@ -16,6 +18,7 @@ import {
 import { cleanTag } from './noteTags';
 import { noteStamp, noteTime, useRoomDesk } from './roomData';
 import { pageActions } from './roomCommands';
+import { openCourseOnDesk } from './deskFilm';
 import { homeFor, homeSwitch, MOOD_CANDLELIGHT, MOOD_RAIN, resolveRoomPrefs } from './roomPrefs';
 import { sayInRoom } from './roomUndo';
 import CourseSheet from './components/CourseSheet';
@@ -139,13 +142,10 @@ const SearchSheet = ({ onAddCourse }) => {
   const newest = useMemo(() => [...notes].sort((a, b) => noteTime(b) - noteTime(a)), [notes]);
   const colorOf = useMemo(() => new Map(courses.map((course) => [course.id, course.color])), [courses]);
 
-  // The course "New note" means: the one on screen, else the one written in last.
+  // The course "New note" means: the one on screen, else the one written in last (deskSearch.js
+  // noteCourseFor, which the desk's small notebook uses too).
   const hereId = courseFromPath(location.pathname);
-  const course =
-    courses.find((item) => item.id === hereId) ||
-    courses.find((item) => item.id === newest[0]?.classId) ||
-    courses[0] ||
-    null;
+  const course = noteCourseFor(courses, newest, hereId, noteTime);
 
   const trimmed = query.trim();
   const tagMode = trimmed.startsWith('#');
@@ -201,15 +201,9 @@ const SearchSheet = ({ onAddCourse }) => {
 
   const go = (path, options) => navigate(path, options);
 
-  // Like the course page's "New note": made on this device, opened at once, online or not.
+  // Like the course page's "New note": made on this device, opened at once, online or not (startNote.js).
   const newNote = (courseId, title = '') => {
-    if (!uid || !courseId) return;
-    const { id, saved } = createPageNote(uid, courseId, {
-      title: title.trim().slice(0, 120) || 'Untitled',
-      blocks: startingBlocks(),
-    });
-    saved.catch((err) => console.error('The server refused that note', err));
-    navigate(`/room/note/${courseId}/${id}`);
+    startNote(uid, courseId, navigate, title);
   };
 
   const fileInInbox = (text) => {
@@ -340,6 +334,8 @@ const SearchSheet = ({ onAddCourse }) => {
       return;
     }
     if (row.kind === 'course') {
+      // On the desk, its book opens it (round eight: the same film as a click on the book).
+      if (openCourseOnDesk(row.course.id)) return;
       navigate(`/room/course/${row.course.id}`);
       return;
     }

@@ -52,6 +52,13 @@ const RAIN_FALL = [{ transform: 'translateY(-12%)' }, { transform: 'translateY(1
 // CSS cannot stop these (room.css's Still and reduced-motion rules reach CSS animations only),
 // so both are honoured here. Stopped, a streak rests above the glass, out of sight, exactly
 // where `animation: none` used to leave it.
+// Owner fixes 3 (2026-11-23): and they fall only while the backdrop is DRAWN. Under the desk and
+// under an open book the backdrop is `display: none` (desk.css, book.css), which stops its CSS
+// animations but not these: 28 streaks kept "running" on nothing, and the browser ran a whole
+// frame for them at the screen's rate (measured at rest on a 144 Hz screen: 144 style recalcs a
+// second and 61 to 65 ms of main-thread work per second with the desk showing, 27 to 35 ms per
+// second with a book open; with them paused 4 ms and 0). They are paused while the backdrop has
+// no box and go on from where they were when it has one again.
 const useWindowRain = (still) => {
   const boxRef = useRef(null);
   useEffect(() => {
@@ -59,6 +66,8 @@ const useWindowRain = (still) => {
     if (!box || still || typeof box.animate !== 'function') return undefined;
     const quiet = window.matchMedia?.('(prefers-reduced-motion: reduce)');
     let falling = [];
+    const watched = typeof IntersectionObserver === 'function';
+    let drawn = !watched;
     const stop = () => {
       falling.forEach((animation) => animation.cancel());
       falling = [];
@@ -73,11 +82,21 @@ const useWindowRain = (still) => {
           iterations: Infinity,
         }),
       ).filter(Boolean);
+      if (!drawn) falling.forEach((animation) => animation.pause());
     };
     start();
+    // (An element with no box never intersects, and the observer answers in the frame it gets one.)
+    const seen = watched
+      ? new IntersectionObserver((entries) => {
+          drawn = entries[entries.length - 1].isIntersecting;
+          falling.forEach((animation) => (drawn ? animation.play() : animation.pause()));
+        })
+      : null;
+    seen?.observe(box.closest('.room-atmos') || box);
     quiet?.addEventListener?.('change', start);
     return () => {
       quiet?.removeEventListener?.('change', start);
+      seen?.disconnect();
       stop();
     };
   }, [still]);

@@ -123,6 +123,17 @@ export const matchActions = (query, actions = [], limit = 5) => {
 };
 
 // The course a room path is about — a course page or one of its notes — or ''.
+// The course a new note goes to when no course is chosen (Ctrl K's "New note in …", and on the desk's table
+// the small notebook): the one on the screen, else the one written in last, else the first; null with none.
+// `notes` carry `classId` and the time they were written (`time(note)`, ms).
+export const noteCourseFor = (courses, notes, hereId = '', time = () => 0) => {
+  const list = Array.isArray(courses) ? courses : [];
+  const here = hereId ? list.find((item) => item.id === hereId) : null;
+  if (here) return here;
+  const newest = [...(Array.isArray(notes) ? notes : [])].sort((a, b) => time(b) - time(a))[0];
+  return list.find((item) => item.id === newest?.classId) || list[0] || null;
+};
+
 export const courseFromPath = (pathname = '') => {
   const found = /^\/room\/(?:course|note)\/([^/?#]+)/.exec(String(pathname));
   if (!found) return '';

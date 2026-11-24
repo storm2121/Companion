@@ -41,3 +41,7 @@ LifeCycle.md
 ops-todo.md
 security_best_practices_report.md
 .codex-backups/
+
+# The desk's production pictures (app/scripts/desk-pictures.mjs copies them here, ~180 MB): kept out of git
+# until the owner decides whether they go in.
+app/public/assets/desk-p1/

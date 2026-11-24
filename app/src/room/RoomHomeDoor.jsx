@@ -17,7 +17,9 @@ import { HOME_DESK, homeFor } from './roomPrefs';
 // of this visit with one line under the top line, and the error is logged: nobody lands on a blank
 // Home. The saved choice is left alone. Choosing a Home again lets the desk try again.
 
-const RoomDesk = lazy(() => import('./RoomDesk'));
+// Round eight, run 3: the desk's own door (DeskHome: the production table on wide windows when its pictures
+// are there, else round seven's RoomDesk).
+const RoomDesk = lazy(() => import('./DeskHome'));
 
 const DESK_FAILED = 'The desk could not open, so this is Home as it was.';
 

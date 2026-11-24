@@ -224,6 +224,28 @@ html[data-design='room'][data-motion='still'] *::after {
   padding: 26px var(--room-gutter) 48px;
 }
 
+/* RoomLayout's two slots (Home's page, every other page): no box of their own, so a page lays out as
+   it always did. Under the desk while its book opens, a course page is mounted unseen (round eight). */
+.room-home-slot,
+.room-page-slot {
+  display: contents;
+}
+
+/* (Its parts made unseen one by one: hiding the slot, an inherited change, restyled the whole page.) */
+.room-page-slot[data-under] > * {
+  opacity: 0;
+}
+
+/* Owner fixes 2: a book's address reached without the desk (RoomLayout data-book-wait): until the book is whole, no
+   weather and no "Opening..." line: the room's flat ground and the top line, then the book. */
+html[data-book-wait] .room-atmos {
+  display: none;
+}
+
+html[data-book-wait] .room-page-slot > .room-loading {
+  visibility: hidden;
+}
+
 /* ── Atmosphere ───────────────────────────────────────────────────────────────
    Absolutely-positioned, pointer-events:none siblings. The lamp glow is the only
    gradient in the entire design.                                               */

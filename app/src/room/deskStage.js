@@ -7,6 +7,7 @@
 // its title is lettered on its spine and how much each notebook page holds.
 
 import { contrast, oklchOf } from './deskLayout.js';
+import { FILM_TONES, coverLines } from './deskFilm.js';
 
 // The render's own px (scene.json's 1x): a NATIVE frame of 1800 x 1080 and inside it the DESIGN
 // CROP, what a 1440 x 810 window shows (centred across; its offset down the frame is scene.json's).
@@ -606,6 +607,33 @@ export const dragTargets = (arrangement, id) => {
   return out;
 };
 
+// A book taken off its pile while it is dragged (round eight, run 2): the arrangement as the room shows
+// it meanwhile, the books above it settled one place down (a near book leaves nothing to settle). The
+// book itself has no place in it.
+export const liftOut = (arrangement, id) => {
+  const place = arrangement?.map?.[id];
+  if (!place) return arrangement;
+  const side = sideOf(place);
+  const level = levelOf(place);
+  const onPile = !NEAR_SET.has(place);
+  const map = {};
+  Object.entries(arrangement.map).forEach(([key, p]) => {
+    if (key === id) return;
+    map[key] = onPile && !NEAR_SET.has(p) && sideOf(p) === side && levelOf(p) > level ? `${side}${levelOf(p) - 1}` : p;
+  });
+  return { ...arrangement, map, books: (arrangement.books || []).filter((b) => b.id !== id).map((b) => ({ id: b.id, place: map[b.id] })), changed: false };
+};
+
+// An arrangement from a map of places (a move announced before it is saved), the rest as `base`.
+export const arrangementFrom = (map, base) => ({ ...(base || {}), map, books: Object.keys(map).map((id) => ({ id, place: map[id] })), changed: false });
+
+// One key for a map of places (whatever its keys' order).
+export const placesKey = (map) =>
+  Object.keys(map || {})
+    .sort()
+    .map((id) => `${id}:${map[id]}`)
+    .join(',');
+
 // The move a drop on `target` (a dragTargets place) makes: { map, from } or null (its own place).
 export const moveTo = (arrangement, id, target, from = {}) => {
   const place = arrangement.map[id];
@@ -724,6 +752,24 @@ export const spineLook = (scene, mood, place, colour) => {
     cover: toHex(tone.map((v, i) => v * tint[i])),
     gilt: toHex(gilts.title || [0.79, 0.64, 0.36]),
     contrast: { title: onLabel('title'), count: onLabel('count') },
+  };
+};
+
+// A book as the round-eight film draws it (deskFilmRun.js), from what the stage draws at its place in
+// that mood: the leather as drawn there (spineLook's cover: the neutral render's tone times the course's
+// dye), the label's leather as drawn (its tone times its dye), the gilt's colour (the caller adds the
+// place's gilt strip), the title on one line or two; the page, endpaper and ground by the mood.
+export const filmLook = (scene, mood, place, course) => {
+  const look = spineLook(scene, mood, place, course.color);
+  const tone = scene.labelTone?.[mood]?.[place]?.title || [0.12, 0.1, 0.09];
+  const dye = scene.labelDyes?.[mood]?.[labelOf(leatherOf(course.color))] || [1, 1, 1];
+  return {
+    cover: look.cover,
+    label: toHex(tone.map((v, i) => v * dye[i])),
+    gilt: look.gilt,
+    title: course.name,
+    lines: coverLines(course.name),
+    ...(isNightKey(mood) ? FILM_TONES.night : FILM_TONES.day),
   };
 };
 

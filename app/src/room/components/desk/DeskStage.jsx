@@ -1,27 +1,25 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import SceneSlot from '../SceneSlot';
-import { Dot } from '../primitives';
-import SheetTags from '../SheetTags';
 import scene from '../../assets/desk/scene.json';
-import { useAuth } from '../../../context/authState';
-import { clipPolygon, quadBox, quadMatrix3d, quadSize, quadTransform } from '../../deskProject';
+import { clipPolygon, quadBox, quadSize } from '../../deskProject';
 import {
-  LONG_PRESS_MS,
-  STAGE_TYPE,
   SPINE_BASE,
   arrangePiles,
   candlePlaces,
   candleRing,
+  arrangementFrom,
   dragTargets,
+  filmLook,
+  liftOut,
+  placesKey,
   frameHidden,
   isNightKey,
-  isDrag,
   isNearPlace,
   pickTarget,
   fitSpineCount,
   fitSpineTitle,
   ghostPlace,
-  giltSmall,
   moreSize,
   pageCapacity,
   pictureDensity,
@@ -32,8 +30,33 @@ import {
   stageType,
 } from '../../deskStage';
 import { textDirection } from '../../deskLayout';
+import { getFilm, nearPose, pilePose, setDeskOpener, setMoveAnnouncer, stageCamera } from '../../deskFilm';
+import { dropPreparedFilm, filmRunning, openFilm, prepareFilm, prepareGrain, prepareHeld, prepareRoomPictures, warmFilm, warmRoomOnce } from '../../deskFilmRun';
+import { bookLight, bookShows, getDeskBook } from '../../deskBook';
+import { heldFit } from '../../deskBookPages';
+import { isSearchOpen, subscribeSearch } from '../../deskSearch';
 import StageCard from './StageCard';
-import { saveData, useFlameFilm } from './useFlameFilm';
+import { saveData } from './useFlameFilm';
+// Round eight, run 3: the parts both stages draw with (moved there unchanged; the production table uses them too).
+import { DragTargets, Gilt, Impressions, OnQuad, Pages, StageCandle, StageMenu, StagePicture } from './stageParts';
+import {
+  GLIDE_EASE,
+  GLIDE_MS,
+  PLACING_OPACITY,
+  SETTLE_GLIDE_MS,
+  SETTLE_MS,
+  StageSnap,
+  clipStyle,
+  hitStyle,
+  landing,
+  moveCss,
+  once,
+  px,
+  quietNow,
+  typeVars,
+  unionBox,
+  usePress,
+} from './stageKit';
 
 // The desk as Blender rendered it (prototype Home, RoomDesk on wide screens). One seated
 // camera (room-harness/blender): the empty room (its table, its window onto a photographed town,
@@ -74,19 +97,7 @@ import { saveData, useFlameFilm } from './useFlameFilm';
 // mid-swap turns it round from where it is. Still and reduced motion: at once.
 
 const FILES = import.meta.glob('../../assets/desk/*.webp', { eager: true, query: '?url', import: 'default' });
-// The flame's film: with an alpha channel for the stage (flame-stage.webm, drawn plainly: a screened
-// film made the compositor redraw the whole stage for each of its frames), the flow desk's screened
-// film where that will not play (Safari: flame.mp4, screened).
-const FLAME = {
-  webm: new URL('../../assets/desk/flame-stage.webm', import.meta.url).href,
-  mp4: new URL('../../assets/desk/flame.mp4', import.meta.url).href,
-};
 const file = (name) => FILES[`../../assets/desk/${name}`];
-// Safari plays a VP9 film but not its alpha (a black box): there the screened mp4.
-const ALPHA_FILM = typeof navigator === 'undefined' || !/^((?!chrome|chromium|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent);
-
-// The film's frame (120 x 240): its wick at (62, 225), its tip near y 35.
-const FILM = { width: 120, height: 240, wickX: 62, wickY: 225, tipY: 35 };
 
 // Fixed sizes the words are laid out at, then carried onto their quads (the stage scales them).
 // Laid out at the left page's own size at 1x (its mean edges), so a 22px greeting is 22px in the
@@ -96,143 +107,8 @@ const PAGE = (({ width, height }) => ({ width: Math.round(width), height: Math.r
 const SCRAP = (({ width, height }) => ({ width: Math.round(width), height: Math.round(height) }))(quadSize(scene.quads.scrap));
 // The card's padding across (desk.css .room-stage-scrap-paper).
 const CARD_PAD = 14;
-
-const px = (n) => `${Math.round(n * 100) / 100}px`;
-
-// Every word kind's size at this scale (deskStage.js stageType: max(its own, 13 css px)), for
-// desk.css: --room-stage-type-<kind>.
-const typeVars = (scale) =>
-  Object.fromEntries(Object.keys(STAGE_TYPE).map((kind) => [`--room-stage-type-${kind.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`, px(stageType(kind, scale))]));
-
-// scene.json never changes: what is worked out from a place alone is worked out once.
-const once = (make) => {
-  const kept = new Map();
-  return (key) => {
-    if (!kept.has(key)) kept.set(key, make(key));
-    return kept.get(key);
-  };
-};
-// A style made from a polygon, kept while the polygon, the scale and the origin are the same (run
-// desk1, D4: every render of the stage built every book's box and clip string again, twenty-four
-// polygons and the dashed places; the polygons themselves are kept from render to render, the hit
-// areas by DeskStage's useMemo and the scene's outlines for good).
-const keptStyle = (store, polygon, scale, x, y, make) => {
-  const was = store.get(polygon);
-  if (was && was.scale === scale && was.x === x && was.y === y) return was.style;
-  const style = make();
-  store.set(polygon, { scale, x, y, style });
-  return style;
-};
-const HIT_STYLES = new WeakMap();
-const CLIP_STYLES = new WeakMap();
-// A hit area (a polygon in stage px, deskStage.js pileHits) as a button's box and clip, relative
-// to its holder's box origin [x, y].
-const hitStyle = (polygon, origin, scale) =>
-  keptStyle(HIT_STYLES, polygon, scale, origin[0], origin[1], () => {
-    const box = quadBox(polygon);
-    return {
-      left: px((box[0] - origin[0]) * scale),
-      top: px((box[1] - origin[1]) * scale),
-      width: px(box[2] * scale),
-      height: px(box[3] * scale),
-      clipPath: clipPolygon(polygon, box, scale),
-    };
-  });
-// A whole holder clipped to a polygon (`filling`: the button fills its holder).
-const clipStyle = (polygon, box, scale, filling = false) =>
-  keptStyle(CLIP_STYLES, polygon, scale, box[0], box[1], () => ({ ...(filling ? { inset: 0 } : null), clipPath: clipPolygon(polygon, box, scale) }));
-
-// A press on a book or on the candle, from the pointer going down to the click it may end with: it
-// becomes a drag 6 css px from where it went down (on touch only after the long press), a long press
-// that did not move asks for the menu, and the click either ends with opens nothing.
-// The pointer may come up anywhere, off the thing too, where no click follows (run desk1, D1: the
-// press then stayed for good, so the next bare hover 6px from the old point took the book with no
-// button down, and after a drag that ended off the book the next Enter on it was swallowed as "the
-// drag's click"). So the window hears the pointer come up; after that the press only waits, a
-// moment, for that click. A move with no button down ends it too.
-const CLICK_AFTER_MS = 400;
-const usePress = () => {
-  const press = useRef(null);
-  const drop = useCallback(() => {
-    const state = press.current;
-    if (!state) return;
-    clearTimeout(state.timer);
-    state.unhear();
-    press.current = null;
-  }, []);
-  useEffect(() => drop, [drop]);
-  return useMemo(
-    () => ({
-      down(event) {
-        drop();
-        if (event.button !== 0) return;
-        const touch = event.pointerType === 'touch';
-        const state = { x: event.clientX, y: event.clientY, pointer: event.pointerId, touch, ready: !touch, timer: 0, done: false, upAt: null };
-        const heard = (e) => {
-          if (e.pointerId !== state.pointer) return;
-          state.upAt = e.timeStamp;
-          state.unhear();
-        };
-        state.unhear = () => {
-          window.removeEventListener('pointerup', heard, true);
-          window.removeEventListener('pointercancel', heard, true);
-        };
-        window.addEventListener('pointerup', heard, true);
-        window.addEventListener('pointercancel', heard, true);
-        if (touch) {
-          state.timer = setTimeout(() => {
-            state.ready = true;
-          }, LONG_PRESS_MS);
-        }
-        press.current = state;
-      },
-      // A move: where the press began ([x, y]) when this move makes it a drag, else null.
-      move(event) {
-        const state = press.current;
-        if (!state || state.done || state.upAt != null || state.pointer !== event.pointerId) return null;
-        if (event.buttons === 0) {
-          drop();
-          return null;
-        }
-        if (!isDrag(event.clientX - state.x, event.clientY - state.y)) return null;
-        clearTimeout(state.timer);
-        // A touch that moved before its long press is not a drag (nor a click).
-        if (!state.ready) {
-          drop();
-          return null;
-        }
-        state.done = true;
-        return [state.x, state.y];
-      },
-      // The pointer up on the thing itself: true for a long press that did not become a drag (its menu).
-      up() {
-        const state = press.current;
-        if (!state) return false;
-        clearTimeout(state.timer);
-        if (!state.touch || !state.ready || state.done) return false;
-        state.done = true;
-        return true;
-      },
-      cancel: drop,
-      // Its menu opened (a right-click): the click that may follow opens nothing.
-      spend() {
-        if (press.current) press.current.done = true;
-      },
-      // The click: false for the one a drag or a long press ends with.
-      click(event) {
-        const state = press.current;
-        drop();
-        return !(state?.done && (state.upAt == null || event.timeStamp - state.upAt < CLICK_AFTER_MS));
-      },
-    }),
-    [drop],
-  );
-};
-const unionBox = (a, b) => {
-  const x = Math.min(a[0], b[0]);
-  const y = Math.min(a[1], b[1]);
-  return [x, y, Math.max(a[0] + a[2], b[0] + b[2]) - x, Math.max(a[1] + a[3], b[1] + b[3]) - y];
-};
+// The notebook's pages (stageParts Pages).
+const PAGE_QUADS = { L: scene.quads.pageL, R: scene.quads.pageR };
 
 // The 2x files when a stage px is drawn at 1.25 device px or more, else the 1x ones (and the 1x
 // when the browser asks to save data): deskStage.js pictureDensity.
@@ -298,6 +174,11 @@ const dayCandleOf = (place) => {
 const candleAt = (place) => {
   const c = scene.candles?.[place];
   return { points: c?.points || scene.points, box: c?.box || scene.boxes.candle };
+};
+// The render's own flame where the film cannot play (StageCandle), the room's night's.
+const stillFlameOf = (nightKey, scale) => {
+  const rec = (scene.images[nightKey] || scene.images.night).flame;
+  return rec ? <Picture rec={rec} scale={scale} className="room-stage-flame-still" /> : null;
 };
 
 // A book place's records in a mood (scene.json): a pile place's (images.slabs) or a near place's
@@ -426,22 +307,22 @@ const useMoods = (mood, books, scale, wantSurround, stageRef, arabic = false, ni
       alive = false;
     };
   }, [room, leaving, stageRef]);
+  // A mood's pictures decoded now (round eight: a press on the candle primes the other place's light,
+  // so its drop changes the room at once); its stack is mounted, unseen, once they are in.
+  const priming = useRef(new Set());
+  const prime = useCallback((m) => {
+    if (!m || !scene.images[m] || readyNow.current[m] || priming.current.has(m) || saveData()) return;
+    priming.current.add(m);
+    const { books: places, scale: at, wantSurround: sur, candle: where } = wanted.current;
+    Promise.allSettled(picturesOf(m, places, sur, where).map((rec) => decodeOne(rec, at))).then(() => {
+      priming.current.delete(m);
+      setReady((r) => (r[m] ? r : { ...r, [m]: true }));
+      if (sur) setSurroundReady((r) => (r[m] ? r : { ...r, [m]: true }));
+    });
+  }, []);
   const list = ORDER.filter((m) => m === room || m === leaving || ready[m]);
   const surroundIn = wantSurround && Object.values(surroundReady).some(Boolean);
-  return { list, room, leaving, swapping: Boolean(leaving), ready: roomReady, surroundIn, surroundOf: (m) => Boolean(surroundIn && surroundReady[m]) };
-};
-
-// Words on a quad: laid out flat at `size` (px), carried onto the quad (stage px, relative to
-// `origin`) at the stage's scale.
-const OnQuad = ({ quad, size, scale, origin = [0, 0], className, children, style, as = 'div', ...rest }) => {
-  const Tag = as;
-  const rel = quad.map(([x, y]) => [x - origin[0], y - origin[1]]);
-  const { width, height } = size || quadSize(quad);
-  return (
-    <Tag className={className} style={{ width: px(width), height: px(height), transform: quadMatrix3d(rel, width, height, scale), ...style }} {...rest}>
-      {children}
-    </Tag>
-  );
+  return { list, room, leaving, swapping: Boolean(leaving), ready: roomReady, surroundIn, surroundOf: (m) => Boolean(surroundIn && surroundReady[m]), prime };
 };
 
 // Each pile's hit areas, at least 24 css px tall at the scale (deskStage.js pileHits): its books
@@ -468,99 +349,6 @@ const silhouette = once((place) => {
   const spine = scene.quads.spines[place];
   return [top[0], top[1], spine[1], spine[2], spine[3], spine[0]];
 });
-
-// Where the stage's origin is in the page and the device pixel ratio ({ x, y, dpr }, css px), for
-// the lettering's origin on whole device pixels; null until measured.
-const StageSnap = createContext(null);
-
-// Under deskStage.js TOOLED_PX the strip lies over the place's flat gilt at this opacity: where the strip's
-// wear leaves the least gold (its alpha 0.45, post.py gilt_fill) the letter is still 85% gold.
-const SMALL_GOLD = 0.73;
-
-// A title's or a count's gilt on its label (a quad), in one mood: the gold is the place's gilt strip
-// (always its 2x file: a few KB, and the 1x one halved the wear's grain into a blur) through the
-// letters, over a pressed layer (the leather in the letters, where the gold is worn). Large on the
-// screen, the mood's impression (an SVG filter) over both, round six's tooled look; small, no filter:
-// the press one device pixel below the gold, the wear eased (deskStage.js giltSmall). Carried onto its label by a
-// 2D matrix where the label is flat enough (every spine's: deskProject.js quadTransform), its origin
-// on a whole device pixel.
-const Gilt = ({ quad, origin, scale, strip, tone, mood, size, lines, className = '', dir = 'auto' }) => {
-  const snap = useContext(StageSnap);
-  const dpr = snap?.dpr || (typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1;
-  const rel = quad.map(([x, y]) => [x - origin[0], y - origin[1]]);
-  const { width, height } = quadSize(quad);
-  const at = snap ? { x: snap.x + Math.round(origin[0] * scale * 100) / 100, y: snap.y + Math.round(origin[1] * scale * 100) / 100, dpr } : null;
-  const small = giltSmall(size, scale, dpr);
-  // The strip is the label's own size at 2x (post.py gilt_fill); where rounding a small label to
-  // whole px changed its aspect by over 1%, it covers the label instead of stretching.
-  const sw = Math.max(2, Math.round(width * 2));
-  const sh = Math.max(2, Math.round(height * 2));
-  const stretched = Math.abs(sw / sh / (width / height) - 1) > 0.01;
-  const text = lines.map((line, i) => <span key={i}>{line}</span>);
-  return (
-    <OnQuad
-      quad={quad}
-      origin={origin}
-      scale={scale}
-      className={`room-stage-gilt ${className}${small ? ' is-small' : ''}`}
-      style={{
-        transform: quadTransform(rel, width, height, scale, at),
-        filter: small ? undefined : `url(#room-stage-impress-${mood})`,
-        fontSize: px(size),
-        '--gilt-press': small ? `${Math.round((1 / (scale * dpr)) * 1000) / 1000}px` : undefined,
-      }}
-      aria-hidden="true"
-    >
-      <span className="room-stage-gilt-press" dir={dir}>
-        {text}
-      </span>
-      <span
-        className="room-stage-gilt-gold"
-        dir={dir}
-        style={{
-          backgroundImage: `url("${file(strip.x2)}")`,
-          backgroundSize: stretched ? 'cover' : undefined,
-          backgroundColor: small && tone ? `rgba(${tone.map((v) => Math.round(v * 255)).join(', ')}, ${SMALL_GOLD})` : undefined,
-        }}
-      >
-        {text}
-      </span>
-    </OnQuad>
-  );
-};
-
-// The impressions: the letters pressed into the leather, lit from the mood's light (by night the
-// candle, low on the left: the dark edge in the letters on that side, a warm catch on the other;
-// by day the window's light from above, softer). Offsets in the label's own px at 1x; light, so a
-// hairline of 1.3 px at the stage's least scale keeps its gold (at 0.6 px and 0.62 it lost half).
-const IMPRESSIONS = {
-  night: { away: [0.4, -0.2], shade: 0.38, toward: [-0.35, 0.2], catchColour: '#ffd99a', catchOpacity: 0.3 },
-  day: { away: [0.08, 0.38], shade: 0.32, toward: [-0.04, -0.3], catchColour: '#fff4dc', catchOpacity: 0.22 },
-};
-
-const Impressions = () => (
-  <svg className="room-stage-defs" width="0" height="0" aria-hidden="true" focusable="false">
-    <defs>
-      {Object.entries(IMPRESSIONS).map(([mood, f]) => (
-        <filter key={mood} id={`room-stage-impress-${mood}`} x="-5%" y="-25%" width="110%" height="150%" colorInterpolationFilters="sRGB">
-          <feOffset in="SourceAlpha" dx={f.away[0]} dy={f.away[1]} result="away" />
-          <feComposite in="SourceAlpha" in2="away" operator="out" result="near" />
-          <feFlood floodColor="#000000" floodOpacity={f.shade} />
-          <feComposite in2="near" operator="in" result="shade" />
-          <feOffset in="SourceAlpha" dx={f.toward[0]} dy={f.toward[1]} result="toward" />
-          <feComposite in="SourceAlpha" in2="toward" operator="out" result="far" />
-          <feFlood floodColor={f.catchColour} floodOpacity={f.catchOpacity} />
-          <feComposite in2="far" operator="in" result="catch" />
-          <feMerge>
-            <feMergeNode in="SourceGraphic" />
-            <feMergeNode in="shade" />
-            <feMergeNode in="catch" />
-          </feMerge>
-        </filter>
-      ))}
-    </defs>
-  </svg>
-);
 
 // A book's words on its spine at a scale: the title as it fits its label (deskStage.js fitSpineTitle:
 // one line, two, smaller, shortened, cut at a word; never more than 32 letters; never under 13 css
@@ -624,16 +412,42 @@ const slabBox = once((place) =>
 // a new place (`arriving`) they fade in over 200ms. `bare`: no shadow (the drag layer's copy).
 // `plate`: its count's plate (run three: its own picture, scene.json plate; drawn, and dyed with the
 // label's leather under its own picture as mask, only where a count is lettered on it).
-const SlabVisual = ({ course, place, mood, scale, dragging = false, arriving = false, bare = false, plate = false }) => {
+// `ghost`: a copy drawn on its own layer (a drag, a glide): each dye is cut to the book's own picture as
+// well as its mask (two mask layers, intersected), so on a layer of its own, with nothing under its soft
+// edge, no dye shows past the book as a rim (round 5B's reason for never moving the real ones).
+const ghostMask = (dyeUrl, dyeBox, rec, scale, densityScale) => {
+  const [cx, cy] = dyeBox;
+  const [x, y, w, h] = rec.box;
+  const slab = pick(rec, densityScale);
+  const at = `0px 0px, ${px((x - cx) * scale)} ${px((y - cy) * scale)}`;
+  const size = `100% 100%, ${px(w * scale)} ${px(h * scale)}`;
+  return {
+    maskImage: `url("${dyeUrl}"), url("${slab}")`,
+    WebkitMaskImage: `url("${dyeUrl}"), url("${slab}")`,
+    maskPosition: at,
+    WebkitMaskPosition: at,
+    maskSize: size,
+    WebkitMaskSize: size,
+    maskComposite: 'intersect',
+    WebkitMaskComposite: 'source-in',
+  };
+};
+
+const SlabVisual = ({ course, place, mood, scale, dragging = false, bare = false, plate = false, ghost = false }) => {
   const densityScale = useContext(DensityScale);
   const box = slabBox(place);
   const [x, y] = box;
   const rec = bookRec(mood, place);
   const tints = spineLook(scene, mood, place, course.color);
+  const maskOf = (dyeRec, dyeBox) => {
+    const url = pick(dyeRec, densityScale);
+    return ghost ? ghostMask(url, dyeBox, rec, scale, densityScale) : { maskImage: `url("${url}")`, WebkitMaskImage: `url("${url}")` };
+  };
   return (
     <div
-      className={`room-stage-slab${dragging ? ' is-dragging' : ''}${arriving ? ' is-arriving' : ''}`}
+      className={`room-stage-slab${dragging ? ' is-dragging' : ''}`}
       data-place={place}
+      data-course={course.id}
       style={{ left: px(x * scale), top: px(y * scale), width: px(box[2] * scale), height: px(box[3] * scale) }}
     >
       {rec.shadow && !bare && <Picture rec={rec.shadow} origin={[x, y]} scale={scale} className="room-stage-slab-img room-stage-slab-shadow" />}
@@ -655,8 +469,7 @@ const SlabVisual = ({ course, place, mood, scale, dragging = false, arriving = f
                 width: px(cw * scale),
                 height: px(ch * scale),
                 backgroundColor: tint,
-                maskImage: `url("${pick(rec[part], densityScale)}")`,
-                WebkitMaskImage: `url("${pick(rec[part], densityScale)}")`,
+                ...maskOf(rec[part], rec[`${part}Box`]),
               }}
             />
           );
@@ -672,8 +485,7 @@ const SlabVisual = ({ course, place, mood, scale, dragging = false, arriving = f
                 width: px(rec.plate.box[2] * scale),
                 height: px(rec.plate.box[3] * scale),
                 backgroundColor: tints.labelTint,
-                maskImage: `url("${pick(rec.plate, densityScale)}")`,
-                WebkitMaskImage: `url("${pick(rec.plate, densityScale)}")`,
+                ...maskOf(rec.plate, rec.plate.box),
               }}
             />
           </>
@@ -686,7 +498,7 @@ const SlabVisual = ({ course, place, mood, scale, dragging = false, arriving = f
 // A book's title and count in one mood's gilt, in that mood's stack (after every book). Lit (hovered,
 // focused: data-lit, data-focus, data-press, set by its hit area; lifted, picked: the classes) it
 // brightens.
-const SlabGilt = ({ place, mood, scale, words, lifted, picked, dragging = false, arriving = false }) => {
+const SlabGilt = ({ place, mood, scale, words, lifted, picked, dragging = false, courseId, flat = false }) => {
   const box = slabBox(place);
   const [x, y] = box;
   const rec = bookRec(mood, place);
@@ -696,8 +508,9 @@ const SlabGilt = ({ place, mood, scale, words, lifted, picked, dragging = false,
   if (!rec.gilt) return null;
   return (
     <div
-      className={`room-stage-slab is-gilt${lifted ? ' is-lifted' : ''}${picked ? ' is-picked' : ''}${dragging ? ' is-dragging' : ''}${arriving ? ' is-arriving' : ''}`}
+      className={`room-stage-slab is-gilt${lifted ? ' is-lifted' : ''}${picked ? ' is-picked' : ''}${dragging ? ' is-dragging' : ''}`}
       data-place={place}
+      data-course={courseId}
       style={{ left: px(x * scale), top: px(y * scale), width: px(box[2] * scale), height: px(box[3] * scale) }}
     >
       {labelQuad && title.lines.length > 0 && (
@@ -705,13 +518,14 @@ const SlabGilt = ({ place, mood, scale, words, lifted, picked, dragging = false,
           quad={labelQuad}
           origin={[x, y]}
           scale={scale}
-          strip={rec.gilt.title}
+          stripUrl={file(rec.gilt.title.x2)}
           tone={scene.giltTone?.[mood]?.[place]?.title}
           mood={mood}
           size={title.size}
           lines={title.lines}
           className="is-title"
           dir={rtl ? 'rtl' : 'auto'}
+          flat={flat}
         />
       )}
       {numeral && (
@@ -719,12 +533,13 @@ const SlabGilt = ({ place, mood, scale, words, lifted, picked, dragging = false,
           quad={countQuad}
           origin={[x, y]}
           scale={scale}
-          strip={rec.gilt.count}
+          stripUrl={file(rec.gilt.count.x2)}
           tone={scene.giltTone?.[mood]?.[place]?.count}
           mood={mood}
           size={numeral.size}
           lines={[numeral.text]}
           className="is-count"
+          flat={flat}
         />
       )}
     </div>
@@ -741,7 +556,7 @@ const SlabGilt = ({ place, mood, scale, words, lifted, picked, dragging = false,
 // the menu (DeskStage); Alt + Enter brings it closer or puts it back.
 // Memoized, its handlers DeskStage's unchanging ones (run desk1, D4): a render of the stage (a drag
 // passing over a target, the minute, the undo line) renders no book's hit area again.
-const SlabHit = memo(function SlabHit({ course, place, scale, hit, room, stageRef, lifted, picked, onPick, onMove, onArrange, onDrag, onMenu }) {
+const SlabHit = memo(function SlabHit({ course, place, scale, hit, room, stageRef, lifted, picked, onPick, onMove, onArrange, onDrag, onMenu, onPrime }) {
   const box = slabBox(place);
   const [x, y, w, h] = box;
   const titleRef = useRef(null);
@@ -752,7 +567,9 @@ const SlabHit = memo(function SlabHit({ course, place, scale, hit, room, stageRe
   const count = course.noteCount;
   const gilts = () => [...(stageRef.current?.querySelectorAll(`.room-stage-slab.is-gilt[data-place="${place}"]`) || [])];
   const light = (key, on) => gilts().forEach((el) => (on ? el.setAttribute(key, '') : el.removeAttribute(key)));
-  const pick = () => onPick?.(course.id, titleRef.current?.closest('.room-stage-spine')?.getBoundingClientRect(), spineLook(scene, room, place, course.color));
+  // Where the book lay is read only if the old flight needs it (a function: reading it at the click
+  // forced a style and layout pass of the whole stage into the click's frame).
+  const pick = () => onPick?.(course.id, () => titleRef.current?.closest('.room-stage-spine')?.getBoundingClientRect(), spineLook(scene, room, place, course.color));
   // Alt + arrows on a focused book: Left / Right to that pile's top, Up / Down one place; Alt + Enter
   // brings it closer (or puts a near book back).
   const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
@@ -770,6 +587,9 @@ const SlabHit = memo(function SlabHit({ course, place, scale, hit, room, stageRe
   };
   const onPointerDown = (event) => {
     light('data-press', true);
+    // Whatever it may become (a click: its film; a drag, a menu's move: where it could go), it is
+    // prepared now.
+    onPrime?.(course.id, true);
     if (onDrag) press.down(event);
   };
   const onPointerMove = (event) => {
@@ -800,6 +620,7 @@ const SlabHit = memo(function SlabHit({ course, place, scale, hit, room, stageRe
     <div
       className={`room-stage-slab is-hit${lifted ? ' is-lifted' : ''}${picked ? ' is-picked' : ''}`}
       data-place={place}
+      data-course={course.id}
       style={{ left: px(x * scale), top: px(y * scale), width: px(w * scale), height: px(h * scale) }}
     >
       <button
@@ -839,134 +660,159 @@ const SlabHit = memo(function SlabHit({ course, place, scale, hit, room, stageRe
   );
 });
 
-// The frame's picture as a mood's stack draws it (under that mood's light on it and its frame):
-// the student's own picture, or the bare backing board. The picture's controls (add, change, take
-// down: SceneSlot) are one, above both stacks, drawn clear but for the empty board's "+", which stands
-// above the frame's light in the page's ink (under it, round six's dark "+" held 1.6:1 by night).
-const StagePicture = ({ scale }) => {
-  const { profile } = useAuth();
-  const url = typeof profile?.roomPrefs?.scene?.url === 'string' ? profile.roomPrefs.scene.url : '';
-  const [broken, setBroken] = useState('');
-  const opening = quadBox(scene.quads.frameOpening);
+// A book on its way (round eight): the dragged copy under the pointer and the glide into a place. Its
+// picture, dyes and gilt as its place draws them in the room's mood (its dyes cut to its own picture:
+// ghostMask), a soft contact shadow under it while it is held, on ONE layer the size of its place's box,
+// moved by transform only (round seven moved it by left/top: a repaint of the overlay each move). Its
+// place's own picture shows again under it when it lands. `ghostRef`: the drag writes its transform.
+const BookGhost = ({ ghostRef, course, place, mood, scale, words: given, lifted = true }) => {
+  const [x, y, w, h] = slabBox(place);
+  const rec = bookRec(mood, place);
+  // Its words as its own place letters them (the stacks' may be for another place by now, or none: a
+  // book lifted off its pile is in no stack while it is held).
+  const words = useMemo(() => given || spineWords(course, place, scale), [given, course, place, scale]);
   return (
     <div
-      className="room-stage-picture is-drawn"
-      style={{
-        left: px(opening[0] * scale),
-        top: px(opening[1] * scale),
-        width: px(opening[2] * scale),
-        height: px(opening[3] * scale),
-        clipPath: clipPolygon(scene.quads.frameOpening, opening, scale),
-      }}
+      ref={ghostRef}
+      className={`room-stage-ghost${lifted ? ' is-lifted' : ''}`}
+      data-ghost-of={course.id}
+      style={{ left: px(x * scale), top: px(y * scale), width: px(w * scale), height: px(h * scale) }}
+      aria-hidden="true"
     >
-      {url && broken !== url ? <img src={url} alt="" decoding="async" onError={() => setBroken(url)} /> : null}
+      <div className="room-stage-ghost-inner" style={{ left: px(-x * scale), top: px(-y * scale) }}>
+        {lifted && rec && <Picture rec={rec} scale={scale} className="room-stage-ghost-shadow" />}
+        <SlabVisual course={course} place={place} mood={mood} scale={scale} bare ghost plate={Boolean(words?.numeral)} />
+        <SlabGilt place={place} mood={mood} scale={scale} words={words} flat />
+      </div>
     </div>
   );
 };
 
-// A dragged book under the pointer (round seven): its picture, dyes and gilt as its place draws them
-// in the room's mood, no shadow (the shadow and the place's look stay behind), moved by its left/top
-// (never a transform: an isolated dye let its own colour through as a rim; desk.css). Leaving (a
-// drop: the book fades in at its new place meanwhile) it fades out over 200ms; put back (Escape, a
-// drop off the targets) it returns to its place over 200ms.
-const DragGhost = ({ ghostRef, course, place, mood, scale, words, state }) => (
-  <div ref={ghostRef} className={`room-stage-drag${state ? ` is-${state}` : ''}`} aria-hidden="true">
-    <SlabVisual course={course} place={place} mood={mood} scale={scale} bare plate={Boolean(words?.numeral)} />
-    <SlabGilt place={place} mood={mood} scale={scale} words={words} />
-  </div>
-);
-
-// A dragged candle (run three): its picture as the room showed it when it was taken (its place's,
-// in that mood), by day with its shadow left behind, moved by its left/top like a book's. Dropped by
-// night it stays where it was put (parked) until the room has turned to that place's light, then
-// fades on the swap's curve as the new room's own candle comes in.
-const CandleGhost = ({ ghostRef, candle, mood, scale, state }) => {
-  const rec = mood === 'day' ? dayCandleOf(candle).find((r) => !r.res) : scene.images[mood]?.candle;
+// The candle on its way: its picture as the room shows it at its place, on a layer the size of its
+// picture's box, moved by transform. Its flame is the real one, carried along (StageCandle).
+// `placing` (run 2, by night, while it is held): the room's light is still its place's and that night's
+// pictures have the candle baked into them, so the candle stays lit where it stands and the hand holds a
+// see-through likeness of it, unlit (desk.css is-placing) - where it will go, not a second candle.
+const candleRec = (mood, place) => (mood === 'day' ? dayCandleOf(place).find((r) => !r.res) : scene.images[mood]?.candle);
+const CandleGhost = ({ ghostRef, candle, mood, scale, placing = false }) => {
+  const rec = candleRec(mood, candle);
+  if (!rec) return null;
+  const [x, y, w, h] = rec.box;
   return (
-    <div ref={ghostRef} className={`room-stage-drag${state ? ` is-${state}` : ''}`} aria-hidden="true">
-      {rec && <Picture rec={rec} scale={scale} className="room-stage-candle" />}
+    <div ref={ghostRef} className={`room-stage-ghost is-candle${placing ? ' is-placing' : ''}`} style={{ left: px(x * scale), top: px(y * scale), width: px(w * scale), height: px(h * scale) }} aria-hidden="true">
+      <div className="room-stage-ghost-inner" style={{ left: px(-x * scale), top: px(-y * scale) }}>
+        <Picture rec={rec} scale={scale} className="room-stage-candle" />
+      </div>
     </div>
   );
 };
 
-// Where a dragged book may go, in the room's dashed idiom: the next free slot on each pile, the near
-// place, its own place (deskStage.js dragTargets); the one under the pointer drawn whole.
-const DragTargets = ({ targets, over, scale }) => (
-  <svg
-    className="room-stage-targets"
-    viewBox={`0 0 ${scene.stage.width} ${scene.stage.height}`}
-    style={{ width: px(scene.stage.width * scale), height: px(scene.stage.height * scale) }}
-    aria-hidden="true"
-  >
-    {targets.map((t) => (
-      <polygon
-        key={t.place}
-        className={`is-${t.kind}${t.place === over ? ' is-over' : ''}`}
-        points={t.polygon.map(([tx, ty]) => `${tx},${ty}`).join(' ')}
-        vectorEffect="non-scaling-stroke"
-      />
-    ))}
-  </svg>
-);
-
-// A book's menu (right-click, or a long press that does not become a drag): what can be done with it,
-// in the room's words (Figtree; dark by night, pale by day; desk.css). Arrow keys move through it;
-// Escape, a click elsewhere or a choice close it, focus back on the book.
-const StageMenu = ({ menu, items, onClose }) => {
+// A book's face (its spine, or a near book's cover): the part a glide carries onto the other place's.
+const faceBox = once((place) => quadBox(faceOf(place)));
+// The candle's own box at a place.
+const candleBoxAt = (place) => {
+  const [x0, y0, x1, y1] = candleAt(place).box;
+  return [x0, y0, x1 - x0, y1 - y0];
+};
+// A glide (a drop, the menu, Ctrl K, the keys, a pile settling): the ghost from where it is (`offset`,
+// css px: where a drop left it) onto its new place, then gone over the place's picture. `onLanded(key,
+// 'landed' | 'gone')`: the book shows at its place when the ghost lands, the ghost goes after.
+// `settle`: the book is drawn at its new place under the landed ghost (the stacks have caught up): the
+// ghost hands over to it.
+const BookGlide = memo(function BookGlide({ glide, course, mood, scale, onLanded, settle }) {
   const ref = useRef(null);
-  useEffect(() => {
-    const root = ref.current;
-    root?.querySelector('button')?.focus();
-    const away = (event) => {
-      if (root && !root.contains(event.target)) onClose(false);
-    };
-    window.addEventListener('pointerdown', away, true);
-    return () => window.removeEventListener('pointerdown', away, true);
-  }, [menu, onClose]);
-  const onKeyDown = (event) => {
-    const buttons = [...(ref.current?.querySelectorAll('button') || [])];
-    const at = buttons.indexOf(document.activeElement);
-    if (event.key === 'Escape' || event.key === 'Tab') {
-      event.preventDefault();
-      onClose(true);
-    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault();
-      const step = event.key === 'ArrowDown' ? 1 : -1;
-      buttons[(at + step + buttons.length) % buttons.length]?.focus();
-    } else if (event.key === 'Home' || event.key === 'End') {
-      event.preventDefault();
-      buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus();
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof el.animate !== 'function') {
+      onLanded(glide.key, 'landed');
+      return undefined;
     }
-  };
-  // Inside the window, at the pointer (or the book), never past its edges.
-  const width = 236;
-  const height = items.length * 40 + 12;
-  const left = Math.max(8, Math.min(menu.at[0], (typeof window !== 'undefined' ? window.innerWidth : 1440) - width - 8));
-  const top = Math.max(8, Math.min(menu.at[1], (typeof window !== 'undefined' ? window.innerHeight : 900) - height - 8));
-  return (
-    <div ref={ref} className="room-stage-menu" role="menu" aria-label={menu.title} style={{ left: px(left), top: px(top) }} onKeyDown={onKeyDown}>
-      {items.map((item) => (
-        <button
-          key={item.key}
-          type="button"
-          role={item.checked === undefined ? 'menuitem' : 'menuitemradio'}
-          aria-checked={item.checked === undefined ? undefined : item.checked}
-          className={`room-stage-menu-item${item.checked ? ' is-checked' : ''}`}
-          onClick={() => {
-            onClose(item.key !== 'open');
-            item.run();
-          }}
-        >
-          {item.label}
-        </button>
-      ))}
-    </div>
-  );
-};
+    const own = slabBox(glide.from);
+    const to = landing(faceBox(glide.from), faceBox(glide.to), own, scale);
+    const move = el.animate([{ transform: moveCss(glide.offset[0], glide.offset[1]) }, { transform: moveCss(to.tx, to.ty, to.sx, to.sy) }], { duration: glide.ms, easing: GLIDE_EASE, fill: 'forwards' });
+    let alive = true;
+    move.finished
+      .then(() => {
+        if (alive) onLanded(glide.key, 'landed');
+      })
+      .catch(() => null);
+    return () => {
+      alive = false;
+    };
+  }, [glide, scale, onLanded]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!settle || !el) return undefined;
+    if (typeof el.animate !== 'function') {
+      onLanded(glide.key, 'gone');
+      return undefined;
+    }
+    let alive = true;
+    const fade = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: SETTLE_MS, easing: 'linear', fill: 'forwards' });
+    fade.finished
+      .then(() => {
+        if (alive) onLanded(glide.key, 'gone');
+      })
+      .catch(() => null);
+    return () => {
+      alive = false;
+      fade.cancel();
+    };
+  }, [settle, glide, onLanded]);
+  return <BookGhost ghostRef={ref} course={course} place={glide.from} mood={mood} scale={scale} lifted={glide.lifted} />;
+});
+
+// The candle's glide: the ghost and the real flame together (the flame is drawn at the candle's new
+// place by then: it is carried from where the ghost is to there), then the place's own candle shows.
+const CandleGlide = memo(function CandleGlide({ glide, scale, flameOf, onLanded }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof el.animate !== 'function') {
+      onLanded(glide.key, 'gone');
+      return undefined;
+    }
+    const a = candleBoxAt(glide.from);
+    const b = candleBoxAt(glide.to);
+    const rec = candleRec(glide.mood, glide.from);
+    const own = rec ? rec.box : a;
+    const to = landing(a, b, own, scale);
+    const timing = { duration: glide.ms, easing: GLIDE_EASE, fill: 'forwards' };
+    const move = el.animate([{ transform: moveCss(glide.offset[0], glide.offset[1]) }, { transform: moveCss(to.tx, to.ty, to.sx, to.sy) }], timing);
+    // A night's likeness let go off any place: it goes home alone (the candle and its flame never left).
+    // A night's drop: the likeness becomes the candle (whole, lit) as the room's light comes with it.
+    const whole = glide.fromPlacing ? el.animate([{ opacity: PLACING_OPACITY }, { opacity: 1 }], { duration: 120, easing: 'ease-out', fill: 'backwards' }) : null;
+    // The flame, drawn at the new place, starts where the ghost's wick is.
+    const wa = candleAt(glide.from).points.wick;
+    const wb = candleAt(glide.to).points.wick;
+    const fx = (wa[0] - wb[0]) * scale + glide.offset[0];
+    const fy = (wa[1] - wb[1]) * scale + glide.offset[1];
+    const flames = glide.placing
+      ? []
+      : flameOf().map((f) => {
+          f.style.transform = '';
+          return f.animate([{ transform: `translate(${fx.toFixed(2)}px, ${fy.toFixed(2)}px)` }, { transform: 'translate(0px, 0px)' }], timing);
+        });
+    let alive = true;
+    move.finished
+      .then(() => {
+        if (alive) onLanded(glide.key, 'gone');
+      })
+      .catch(() => null);
+    return () => {
+      alive = false;
+      move.cancel();
+      whole?.cancel();
+      flames.forEach((f) => f.cancel());
+    };
+  }, [glide, scale, flameOf, onLanded]);
+  return <CandleGhost ghostRef={ref} candle={glide.from} mood={glide.mood} scale={scale} placing={Boolean(glide.placing)} />;
+});
 
 // One mood's stack: everything of that mood, as at rest (see the top of this file).
 // Memoized: the candle's click changes none of its props, so the swap renders no stack again.
-const MoodStack = memo(function MoodStack({ mood, scale, hasSurround, books, byId, words, liftedId, pickedId, draggingId, arrivingId, candle }) {
+// `hidden`: '|id|id|' — the books out of the stacks (in the hand, on their way).
+const MoodStack = memo(function MoodStack({ mood, scale, hasSurround, books, byId, words, liftedId, pickedId, hidden = '||', candle }) {
   const imgs = scene.images[mood];
   return (
     <div className={`room-stage-mood${isNightKey(mood) ? ' is-night' : ''}`} data-m={mood} aria-hidden="true">
@@ -999,7 +845,7 @@ const MoodStack = memo(function MoodStack({ mood, scale, hasSurround, books, byI
       {/* The frame on the wall: its picture, the room's light on it (multiplied), the frame, its glass
           (screened). The set is rendered with the frame in the room but unseen, so where it hangs the
           wall is in its shadow and only the frame's own pictures cover it. */}
-      <StagePicture scale={scale} />
+      <StagePicture scale={scale} opening={scene.quads.frameOpening} />
       {imgs.frameLight && <Picture rec={imgs.frameLight} scale={scale} className="room-stage-frame-light" />}
       <Picture rec={imgs.frame} scale={scale} className="room-stage-frame" />
       {imgs.frameGlass && <Picture rec={imgs.frameGlass} scale={scale} className="room-stage-frame-glass" />}
@@ -1025,8 +871,7 @@ const MoodStack = memo(function MoodStack({ mood, scale, hasSurround, books, byI
               place={place}
               mood={mood}
               scale={scale}
-              dragging={draggingId === id}
-              arriving={arrivingId === id}
+              dragging={hidden.includes(`|${id}|`)}
               plate={Boolean(words.get(id)?.numeral)}
             />
           ) : null,
@@ -1035,14 +880,14 @@ const MoodStack = memo(function MoodStack({ mood, scale, hasSurround, books, byI
           byId.has(id) ? (
             <SlabGilt
               key={`gilt-${id}`}
+              courseId={id}
               place={place}
               mood={mood}
               scale={scale}
               words={words.get(id)}
               lifted={liftedId === id}
               picked={pickedId === id}
-              dragging={draggingId === id}
-              arriving={arrivingId === id}
+              dragging={hidden.includes(`|${id}|`)}
             />
           ) : null,
         )}
@@ -1107,198 +952,6 @@ const DashedSlab = memo(function DashedSlab({ place, scale, label, hit, onClick,
   );
 });
 
-const Row = ({ note, color, stamp, onOpen }) => (
-  <li>
-    <button type="button" className="room-stage-row" onClick={() => onOpen(note)}>
-      <Dot size={7} color={color} />
-      <span className="room-stage-row-text">
-        <span className="room-stage-row-title" dir="auto">
-          {note.title}
-        </span>
-        <span className="room-stage-row-stamp">{stamp(note)}</span>
-      </span>
-    </button>
-  </li>
-);
-
-// The notebook's two pages. The left one is the day's page: the greeting and the day's sentence
-// (the plaque's words, off the wall), the date in its corner, then where you left off. The right
-// one is the latest note itself.
-const Pages = memo(function Pages({ notes, colorOf, stamp, onOpen, page, scale, capacity, greeting, status, clock }) {
-  const latest = notes[0];
-  const lines = page.lines.slice(0, capacity.lines);
-  // The note's lines fill at most `clamp` lines of the page (whole lines: deskStage.js pageCapacity).
-  const text = lines.length ? lines.join('\n') : page.read ? latest?.summary : '';
-  const courseColor = latest ? colorOf(latest.classId) : undefined;
-  return (
-    <>
-      <OnQuad quad={scene.quads.pageL} size={PAGE} scale={scale} className="room-stage-page is-left" as="section" aria-labelledby="room-stage-greeting">
-        <header className="room-stage-day">
-          <h1 id="room-stage-greeting" className="room-stage-greeting">
-            {greeting}
-          </h1>
-          {clock && <span className="room-stage-clock">{clock}</span>}
-        </header>
-        {status && (
-          <p className="room-stage-day-line" style={{ WebkitLineClamp: capacity.sentence }}>
-            {status}
-          </p>
-        )}
-        <hr className="room-stage-page-rule" />
-        <h2 id="room-stage-nb-heading" className="room-stage-page-heading">
-          Where you left off
-        </h2>
-        {latest ? (
-          <ul className="room-stage-rows">
-            {notes.slice(0, capacity.rows).map((note) => (
-              <Row key={note.id} note={note} color={colorOf(note.classId)} stamp={stamp} onOpen={onOpen} />
-            ))}
-          </ul>
-        ) : (
-          <p className="room-stage-page-empty">Your first note will show up here.</p>
-        )}
-      </OnQuad>
-      <OnQuad quad={scene.quads.pageR} size={PAGE} scale={scale} className="room-stage-page is-right" as="article">
-        {latest && (
-          <>
-            {(latest.className || latest.kind) && (
-              <p className="room-stage-page-meta">
-                {latest.className && (
-                  <span className="room-stage-page-course" dir="auto">
-                    {latest.className}
-                  </span>
-                )}
-                {latest.kind && (
-                  <span className="room-stage-page-kind" style={courseColor ? { '--room-course': courseColor } : undefined}>
-                    {latest.kind}
-                  </span>
-                )}
-              </p>
-            )}
-            <h3 className="room-stage-page-title" dir="auto">
-              {latest.title}
-            </h3>
-            {text && capacity.clamp > 0 && (
-              <p className="room-stage-page-lines" dir="auto" style={{ WebkitLineClamp: capacity.clamp }}>
-                {text}
-              </p>
-            )}
-            {capacity.tags && <SheetTags tags={latest.tags} />}
-            <button type="button" className="room-stage-page-action" onClick={() => onOpen(latest)}>
-              Continue writing
-            </button>
-          </>
-        )}
-      </OnQuad>
-    </>
-  );
-});
-
-// The candle: the room's light switch, baked into the picture. The page adds its film flame at
-// the wick (screened — the film is a flame on black), the render's still flame where the film
-// cannot play, and one wisp of smoke when it is blown out.
-const StageCandle = ({ lit, onToggle, still, scale, candle = 'C0', nightKey = 'night', onDrag, onMenu }) => {
-  const rootRef = useRef(null);
-  const videoRef = useRef(null);
-  const press = usePress();
-  const [wisp, setWisp] = useState(0);
-  // No film where it will not play (run desk1, D10): by day, with motion still or reduced, or when the
-  // browser asks to save data, it is not fetched at all (it was, 48 kB, with the room's pictures) and
-  // the render's own flame stands; lighting the candle fetches it.
-  const filmed = lit && !still && !saveData();
-  useFlameFilm(videoRef, {
-    night: lit,
-    still: !filmed,
-    onShow: (shown) => {
-      const root = rootRef.current;
-      if (!root) return;
-      if (shown) {
-        root.dataset.flame = 'video';
-        // The alpha film plays plainly; the mp4 (no alpha) is screened.
-        root.dataset.film = String(videoRef.current?.currentSrc || '').includes('.webm') ? 'alpha' : 'screen';
-      } else delete root.dataset.flame;
-    },
-  });
-  // Its place (round seven, run three): the wick, the flame's tip and the candle's box there.
-  const at = candleAt(candle);
-  const [bx, , bx1, by1] = at.box;
-  const [wx, wy] = at.points.wick;
-  const ty = at.points.flameTip[1];
-  // The film scaled so its wick-to-tip matches the render's, its wick on the wick.
-  const k = (wy - ty) / (FILM.wickY - FILM.tipY);
-  const film = { left: wx - FILM.wickX * k, top: wy - FILM.wickY * k, width: FILM.width * k, height: FILM.height * k };
-  const stillFlame = (scene.images[nightKey] || scene.images.night).flame;
-  const toggle = (event) => {
-    // The click a drag or a long press ends with lights nothing.
-    if (!press.click(event)) return;
-    if (lit) setWisp((n) => n + 1);
-    onToggle?.();
-  };
-  // Taken like a book (6 css px with the pointer down; on touch after a 350ms long press, which opens
-  // its menu if it does not move); a right-click opens its menu (its places by name).
-  const onPointerDown = (event) => {
-    if (onDrag) press.down(event);
-  };
-  const onPointerMove = (event) => {
-    const start = press.move(event);
-    if (start) onDrag(start);
-  };
-  const onPointerUp = (event) => {
-    if (press.up()) onMenu?.([event.clientX, event.clientY]);
-  };
-  const onContextMenu = (event) => {
-    if (!onMenu) return;
-    event.preventDefault();
-    const r = event.currentTarget.getBoundingClientRect();
-    press.spend();
-    onMenu(event.clientX || event.clientY ? [event.clientX, event.clientY] : [r.left + r.width / 2, r.top + r.height / 2]);
-  };
-  return (
-    <div ref={rootRef} className={`room-stage-candle${lit ? ' is-lit' : ''}`}>
-      <video
-        ref={videoRef}
-        className="room-stage-flamefilm"
-        muted
-        loop
-        playsInline
-        preload={filmed ? 'auto' : 'none'}
-        disablePictureInPicture
-        tabIndex={-1}
-        aria-hidden="true"
-        style={{ left: px(film.left * scale), top: px(film.top * scale), width: px(film.width * scale), height: px(film.height * scale) }}
-      >
-        {ALPHA_FILM && <source src={FLAME.webm} type="video/webm" />}
-        <source src={FLAME.mp4} type="video/mp4" />
-      </video>
-      {stillFlame && <Picture rec={stillFlame} scale={scale} className="room-stage-flame-still" />}
-      {wisp > 0 && (
-        <svg
-          key={wisp}
-          className="room-stage-smoke"
-          viewBox="46 0 32 72"
-          aria-hidden="true"
-          focusable="false"
-          style={{ left: px((wx - film.width * 0.16) * scale), top: px((ty - film.height * 0.45) * scale), width: px(film.width * 0.32 * scale), height: px(film.height * 0.72 * scale) }}
-        >
-          <path d="M62.3 66c-4-7 4-12 0-19s3-12 0-19-2-10 1-15" fill="none" stroke="rgba(214, 206, 196, 0.62)" strokeWidth="1.4" strokeLinecap="round" />
-        </svg>
-      )}
-      <button
-        type="button"
-        className="room-stage-candle-button"
-        aria-label={lit ? 'Candle lit. Blow out for daylight' : 'Candle out. Light it for the evening'}
-        onClick={toggle}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={press.cancel}
-        onContextMenu={onContextMenu}
-        style={{ left: px(bx * scale), top: px((ty - 6) * scale), width: px((bx1 - bx) * scale), height: px((by1 - ty + 6) * scale) }}
-      />
-    </div>
-  );
-};
-
 const DeskStage = ({
   courses,
   notes,
@@ -1327,7 +980,30 @@ const DeskStage = ({
 }) => {
   // Where each book lies (RoomDesk's arrangement; without one, the courses' own order). Kept from
   // render to render (useMemo), so the candle's click renders no stack and no page again.
-  const { arranged, byId, places, ghost, dashedPlace, books } = useMemo(() => pileLayout(courses, arrangement), [courses, arrangement]);
+  // Run 2: what the stacks draw is the saved arrangement, or a move announced before it is saved
+  // (pending, until the saved one says the same), or, while a pile book is dragged, the pile it left
+  // settled (liftOut).
+  const [drag, setDrag] = useState(null);
+  const [glides, setGlides] = useState([]);
+  const [landed, setLanded] = useState('|');
+  const [candleGlides, setCandleGlides] = useState([]);
+  const [pending, setPending] = useState(null);
+  const realKey = arrangement ? placesKey(arrangement.map) : '';
+  if (pending && pending.key === realKey) setPending(null);
+  const arrangementRef = useRef(arrangement);
+  useEffect(() => {
+    arrangementRef.current = arrangement;
+  });
+  // A pile book let go: its pile stays settled until the announced move is drawn (heldLift, cleared in
+  // the same transition that sets pending), so the books above it never rise for a frame and settle again.
+  const [heldLift, setHeldLift] = useState(null);
+  const liftId = drag && !drag.candle && !isNearPlace(drag.place) ? drag.id : heldLift;
+  const shownArrangement = useMemo(() => {
+    if (pending && arrangement) return arrangementFrom(pending.map, arrangement);
+    if (liftId && arrangement) return liftOut(arrangement, liftId);
+    return arrangement;
+  }, [pending, liftId, arrangement]);
+  const { arranged, byId, places, ghost, dashedPlace, books } = useMemo(() => pileLayout(courses, shownArrangement), [courses, shownArrangement]);
   // The fit: the plain frame first; once the surround is in (only when the window reaches past the
   // frame), its extent, the room growing out from the centre as it fades in (deskStage.js stageFit).
   // Pictures are fetched for the fit they will end at (one density, no second fetch).
@@ -1337,7 +1013,7 @@ const DeskStage = ({
   const densityScale = wantSurround ? wideFit.scale : plainFit.scale;
   const stageRef = useRef(null);
   const arabic = useMemo(() => courses.some((course) => textDirection(course.name) === 'rtl'), [courses]);
-  const { list, room, leaving, swapping, ready, surroundIn, surroundOf: hasSurround } = useMoods(
+  const { list, room, leaving, swapping, ready, surroundIn, surroundOf: hasSurround, prime } = useMoods(
     lit ? nightKey : 'day',
     places.books,
     densityScale,
@@ -1395,64 +1071,166 @@ const DeskStage = ({
       a.startTime = breathFrom.current;
     });
   }, [surroundIn, shown, list.length]);
-  // A book dragged (round seven, deskStage.js dragTargets / moveTo): { id, place, targets (each with
-  // its polygon), over, state: null | 'leaving' | 'returning' }; the pointer moves the drag layer by
-  // its left/top, never React. A drop on a target asks RoomDesk to move it there (onArrange); the book
-  // fades in at its new place (arrivingId) as the dragged copy fades out, 200ms.
-  const [drag, setDrag] = useState(null);
-  const [arrivingId, setArrivingId] = useState(null);
+  // The candle the room draws: by night the place whose light the room is in (a moved candle shows at
+  // its new place with that place's light, never ahead of it), by day where it stands.
+  const shownCandle = isNightKey(room) ? Object.keys(scene.candles || {}).find((p) => scene.candles[p].night === room) || candle : candle;
+  // Moving a book or the candle (round eight, M2; run 2). A press on a book or the candle first PRIMES
+  // every picture any place it could go to needs (decoded off the page), so a drop never waits. A drag
+  // (round seven's threshold, targets and rules) moves its ghost by transform (BookGhost / CandleGhost);
+  // the pile it left settles at once, the books above it gliding one place down (liftOut). A move (a
+  // drop, the menu, Ctrl K, the keys) is ANNOUNCED by RoomDesk before it is saved (announceMoves): every
+  // book whose place changes starts GLIDING in that very frame (BookGlide), hidden in the stacks by a DOM
+  // mark (data-gliding: no stack is rendered for it), and the stacks catch up under the ghosts in a
+  // transition (pending), then the real save. The candle glides when the room shows it at its new place
+  // (by night once that place's light is in: until then it waits in the hand, lit). Nothing but the
+  // thing itself fades (its ghost, over its own place's picture). The pointer moves a ghost's transform,
+  // never React.
   const ghostRef = useRef(null);
   const dragNow = useRef(null);
   useEffect(() => {
     dragNow.current = drag;
   });
-  // The candle taken (run three): its places' rings the targets, a drop elsewhere than its own moves
-  // it there (RoomDesk: roomPrefs.deskCandle); by night the room dissolves to that place's light once
-  // its pictures are in (useMoods: only the chosen place's are ever fetched).
+  // Every picture a book needs at the places it could go to (in the room's mood), decoded now.
+  const primed = useRef(new Set());
+  const primeBook = (id, pressed = false) => {
+    if (!byId.has(id) || !arranged.map?.[id]) return;
+    // A press may end as a click: its film is built now, unseen (deskFilmRun prepareFilm).
+    if (pressed && !filmRunning()) {
+      const film = filmOf(id);
+      if (film) prepareFilm(film);
+    }
+    dragTargets(arranged, id).forEach((t) => {
+      const key = `${room}:${t.place}`;
+      if (primed.current.has(key)) return;
+      primed.current.add(key);
+      const rec = bookRec(room, t.place);
+      if (!rec) return;
+      const masks = ['leather', 'label'].map((part) => rec[part] && { ...rec[part], box: rec[`${part}Box`] });
+      [rec, rec.shadow, ...masks, rec.plate, rec.gilt?.title, rec.gilt?.count, surroundIn ? rec.shadowWide : null]
+        .filter(Boolean)
+        .forEach((r) => decodeOne(r, densityScale).catch(() => null));
+    });
+  };
+  // The candle's other places: by night each one's whole light (its night set: the room changes the
+  // moment the candle lands), by day its picture and shadow there.
+  const primeCandle = () => {
+    candlePlaces(scene)
+      .filter((p) => p !== candle)
+      .forEach((p) => {
+        if (isNightKey(room)) prime(scene.candles[p].night);
+        else dayCandleOf(p).forEach((r) => decodeOne(r, densityScale).catch(() => null));
+      });
+  };
+  // A book out of the stacks while it travels: its pictures, gilt and rim marked (DOM, never React, so
+  // no stack renders again for it); the mark stays on its elements wherever React then places them.
+  const markGliding = (id, on) => {
+    stageRef.current?.querySelectorAll(on ? `.room-stage-slab[data-course="${CSS.escape(id)}"]` : `.room-stage-slab[data-gliding="${CSS.escape(id)}"]`).forEach((el) => {
+      if (on) el.setAttribute('data-gliding', id);
+      else el.removeAttribute('data-gliding');
+    });
+  };
   const startCandleDrag = (start) => {
     if (!onMoveCandle || drag) return;
+    primeCandle();
     const targets = Object.keys(scene.candles || {})
       .filter((p) => candlePlaces(scene).includes(p))
       .map((p) => ({ place: p, kind: p === candle ? 'own' : 'candle', polygon: candleRing(candleAt(p).box) }));
-    setDrag({ id: 'candle', place: candle, targets, over: null, state: null, start, candle: true, from: room });
+    setDrag({ id: 'candle', place: shownCandle, targets, over: null, start, candle: true, from: room });
   };
   const startDrag = (id, place, start) => {
     if (!onArrange || drag) return;
-    const targets = dragTargets(arranged, id).map((t) => ({ ...t, polygon: silhouette(t.place) }));
-    // A near place's pictures, decoded while the book travels (only ever loaded when it is used).
-    targets.filter((t) => t.kind === 'near').forEach((t) => {
-      const rec = bookRec(room, t.place);
-      if (rec) [rec, rec.shadow, rec.gilt?.title, rec.gilt?.count].filter(Boolean).forEach((r) => decodeOne(r, densityScale).catch(() => null));
+    dropPreparedFilm();
+    primeBook(id);
+    markGliding(id, true);
+    // Its own pile's next place is where the pile's top now is (the books above it settle).
+    const targets = dragTargets(arranged, id).map((t) => {
+      const own = t.kind === 'pile' && t.place[0] === place[0] && !isNearPlace(place);
+      return { ...t, polygon: silhouette(own ? `${t.place[0]}${Number(t.place.slice(1)) - 1}` : t.place) };
     });
-    setDrag({ id, place, targets, over: null, state: null, start });
+    setDrag({ id, place, targets, over: null, start, from: room });
   };
+  // The ghost's offset from its place (css px), and the flame carried with the candle.
+  const flames = useCallback(() => [...(stageRef.current?.querySelectorAll('.room-stage-candle > .room-stage-flamefilm, .room-stage-candle > .room-stage-flame-still') || [])], []);
+  const offsetRef = useRef([0, 0]);
+  // Where each book is drawn now (for an announced move's starting places).
+  const placesNow = useMemo(() => new Map(books.map(({ id, place }) => [id, place])), [books]);
+  const drawnRef = useRef(placesNow);
+  useEffect(() => {
+    drawnRef.current = placesNow;
+  });
+  // The moves RoomDesk announces before it saves them (announceMoves): every book whose place changes
+  // glides from where it is drawn (a dropped one from where it was let go) at once; the stacks follow.
+  const announce = (fromMap, toMap, primary = null) => {
+    const drawn = drawnRef.current;
+    const d = dragNow.current && !dragNow.current.candle ? dragNow.current : null;
+    const quiet = quietNow(still);
+    const made = [];
+    Object.keys(toMap || {}).forEach((id) => {
+      const mine = d && d.id === id;
+      const from = mine ? d.place : drawn.get(id) || fromMap?.[id];
+      const to = toMap[id];
+      if (!from || !to || (from === to && !mine) || !byId.has(id)) return;
+      made.push({ id, from, to, offset: mine ? offsetRef.current : [0, 0], lifted: Boolean(mine) || id === primary, ms: mine || id === primary ? GLIDE_MS : SETTLE_GLIDE_MS });
+    });
+    // Still or reduced motion: nothing glides, everything is where it goes at once (and the book that was
+    // held is shown again).
+    if (quiet) {
+      made.forEach((g) => markGliding(g.id, false));
+      if (d) markGliding(d.id, false);
+    } else made.forEach((g) => markGliding(g.id, true));
+    // The drag is over: its handlers see it at once (the up handler checks it right after).
+    if (d) dragNow.current = null;
+    flushSync(() => {
+      if (!quiet && made.length) {
+        setGlides((was) => [...was.filter((g) => !made.some((m) => m.id === g.id)), ...made.map((m) => ({ ...m, key: `${m.id}:${m.from}>${m.to}:${++glideSeq.current}` }))]);
+      }
+      if (d) {
+        setDrag(null);
+        if (!isNearPlace(d.place)) setHeldLift(d.id);
+      }
+    });
+    // The stacks catch up under the ghosts, in a transition (the save follows: RoomDesk).
+    startTransition(() => {
+      setPending({ map: { ...toMap }, key: placesKey(toMap) });
+      setHeldLift(null);
+    });
+  };
+  const announceNow = useRef(null);
+  useEffect(() => {
+    announceNow.current = announce;
+  });
+  useEffect(() => {
+    setMoveAnnouncer((...args) => announceNow.current?.(...args));
+    return () => setMoveAnnouncer(null);
+  }, []);
+  const glideSeq = useRef(0);
   const dragId = drag?.id;
-  const dragLive = Boolean(drag && !drag.state);
+  const dragLive = Boolean(drag);
   useEffect(() => {
     if (!dragId || !dragLive) return undefined;
-    const end = (state) => {
-      setDrag((d) => (d && d.id === dragId ? { ...d, state } : d));
-      setTimeout(() => setDrag((d) => (d && d.id === dragId && d.state === state ? null : d)), 220);
-    };
-    // Back to its place over 200ms (at once where motion is reduced), then the book shows there.
-    const goBack = () => {
+    const place = (dx, dy) => {
+      offsetRef.current = [dx, dy];
       const el = ghostRef.current;
-      if (el) {
-        const quiet = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || document.documentElement.getAttribute('data-motion') === 'still';
-        el.style.transition = quiet ? 'none' : 'left 200ms ease-out, top 200ms ease-out';
-        el.style.left = '0px';
-        el.style.top = '0px';
+      if (el) el.style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px)`;
+      // By day the flame goes with the candle in the hand; by night it stays where the room's light is.
+      if (dragNow.current?.candle && !isNightKey(dragNow.current.from)) flames().forEach((f) => (f.style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px)`));
+    };
+    // Let go off a target (or Escape): back to its own place, gliding (the pile it left rises again).
+    const goBack = () => {
+      const d = dragNow.current;
+      if (!d) return;
+      flames().forEach((f) => (f.style.transform = ''));
+      if (d.candle) {
+        setDrag(null);
+        if (!quietNow(still)) setCandleGlides((g) => [...g, { key: `c${++glideSeq.current}-${d.place}`, from: d.place, to: d.place, mood: room, offset: offsetRef.current, ms: GLIDE_MS, placing: isNightKey(d.from) }]);
+        return;
       }
-      end('returning');
+      announceNow.current?.(null, { ...(arrangementRef.current?.map || {}) }, d.id);
     };
     const move = (event) => {
       const d = dragNow.current;
       if (!d) return;
-      const el = ghostRef.current;
-      if (el) {
-        el.style.left = px(event.clientX - d.start[0]);
-        el.style.top = px(event.clientY - d.start[1]);
-      }
+      place(event.clientX - d.start[0], event.clientY - d.start[1]);
       const at = [(event.clientX - fitNow.current.left) / fitNow.current.scale, (event.clientY - fitNow.current.top) / fitNow.current.scale];
       const over = pickTarget(d.targets, at, 40);
       if (over !== d.over) setDrag((cur) => (cur && cur.id === d.id ? { ...cur, over } : cur));
@@ -1460,19 +1238,14 @@ const DeskStage = ({
     const up = () => {
       const d = dragNow.current;
       if (!d) return;
-      if (d.over && d.over !== d.place && d.candle) {
-        onMoveCandle?.(d.over);
-        if (isNightKey(d.from)) {
-          // By night the room turns to that place's light once its pictures are in: parked till then.
-          const to = d.over;
-          setDrag((cur) => (cur && cur.candle ? { ...cur, state: 'parked', to } : cur));
-          setTimeout(() => setDrag((cur) => (cur && cur.candle && cur.state === 'parked' ? null : cur)), 12000);
-        } else end('leaving');
-      } else if (d.over && d.over !== d.place) {
-        onArrange(d.id, { to: d.over });
-        setArrivingId(d.id);
-        setTimeout(() => setArrivingId((a) => (a === d.id ? null : a)), 260);
-        end('leaving');
+      if (d.over && d.over !== d.place) {
+        if (d.candle) {
+          // Held where it was let go until the room shows the candle moved (by night: its light in).
+          setDrag((cur) => (cur && cur.candle ? { ...cur, dropped: { to: d.over, offset: offsetRef.current } } : cur));
+          onMoveCandle?.(d.over);
+        } else onArrange(d.id, { to: d.over });
+        // (RoomDesk announces the move: the glide starts there, this frame.)
+        if (!d.candle && dragNow.current?.id === d.id) goBack();
       } else goBack();
     };
     const key = (event) => {
@@ -1490,24 +1263,151 @@ const DeskStage = ({
       window.removeEventListener('pointercancel', key);
       window.removeEventListener('keydown', key, true);
     };
-  }, [dragId, dragLive, onArrange, onMoveCandle]);
-  // The candle the room draws: by night the place whose light the room is in (a moved candle's flame
-  // follows the room's dissolve, never ahead of it), by day where it stands.
-  const shownCandle = isNightKey(room) ? Object.keys(scene.candles || {}).find((p) => scene.candles[p].night === room) || candle : candle;
-  // A parked candle (dropped by night) goes once the room is at its new place's night.
-  const candleArrived = Boolean(drag?.candle && drag.state === 'parked' && drag.to && room === scene.candles?.[drag.to]?.night);
+  }, [dragId, dragLive, onArrange, onMoveCandle, flames, still, room]);
+  // A dropped candle the room never took (the write was refused, nothing changed): back to its place.
+  const droppedKey = drag?.dropped ? `${drag.id}>${drag.dropped.to}` : '';
   useEffect(() => {
-    if (!candleArrived) return undefined;
-    const timer = setTimeout(() => setDrag((cur) => (cur && cur.candle ? null : cur)), 2200);
+    if (!droppedKey) return undefined;
+    const timer = setTimeout(() => setDrag((cur) => (cur?.dropped ? null : cur)), 4000);
     return () => clearTimeout(timer);
-  }, [candleArrived]);
+  }, [droppedKey]);
+
+  // Moves nobody announced (a save from elsewhere, a delete's settling, an undo): every book whose drawn
+  // place changed glides too, worked out in render from the last places seen (no effect, no ref read:
+  // the room's lint), marked in the layout effect below before the frame is drawn.
+  const [seenPlaces, setSeenPlaces] = useState(placesNow);
+  if (seenPlaces !== placesNow) {
+    setSeenPlaces(placesNow);
+    const moved = [...placesNow].filter(([id, place]) => seenPlaces.has(id) && seenPlaces.get(id) !== place && !glides.some((g) => g.id === id && g.to === place));
+    if (moved.length && !still) {
+      setGlides((was) => [
+        ...was.filter((g) => !moved.some(([id]) => id === g.id)),
+        ...moved.map(([id, to]) => {
+          const from = seenPlaces.get(id);
+          return { key: `${id}:${from}>${to}:u${was.length}`, id, from, to, offset: [0, 0], lifted: moved.length === 1, ms: moved.length === 1 ? GLIDE_MS : SETTLE_GLIDE_MS };
+        }),
+      ]);
+    }
+  }
+  // Every book on its way is marked out of the stacks (before the frame is drawn); one whose ghost has
+  // landed is SETTLED once the stacks draw it at its new place: shown again, and its ghost hands over.
+  const settled = `|${glides
+    .filter((g) => landed.includes(`|${g.key}|`) && placesNow.get(g.id) === g.to)
+    .map((g) => g.key)
+    .join('|')}|`;
+  useLayoutEffect(() => {
+    glides.forEach((g) => markGliding(g.id, !settled.includes(`|${g.key}|`)));
+  });
+  // A glide's object never changes once made (its animation would start again): landing is kept apart.
+  const onLanded = useCallback((key, how) => {
+    if (how === 'gone') {
+      setGlides((was) => was.filter((g) => g.key !== key));
+      setLanded((was) => was.replace(`|${key}|`, '|'));
+    } else setLanded((was) => (was.includes(`|${key}|`) ? was : `${was}${key}|`));
+  }, []);
+  // An announced move the save never confirmed (refused, or settled differently): let go after 3 s.
+  useEffect(() => {
+    if (!pending) return undefined;
+    const timer = setTimeout(() => setPending(null), 3000);
+    return () => clearTimeout(timer);
+  }, [pending]);
+  const [seenCandle, setSeenCandle] = useState(shownCandle);
+  if (seenCandle !== shownCandle) {
+    setSeenCandle(shownCandle);
+    const drop = drag?.candle && drag.dropped ? drag : null;
+    if (!still) {
+      setCandleGlides((was) => [
+        ...was,
+        { key: `c${was.length}:${seenCandle}>${shownCandle}`, from: drop ? drop.place : seenCandle, to: shownCandle, mood: drop ? drop.from : room, offset: drop ? drop.dropped.offset : [0, 0], ms: GLIDE_MS, fromPlacing: Boolean(drop && isNightKey(drop.from)) },
+      ]);
+    }
+    if (drop) setDrag(null);
+  }
+  const onCandleLanded = useCallback((key) => setCandleGlides((was) => was.filter((g) => g.key !== key)), []);
+  // The candle in the hand ('held') or on its way ('gliding'): desk.css takes it out of the room's
+  // pictures where that shows the truth (see there).
+  // (A night's likeness going home alone is not the candle: the room keeps its own.)
+  const candleAway = drag?.candle ? 'held' : candleGlides.some((g) => !g.placing) ? 'gliding' : undefined;
+  // Opening a book (round eight, deskFilmRun.js): the film, drawn through the render's own camera from
+  // the book's place (its spine's quad on a pile, scene.json nearPlaces for the near place) at the
+  // stage's fit of the moment. The real book is hidden at its place while the film has it (data-filmed:
+  // its picture, dyes and gilt; its shadow stays, as in a drag); focus comes back to it after.
+  // False when no film plays (still, reduced motion): the caller opens the course at once.
+  const filmGeometry = (place) => () => {
+    if (typeof window === 'undefined') return null;
+    const f = fitNow.current;
+    const cam = stageCamera(scene, f);
+    const view = { width: window.innerWidth, height: window.innerHeight };
+    if (isNearPlace(place)) {
+      const spot = scene.nearPlaces?.[place];
+      if (!spot) return null;
+      const { pose, t } = nearPose(cam, spot);
+      return { cam, from: pose, near: true, view, t };
+    }
+    const quad = scene.quads.spines[place];
+    if (!quad) return null;
+    const { pose, t } = pilePose(cam, quad, f);
+    return { cam, from: pose, near: false, view, t };
+  };
+  // What a book's film needs (its geometry, its look, hiding and focusing the real one); null when no
+  // film can play from it.
+  // Run 3: a course shown as the held book (deskBook.js; the harness's `?book=1` until the production
+  // pictures exist): the film lands on the picture. A function, so a close made later reads the window then.
+  const heldOf = (course) => {
+    const registered = getDeskBook();
+    if (!bookShows({ width: window.innerWidth, homeIsDesk: true }, registered)) return null;
+    return () => {
+      const held = registered.held(bookLight(room), course.color);
+      const view = { width: window.innerWidth, height: window.innerHeight };
+      const fit = heldFit(view, held);
+      const { left, right } = held.pages;
+      const at = (p) => [fit.left + p[0] * fit.scale, fit.top + p[1] * fit.scale];
+      // The spread on the window: its spine (the pages' meeting edges), its middle, its height.
+      const spineX = (at(left.page[1])[0] + at(left.page[2])[0] + at(right.page[0])[0] + at(right.page[3])[0]) / 4;
+      const top = (at(left.page[0])[1] + at(right.page[1])[1]) / 2;
+      const bottom = (at(left.page[3])[1] + at(right.page[2])[1]) / 2;
+      const src = fit.scale * (window.devicePixelRatio || 1) > 1.05 ? held.src.x2 : held.src.x1;
+      return { src, fit, ground: held.ground, paper: held.paper, spread: { x: spineX, cy: (top + bottom) / 2, tall: bottom - top } };
+    };
+  };
+  const filmOf = (id) => {
+    const course = byId.get(id);
+    const place = arranged.map?.[id];
+    if (still || !course || !place || !bookRec(room, place)) return null;
+    const rec = bookRec(room, place);
+    const look = { ...filmLook(scene, room, place, course), strip: rec.gilt?.title ? file(rec.gilt.title.x2) : '', held: heldOf(course) };
+    const stage = stageRef.current;
+    return {
+      courseId: id,
+      describe: filmGeometry(place),
+      look,
+      hideBook: (on) =>
+        stage?.querySelectorAll(`.room-stage-slab[data-place="${place}"]`).forEach((el) => (on ? el.setAttribute('data-filmed', '') : el.removeAttribute('data-filmed'))),
+      focusBook: () => {
+        // Not when focus has gone elsewhere on the desk; focus on the course page that is going (its
+        // Back, its links) comes home to the book (run 2: it fell to <body> when that page unmounted).
+        const active = document.activeElement;
+        if (active && active !== document.body && !active.closest('.room-page-slot')) return;
+        stage?.querySelector(`.room-stage-slab-hit[data-course-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+      },
+    };
+  };
+  const openBook = (id) => {
+    if (filmRunning()) return true;
+    const film = filmOf(id);
+    return film ? openFilm(film) : false;
+  };
   // A book's menu: { id, place, at: [x, y] (window px), title }.
   const [menu, setMenu] = useState(null);
   const openMenu = (id, place, at) => {
     if (!byId.has(id)) return;
+    primeBook(id);
     setMenu((m) => (m && m.id === id ? m : { id, place, at, title: byId.get(id).name }));
   };
-  const openCandleMenu = (at) => setMenu((m) => (m && m.id === 'candle' ? m : { id: 'candle', place: candle, at, title: 'Candle' }));
+  const openCandleMenu = (at) => {
+    primeCandle();
+    setMenu((m) => (m && m.id === 'candle' ? m : { id: 'candle', place: candle, at, title: 'Candle' }));
+  };
   const closeMenu = useCallback(
     (refocus) => {
       const id = menu?.id;
@@ -1548,7 +1448,7 @@ const DeskStage = ({
   // the dashed places render again only when they themselves change.
   const latest = useRef({});
   useEffect(() => {
-    latest.current = { onPick, onMove, onArrange, onMore, onNewCourse, startDrag, openMenu };
+    latest.current = { onPick, onMove, onArrange, onMore, onNewCourse, startDrag, openMenu, primeBook };
   });
   const act = useMemo(
     () => ({
@@ -1556,12 +1456,76 @@ const DeskStage = ({
       move: (...args) => latest.current.onMove?.(...args),
       arrange: (...args) => latest.current.onArrange?.(...args),
       drag: (...args) => latest.current.startDrag?.(...args),
+      prime: (...args) => latest.current.primeBook?.(...args),
       menu: (...args) => latest.current.openMenu?.(...args),
       more: () => latest.current.onMore?.(),
       newCourse: () => latest.current.onNewCourse?.(),
     }),
     [],
   );
+  // The stage's page-wide rules (desk.css html[data-desk-stage]: no page scroll, the room's own
+  // atmosphere not drawn under the stage, the top line's pills) while it is on the screen.
+  // Run 2: the scrollbar's gutter, measured before the stage takes it away, so desk.css keeps the top
+  // line's links where every other room page has them (they moved by its width).
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    // (html's own box: its clientWidth reports the whole window while scrollbar-gutter: stable
+    // keeps a strip with no scrollbar in it.)
+    if (!root.hasAttribute('data-desk-stage')) root.style.setProperty('--room-gutter-w', `${Math.max(0, Math.round((window.innerWidth - root.getBoundingClientRect().width) * 100) / 100)}px`);
+    root.setAttribute('data-desk-stage', '');
+    return () => root.removeAttribute('data-desk-stage');
+  }, []);
+  // A book opens by its film however it is opened: a click or Enter (RoomDesk's pick asks here first),
+  // the menu's Open, ⌘K's course rows (not while a course of it is open: the desk is kept then, hidden).
+  // The leather's grain is drawn once, and the course page's own picture fetched and decoded, in idle
+  // time, before the first click.
+  const openNow = useRef(null);
+  const roomNow = useRef(room);
+  useEffect(() => {
+    openNow.current = openBook;
+    roomNow.current = room;
+  });
+  // Ctrl K open on the desk: it may move the candle, so the other place's light is decoded meanwhile
+  // (the moment the action runs the room can change; unprimed, the candle waited 300-600 ms lit).
+  const primeNow = useRef(null);
+  useEffect(() => {
+    primeNow.current = primeCandle;
+  });
+  useEffect(
+    () =>
+      subscribeSearch(() => {
+        if (isSearchOpen() && !getFilm()) primeNow.current?.();
+      }),
+    [],
+  );
+  useEffect(() => {
+    setDeskOpener((id) => {
+      const state = getFilm();
+      // Kept (its course shown): the address simply changes. Mid-film: nothing else starts.
+      if (state?.phase === 'shown') return false;
+      if (state || filmRunning()) return true;
+      return Boolean(openNow.current?.(id));
+    });
+    const prepare = () => {
+      prepareGrain();
+      prepareRoomPictures();
+      warmFilm();
+      warmRoomOnce();
+      // Run 3: the held book's picture for the room's light, decoded and drawn once, all but unseen.
+      const registered = getDeskBook();
+      if (bookShows({ width: window.innerWidth, homeIsDesk: true }, registered)) {
+        const held = registered.held(bookLight(roomNow.current));
+        const fit = heldFit({ width: window.innerWidth, height: window.innerHeight }, held);
+        prepareHeld(fit.scale * (window.devicePixelRatio || 1) > 1.05 ? held.src.x2 : held.src.x1, fit);
+      }
+    };
+    const idle = typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(prepare, { timeout: 3000 }) : setTimeout(prepare, 1500);
+    return () => {
+      setDeskOpener(null);
+      if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idle);
+      else clearTimeout(idle);
+    };
+  }, []);
   // The frame's opening, where its picture's controls sit; left out when a pile stands before the
   // frame with its top above the frame's lower rule (deskStage.js frameHidden).
   const opening = quadBox(scene.quads.frameOpening);
@@ -1588,8 +1552,7 @@ const DeskStage = ({
             data-swapping={swapping ? '' : undefined}
           data-leaving={leaving || undefined}
           data-dragging={dragLive ? '' : undefined}
-          data-candle-from={drag?.candle && drag.state !== 'leaving' && drag.from === 'day' ? drag.from : undefined}
-          data-candle-moving={drag?.candle && drag.state !== 'leaving' && !candleArrived ? '' : undefined}
+          data-candle-away={candleAway}
             style={{ left: px(fit.left), top: px(fit.top), width: px(fit.width), height: px(fit.height), ...typeVars(scale) }}
           >
             {/* Each mood's stack: the night's over the day's, which stays whole under it (opaque under
@@ -1605,8 +1568,6 @@ const DeskStage = ({
               words={words}
               liftedId={liftedId}
               pickedId={pickedId}
-              draggingId={drag && drag.state !== 'leaving' ? drag.id : null}
-              arrivingId={arrivingId}
               candle={candle}
             />
             ))}
@@ -1649,6 +1610,7 @@ const DeskStage = ({
                       onArrange={onArrange ? act.arrange : undefined}
                       onDrag={onArrange ? act.drag : undefined}
                       onMenu={onArrange ? act.menu : undefined}
+                      onPrime={onArrange ? act.prime : undefined}
                     />
                   ) : null,
                 )}
@@ -1658,13 +1620,19 @@ const DeskStage = ({
               </div>
 
               {/* A dragged book and where it may go: above the books' hit areas, taking no pointer. */}
-              {drag && <DragTargets targets={drag.targets} over={drag.over} scale={scale} />}
-              {drag?.candle && (
-                <CandleGhost ghostRef={ghostRef} candle={drag.place} mood={drag.from} scale={scale} state={candleArrived ? 'arrived' : drag.state} />
+              {drag && !drag.dropped && <DragTargets targets={drag.targets} over={drag.over} scale={scale} stage={scene.stage} />}
+              {drag?.candle && <CandleGhost ghostRef={ghostRef} candle={drag.place} mood={drag.from} scale={scale} placing={isNightKey(drag.from)} />}
+              {drag && !drag.candle && byId.has(drag.id) && (
+                <BookGhost ghostRef={ghostRef} course={byId.get(drag.id)} place={drag.place} mood={drag.from} scale={scale} />
               )}
-              {drag && byId.has(drag.id) && (
-                <DragGhost ghostRef={ghostRef} course={byId.get(drag.id)} place={drag.place} mood={room} scale={scale} words={words.get(drag.id)} state={drag.state} />
+              {glides.map((g) =>
+                byId.has(g.id) ? (
+                  <BookGlide key={g.key} glide={g} course={byId.get(g.id)} mood={room} scale={scale} onLanded={onLanded} settle={settled.includes(`|${g.key}|`)} />
+                ) : null,
               )}
+              {candleGlides.map((g) => (
+                <CandleGlide key={g.key} glide={g} scale={scale} flameOf={flames} onLanded={onCandleLanded} />
+              ))}
 
               <Pages
                 notes={notes}
@@ -1677,6 +1645,8 @@ const DeskStage = ({
                 greeting={greeting}
                 status={status}
                 clock={clock}
+                quads={PAGE_QUADS}
+                size={PAGE}
               />
 
               <OnQuad quad={scene.quads.scrap} size={SCRAP} scale={scale} className="room-stage-scrap">
@@ -1689,10 +1659,12 @@ const DeskStage = ({
               onToggle={onToggleCandle}
               still={still}
               scale={scale}
-              candle={shownCandle}
-              nightKey={isNightKey(room) ? room : nightKey}
+              points={candleAt(shownCandle).points}
+              box={candleAt(shownCandle).box}
+              stillFlame={stillFlameOf(isNightKey(room) ? room : nightKey, scale)}
               onDrag={onMoveCandle && candlePlaces(scene).length > 1 ? startCandleDrag : undefined}
               onMenu={onMoveCandle && candlePlaces(scene).length > 1 ? openCandleMenu : undefined}
+              onPrime={onMoveCandle && candlePlaces(scene).length > 1 ? primeCandle : undefined}
             />
           </div>
           {menu && (menu.id === 'candle' || byId.has(menu.id)) && <StageMenu menu={menu} items={menuItems(menu)} onClose={closeMenu} />}

@@ -47,6 +47,7 @@ import {
 import { usePageActions } from './roomCommands';
 import { offerUndo, sayInRoom, useRoomUndo } from './roomUndo';
 import { rememberPick } from './deskFlight';
+import { announceMoves, getFilm, openCourseOnDesk } from './deskFilm';
 import { useDeskReturn } from './deskFlightRun';
 import scene from './assets/desk/scene.json';
 import './desk.css';
@@ -76,6 +77,8 @@ import './desk.css';
 const PICK_MS = 180;
 // Notes on the notebook's left page.
 const RECENT = 5;
+// A move's save and undo line wait for its glide (DeskStage: 180 ms, then the 90 ms hand-over).
+const MOVE_SAVE_AFTER_MS = 300;
 const px = (n) => `${n}px`;
 
 // An object's two shadows as custom properties (desk.css .room-desk-shade): the flow desk.
@@ -177,15 +180,33 @@ const RoomDesk = () => {
   // One write of the desk's arrangement and its undo line. The line is offered as the write is
   // issued, not when it settles (run desk1, D6): offline a write settles only on the server's
   // answer, though the book has moved already, so the line came on reconnecting, stale.
-  const writeMove = useCallback((patch, before, message, what) => {
-    Promise.resolve(writePrefs.current?.(patch)).catch((err) => {
-      console.error(`Could not move ${what}`, err);
-      sayInRoom('That move could not be saved');
-    });
-    offerUndo({
-      message,
-      undo: () => Promise.resolve(writePrefs.current?.(before)).catch((err) => console.error(`Could not put ${what} back`, err)),
-    });
+  // Round eight, run 2: a book move (`moves`: the places before and after, and the book moved) is first
+  // ANNOUNCED to the stage, whose books start gliding in this very frame; the save follows a frame later,
+  // so its render (both stacks, the new places) happens under the moving ghosts, never before them.
+  const writeMove = useCallback((patch, before, message, what, moves = null) => {
+    const save = () =>
+      Promise.resolve(writePrefs.current?.(patch)).catch((err) => {
+        console.error(`Could not move ${what}`, err);
+        sayInRoom('That move could not be saved');
+      });
+    const offer = () =>
+      offerUndo({
+        message,
+        undo: () => Promise.resolve(writePrefs.current?.(before)).catch((err) => console.error(`Could not put ${what} back`, err)),
+      });
+    if (moves) {
+      // The glides start in this very frame (the stage); the save and the undo line, each of which makes
+      // the room render again (the profile, the undo store), wait until they have landed (run 2: in the
+      // click's frame and under the glide they cost 20-60 ms frames).
+      announceMoves(moves.from, moves.to, moves.primary);
+      setTimeout(() => {
+        save();
+        offer();
+      }, MOVE_SAVE_AFTER_MS);
+    } else {
+      save();
+      offer();
+    }
   }, []);
 
   // Where each course's book lies on the stage's piles: the student's own arrangement
@@ -250,7 +271,11 @@ const RoomDesk = () => {
         return;
       }
       const where = map[courseId][0] === 'L' ? 'the left pile' : 'the right pile';
-      writeMove({ deskPlaces: placesToWrite(map) }, { deskPlaces: placesToWrite(arrangement.map) }, `${course.name} is on ${where} now.`, 'the book');
+      writeMove({ deskPlaces: placesToWrite(map) }, { deskPlaces: placesToWrite(arrangement.map) }, `${course.name} is on ${where} now.`, 'the book', {
+        from: arrangement.map,
+        to: map,
+        primary: courseId,
+      });
     },
     [arrangement, courses, nearFrom, say, writeMove, placesToWrite],
   );
@@ -286,6 +311,7 @@ const RoomDesk = () => {
         { deskPlaces: placesToWrite(arrangement.map), deskNearFrom: memory },
         message,
         'the book',
+        { from: arrangement.map, to: next.map, primary: courseId },
       );
     },
     [arrangement, courses, nearFrom, say, writeMove, placesToWrite],
@@ -293,8 +319,10 @@ const RoomDesk = () => {
 
   // What ⌘K offers on the desk: moving the candle to its other place, moving any book on the piles,
   // bringing one closer, putting it back.
+  // Not while the desk is kept under a course its book opened (round eight): Ctrl K then belongs to the
+  // course page; its moves would act on a desk nobody sees.
   usePageActions(() =>
-    flow
+    flow || getFilm()
       ? []
       : [
           ...candlePlaces(scene)
@@ -365,7 +393,10 @@ const RoomDesk = () => {
   // kept for the course page (deskFlight.js). Still and reduced motion open at once.
   const pick = (courseId, rect) => {
     if (pickedId) return;
-    rememberPick(rect, courseId, Date.now(), lookOf(courseId));
+    // On the stage the book opens by its film (round eight, deskFilmRun.js: DeskStage plays it; still
+    // and reduced motion play none and land here).
+    if (!flow && openCourseOnDesk(courseId)) return;
+    rememberPick(typeof rect === 'function' ? rect() : rect, courseId, Date.now(), lookOf(courseId));
     const quiet =
       document.documentElement.getAttribute('data-motion') === 'still' ||
       window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;

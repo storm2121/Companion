@@ -1,0 +1,395 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   The desk's table (round eight, run 3: TableStage.jsx, the production pictures). The stage's own rules
+   (desk.css: the backdrop, the gilt, the menu, the notebook's words, the candle, the top line over the
+   stage) apply as they are; these add the light states' stacks, the lamp, the small notebook and what is
+   the table's own. Plain 2D: pictures carry every light and shade; no gradient, glow or blur; only the
+   wall frame's two tiny layers blend (desk.css). At rest only the flame's film and the candle light's
+   breath move.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* One light state's stack: the room, its light, the wall frame, the room's layers for the arrangement,
+   the books, their gilt; isolated, a layer of its own (will-change), unseen unless it is the room's or
+   the one being left. The swap is the stack coming in over the one it leaves (opaque over opaque: an
+   exact crossfade, the cost of one layer). Owner fixes (2026-11-23, D): every change of light is one the eye can
+   follow, never a cut: the lamp in 520 ms (it was 160: read as a switch of pictures), night and day in 1000 ms (was
+   1700 after 120-150), the candle's place by night in 650 ms (was 400). Books, labels and the candle are in both
+   stacks at the same place and opaque: only the light moves. */
+.room-table-state {
+  position: absolute;
+  inset: 0;
+  isolation: isolate;
+  pointer-events: none;
+  opacity: 0;
+  will-change: opacity;
+}
+
+.room-table-state[data-on='leaving'] {
+  z-index: 1;
+  opacity: 1;
+  transition: none;
+}
+
+.room-table-state[data-on='room'] {
+  z-index: 2;
+  opacity: 1;
+}
+
+.room-stage[data-swap='look'] .room-table-state[data-on='room'] {
+  transition: opacity var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+.room-stage[data-swap='lamp'] .room-table-state[data-on='room'] {
+  transition: opacity 520ms cubic-bezier(0.3, 0, 0.2, 1);
+}
+
+.room-stage[data-swap='candle'] .room-table-state[data-on='room'] {
+  transition: opacity 650ms var(--room-stage-swap-ease);
+}
+
+/* A change turned round mid-way (the switch pressed again before the light had settled; TableStage useStates `back`):
+   the stack that was coming in stays on top and goes out again from where it is, on the same curve; the room it was
+   covering stands whole under it. (It used to become the room at once, opaque: a cut.) */
+.room-table-state[data-on='room'][data-back] {
+  z-index: 1;
+}
+
+.room-table-state[data-on='leaving'][data-back] {
+  z-index: 2;
+  opacity: 0;
+}
+
+.room-stage[data-swap='look'] .room-table-state[data-on='leaving'][data-back] {
+  transition: opacity var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+}
+
+.room-stage[data-swap='lamp'] .room-table-state[data-on='leaving'][data-back] {
+  transition: opacity 520ms cubic-bezier(0.3, 0, 0.2, 1);
+}
+
+.room-stage[data-swap='candle'] .room-table-state[data-on='leaving'][data-back] {
+  transition: opacity 650ms var(--room-stage-swap-ease);
+}
+
+/* The table's own timings for night and day (<html data-desk-table>, set by TableStage; round seven's stage keeps its
+   own): the room in 1000 ms from the click's frame; inside the night's stack the candle's light rises from 220 ms over
+   700 ms and goes from 80 ms over 800 ms, so the room never dips under the light it ends at (desk.css's reasoning). */
+html[data-design='room'][data-desk-table] {
+  --room-stage-swap: 1000ms !important;
+  --room-stage-swap-at: 0ms !important;
+  --room-stage-light-in: 700ms;
+  --room-stage-light-out: 800ms;
+  --room-stage-light-out-at: 80ms;
+}
+
+.room-table .room-stage-light-layer {
+  transition: opacity var(--room-stage-light-in) var(--room-stage-swap-ease) 220ms;
+}
+
+@starting-style {
+  .room-stage[data-swap] .room-table-state[data-on='room'] {
+    opacity: 0;
+  }
+}
+
+/* Above every stack (the stacks take z-index 1 and 2 in a swap): what belongs to no state, and the candle
+   with its flame. */
+.room-table > .room-stage-overlay,
+.room-table > .room-stage-candle {
+  z-index: 4;
+}
+
+/* A stack on the page but not shown (a switch away: the lamp's, the other look's, a candle place's) is drawn at
+   0.2% ABOVE the room (under half a level) while a switch is near (TableStage data-warm): its tiles and pictures
+   are rastered before the press (something at opacity 0, or under the opaque room, is not rastered: round eight,
+   run 2). Otherwise it is not drawn at all. */
+.room-stage[data-warm] .room-table-state:not([data-on]) {
+  z-index: 3;
+  opacity: 0.002;
+}
+
+/* Motion "Still" (the You page) KEEPS the light's cross-fade (owner fixes, D). The room's own rule for Still (room.css)
+   stops every animation and transition "except the mood cross-fade, which lives on body and .room"; on the desk the
+   mood's cross-fade is these stacks, and it was stopped with the rest (and again by a rule of its own here), so with
+   Still every lamp, candle and day/night change was one frame: a cut, not stillness. Things still do not travel in
+   Still (no glide, no book film). The system's reduced motion keeps every change at once, below. */
+html[data-design='room'][data-motion='still'] .room-stage[data-swap='look'] .room-table-state:is([data-on='room'], [data-on='leaving'][data-back]) {
+  transition: opacity var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at) !important;
+}
+
+html[data-design='room'][data-motion='still'] .room-stage[data-swap='lamp'] .room-table-state:is([data-on='room'], [data-on='leaving'][data-back]) {
+  transition: opacity 520ms cubic-bezier(0.3, 0, 0.2, 1) !important;
+}
+
+html[data-design='room'][data-motion='still'] .room-stage[data-swap='candle'] .room-table-state:is([data-on='room'], [data-on='leaving'][data-back]) {
+  transition: opacity 650ms var(--room-stage-swap-ease) !important;
+}
+
+html[data-design='room'][data-motion='still'] .room-stage.room-table .room-table-state .room-stage-light-layer {
+  transition: opacity var(--room-stage-light-in) var(--room-stage-swap-ease) 220ms !important;
+}
+
+html[data-design='room'][data-motion='still'] .room-stage.room-table[data-room='day'] .room-table-state .room-stage-light-layer {
+  transition: opacity var(--room-stage-light-out) var(--room-stage-swap-ease) var(--room-stage-light-out-at) !important;
+}
+
+html[data-design='room'][data-motion='still'] .room-stage.room-table :is(.room-stage-page, .room-stage-clock, .room-stage-day-line, .room-stage-row-stamp, .room-stage-page-meta, .room-stage-page-lines, .room-stage-page-action, .room-stage-dashed-label, .room-stage-page-empty) {
+  transition: color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-table-state {
+    transition: none !important;
+  }
+}
+
+/* A book: its shade on the books under it, its picture, its plate; out of the stacks while it travels
+   (data-gliding, DOM-set) or while the film has it (data-filmed). */
+.room-table-book {
+  display: contents;
+}
+
+.room-table-book[data-gliding],
+.room-table-book[data-filmed],
+.room-table-gilt[data-gliding],
+.room-table-gilt[data-filmed],
+.room-stage-slab.is-hit[data-gliding] .room-stage-slab-mark,
+.room-stage-slab.is-hit[data-filmed] .room-stage-slab-mark,
+.room-table-book.is-dragging,
+.room-table-gilt.is-dragging {
+  visibility: hidden;
+}
+
+.room-table-gilt {
+  left: 0;
+  top: 0;
+}
+
+/* The room's layers for the arrangement drawn on a canvas (TABLE_ROOM 'canvas'): stretched over the
+   stage's box. */
+.room-table-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+/* The lamp's switch and the small notebook: buttons on their pictures' outlines (clip-path), nothing
+   drawn; a ring of the room's focus colour round the outline from the keyboard. */
+.room-table-switch {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.room-table-switch:focus-visible {
+  outline: none;
+}
+
+.room-table-ring {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.room-table-ring polygon {
+  fill: none;
+  stroke: var(--room-stage-ring);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+.room-table-switch:focus-visible + .room-table-ring {
+  opacity: 1;
+}
+
+/* "+ New course" on a flat place (the cover's outline). */
+.room-table-dashed-cover .room-stage-dashed-label {
+  justify-content: center;
+}
+
+/* More courses than the table holds: one line at the window's foot, on one of the room's sheets (as the
+   top line's pills), opening All notes. */
+.room-table-more {
+  position: fixed;
+  left: 20px;
+  bottom: 16px;
+  z-index: 3;
+  padding: 7px 16px;
+  border: 1px solid var(--room-stage-sheet-rim);
+  border-radius: var(--room-r-pill);
+  background: var(--room-stage-sheet);
+  color: var(--room-on-ground);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.room-table-more:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The truth (harness ?bare=1): the pictures only, as Blender's composite compares them. */
+.room-stage[data-bare] .room-stage-overlay,
+.room-stage[data-bare] .room-table-gilt,
+.room-stage[data-bare] .room-stage-flamefilm {
+  display: none;
+}
+
+.room-stage[data-bare] .room-stage-breath {
+  animation: none;
+  opacity: 0;
+}
+
+.room-stage[data-bare] .room-table-state:not([data-on]) {
+  display: none;
+}
+
+/* Fix run: the production desk's backdrop is its own layer, so the book film's swaps (kept, woken at 0.4% over the
+   course page, shown whole: desk.css) change its opacity and order on the compositor, never re-raster it. */
+/* Owner fixes 3 (cleanup): the room's grain (room.css .room-grain: 9% noise over the whole window, over every page)
+   is not drawn over the table. The table is a render with its own grain, and the page's was laid over it and over the
+   held book as well (measured: 81% of the desk's pixels changed by it, 91% of the book's). The room's own pages keep
+   it: a note, the calendar, the papers Home. (book.css has the held book's rule.) `data-desk-back`: the frame the kept
+   desk is drawn again over a note (deskFilmRun returnToKeptDesk), before the stage's own attribute is back. */
+html[data-desk-table][data-desk-stage] .room-grain,
+html[data-desk-table][data-desk-back] .room-grain {
+  display: none;
+}
+
+.room-stage-backdrop.is-table {
+  will-change: opacity;
+}
+
+
+/* Owner fixes (2026-11-23, C): every place a taken book (or the candle) can go to, marked while it is taken
+   (TableStage TableMarks): each a thin pale solid line over a darker hairline (so it reads on leather, on paper and on
+   the lit table), the one under the pointer clearly the stronger (data-over, set on the page by the pointer's moves).
+   Above the thing in the hand (z 5: ghosts and glides take 1 to 3). They come and go on their own opacity. */
+.room-table-target {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms ease-out;
+}
+
+.room-table-target.is-on {
+  opacity: 1;
+}
+
+@starting-style {
+  .room-table-target.is-on {
+    opacity: 0;
+  }
+}
+
+.room-table-target polygon {
+  fill: none;
+  stroke-linejoin: round;
+  transition:
+    stroke 90ms ease-out,
+    stroke-width 90ms ease-out,
+    fill 90ms ease-out;
+}
+
+.room-table-target-shade {
+  stroke: rgba(14, 9, 6, 0.3);
+  stroke-width: 3px;
+}
+
+.room-table-target-line {
+  stroke: rgba(255, 246, 228, 0.58);
+  stroke-width: 1px;
+}
+
+.room-table-target g[data-over] .room-table-target-shade {
+  stroke: rgba(14, 9, 6, 0.5);
+  stroke-width: 5px;
+}
+
+.room-table-target g[data-over] .room-table-target-line {
+  stroke: rgb(255, 246, 228);
+  stroke-width: 2px;
+  fill: rgba(255, 246, 228, 0.1);
+}
+
+.room-stage.is-day .room-table-target-line {
+  stroke: rgba(255, 255, 255, 0.72);
+}
+
+.room-stage.is-day .room-table-target g[data-over] .room-table-target-line {
+  stroke: rgb(255, 255, 255);
+  fill: rgba(255, 255, 255, 0.14);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-table-target,
+  .room-table-target polygon {
+    transition: none;
+  }
+}
+
+/* Fix run (rule 1): the table never fades in. It is drawn at 0.4% while its room comes in and shown whole in one frame
+   once that has been drawn (TableStage drawnIn); round seven's stage keeps its 600 ms. */
+.room-stage.room-table {
+  opacity: 0.004;
+  transition: none;
+}
+
+.room-stage.room-table.is-ready {
+  opacity: 1;
+}
+
+/* Fix run 2: no hover rim on the table's spines. The overlay cannot know what stands in front of a spine: on T01 the
+   rim ran on along the spine's quad behind the notebook's stand, a pale line 24 css px out to the left, and stayed
+   while the pointer rested on the book after a drop. Hover lights the gilt (data-lit); the keyboard's ring stays. */
+.room-table .room-stage-spine {
+  box-shadow: none;
+}
+
+/* A glide's pictures, under their lettering: the tone filter of fix run 2 acts on these alone. */
+.room-stage-ghost-tone {
+  position: absolute;
+  inset: 0;
+}
+
+/* Fix run 2: each gilt its own layer. Painted into the stack's big layer, a title's background-clip: text came out
+   with its gold missing left of an arbitrary column (T10's "Hist. Arab" showed ". ARAB", the cut moving whenever the
+   stack was rastered again; with the stack not a layer at all, the whole title went dark): a Chrome raster fault with
+   text-clipped backgrounds in large layers. On its own layer every title is whole, every time. */
+.room-table-gilt .room-stage-gilt {
+  will-change: transform;
+}
+
+/* Fix run 3: glides bound for a tower, behind the big notebook's stand (TableStage behindStyle: a mask). */
+.room-table-behind {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+/* Fix run 3: the books settling off a pulled one, one layer between it (z 1, under them) and a book in the hand or on
+   its way to its place (z 3, over them). */
+.room-table-over {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+}
+
+/* Fix run 3: a gliding book's lettering scales about its label's middle (TableStage BookGlide). */
+.room-stage-ghost .room-stage-gilt-gold,
+.room-stage-ghost .room-stage-gilt-press {
+  transform-origin: 50% 50%;
+}

@@ -1,0 +1,329 @@
+/* The course as the opened book (round eight, run 3; CourseBook.jsx). Loaded only with the book's own
+   chunk: nothing here reaches a page that is not the book. The book setting's faces (EB Garamond for
+   the words; the room's Figtree for the small labels). */
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+
+/* The held picture over the whole window, the words on its pages. Where the picture does not reach,
+   its own ground (the production pictures will carry a surround). */
+.room-book {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  color: var(--book-ink);
+  font-family: var(--book-text);
+  font-size: var(--book-size);
+  /* Fix run: its own layer from its mount under the desk (0.4%) to its life as the page, so the film's swap is a
+     change of opacity on the compositor, never a new raster of the page. */
+  will-change: opacity;
+}
+
+/* The owner's fixes (2026-11-23). The held view round the book (its surround, the whole picture) and, over it, the
+   book itself as an object of its own (CourseBook): the same picture cut to the book's outline, in two halves on the
+   spine, each with its page's words; at rest it lies exactly over the ground's own picture of it (no 3D context round
+   it: in one, Chrome drew a half through the 3D path even lying flat, its words soft and a pixel off). The book film
+   (deskFilmRun) is a plain dissolve of this whole page over the desk; in Calm the object settles into its place by a
+   few pixels meanwhile (its own layer: a transform on the compositor), with the rest's own wood under it for that
+   moment (.room-book-rest: the ground's picture has the book on it too, and would show a second edge round it). */
+.room-book-ground {
+  position: absolute;
+  inset: 0;
+  background: var(--book-ground);
+}
+
+.room-book-object {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+  /* (Its box takes no press of its own: the pages in it do.) */
+  pointer-events: none;
+}
+
+.room-book-half {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.room-book-face {
+  position: absolute;
+  inset: 0;
+}
+
+.room-book-in {
+  position: absolute;
+}
+
+.room-book-rest {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+
+.room-book.is-filming .room-book-rest {
+  display: block;
+}
+
+/* Never shown before it is whole (CourseBook `whole`, owner fixes 2): a page reached without the film (a reload on the
+   book, the way back from a note) stays unseen until its pictures are decoded and its words laid out; meanwhile the
+   room's flat ground and the top line stand (html[data-desk-book] keeps the room's weather away). Under the desk the
+   slot's own rule (0.4%) stands, and the film brings it in. */
+.room-page-slot:not([data-under]) > .room-book:not([data-whole]) {
+  visibility: hidden;
+}
+
+/* The room's own weather is all under the book's opaque page: not drawn while the book is shown. */
+html[data-desk-book]:not([data-note-held]) .room-atmos {
+  display: none;
+}
+
+/* Owner fixes 3 (cleanup): nor the room's grain over the held book (a render with its own: table.css). */
+html[data-desk-book]:not([data-note-held]) .room-grain {
+  display: none;
+}
+
+.room-book-picture {
+  position: absolute;
+  max-width: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* A page: one flat box, taken onto the text area's corners. Its own layer, drawn once; nothing in it
+   moves but the notes' list when it scrolls. */
+.room-book-page {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.room-book-line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  transform-origin: 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-book-name {
+  margin: 0;
+  font: inherit;
+}
+
+.room-book-line.is-title {
+  font-family: var(--book-title);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  overflow: visible;
+}
+
+.room-book[data-type='room'] .room-book-line.is-title {
+  letter-spacing: -0.02em;
+}
+
+.room-book-line.is-strong {
+  font-weight: 600;
+}
+
+.room-book-trouble {
+  margin: 0;
+  font: inherit;
+  color: var(--book-ink);
+}
+
+/* The foot's actions and the list's head: the room's small labels. */
+.room-book-foot {
+  display: flex;
+  align-items: center;
+  gap: 1.9em;
+  overflow: visible;
+}
+
+.room-book-action {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--book-action);
+  font: inherit;
+  font-family: var(--book-label);
+  font-size: var(--book-label-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.room-book-action:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.room-book-count {
+  font-family: var(--book-label);
+  font-size: var(--book-label-size);
+  color: var(--book-soft);
+}
+
+.room-book-head {
+  font-family: var(--book-label);
+  font-size: var(--book-label-size);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--book-soft);
+}
+
+.room-book-empty {
+  color: var(--book-soft);
+  overflow: visible;
+}
+
+/* A note's line: the whole line is the button (its three columns are its own lines). */
+.room-book-row {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.room-book-kind,
+.room-book-date {
+  font-family: var(--book-label);
+  font-size: var(--book-label-size);
+  color: var(--book-soft);
+}
+
+.room-book-kind {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.room-book-date {
+  text-align: right;
+}
+
+.room-book-row:hover .room-book-title,
+.room-book-row:focus-visible .room-book-title {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.room-book-row:focus-visible {
+  outline: none;
+}
+
+.room-book-row:focus-visible .room-book-title {
+  text-decoration-thickness: 2px;
+}
+
+.room-book-row.is-selected .room-book-title {
+  color: var(--book-action);
+}
+
+/* Selecting: a small box before each line (the room's select mark, as the sheets' corner mark is: a
+   press on it selects; here it stands in the line, always shown while selecting). */
+.room-book-box.room-select-mark {
+  position: static;
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.45em;
+  border: 1.5px solid var(--book-soft);
+  border-radius: 2px;
+  background: none;
+  color: var(--book-action);
+  font-size: var(--book-label-size);
+  font-weight: 700;
+  line-height: 0.85em;
+  text-align: center;
+  vertical-align: -0.12em;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.room-book-row.is-selected .room-book-box.room-select-mark {
+  border-color: var(--book-action);
+}
+
+.room-book-action:focus-visible {
+  outline: 2px solid var(--book-action);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.room-book-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  fill: #d02020;
+}
+
+/* While the book is the page on the screen (CourseBook sets data-desk-book to its light): no page
+   scroll, and the top line's words on the room's sheets, as over the stage. */
+html[data-desk-book] {
+  scrollbar-gutter: auto;
+  overflow: hidden;
+}
+
+html[data-desk-book] .room-content {
+  padding-right: calc(var(--room-gutter) + var(--room-gutter-w, 0px));
+}
+
+html[data-desk-book] .room-topline {
+  pointer-events: none;
+}
+
+html[data-desk-book] .room-topline > * {
+  position: relative;
+  pointer-events: auto;
+}
+
+html[data-desk-book] .room-topline > .room-back::before,
+html[data-desk-book] .room-topline-nav::before {
+  content: '';
+  position: absolute;
+  inset: -7px -16px;
+  z-index: -1;
+  border: 1px solid var(--book-sheet-rim);
+  border-radius: var(--room-r-pill);
+  background: var(--book-sheet);
+}
+
+html[data-desk-book] .room-topline-nav::before {
+  inset: -7px -8px -7px -18px;
+}
+
+html[data-desk-book='night'] {
+  --book-sheet: rgba(30, 21, 15, 0.8);
+  --book-sheet-rim: rgba(239, 230, 214, 0.14);
+}
+
+html[data-desk-book='day'] {
+  --book-sheet: rgba(251, 250, 246, 0.9);
+  --book-sheet-rim: rgba(36, 28, 22, 0.12);
+}
+
+html[data-desk-book='night'] .room-topline :is(.room-back, .room-topline-link, .room-avatar) {
+  color: #efe7d8;
+}
+
+html[data-desk-book='day'] .room-topline :is(.room-back, .room-topline-link) {
+  color: #25302d;
+}
+
+/* Mounted under the desk by a press on its book, ahead of the click (RoomLayout's preview): drawn at
+   0.4% over the stage so the picture and the words are on the GPU before the film swaps them in. */
+.room-page-slot[data-under] > .room-book {
+  opacity: 0.004;
+  pointer-events: none;
+}

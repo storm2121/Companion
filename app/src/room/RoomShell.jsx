@@ -1,10 +1,11 @@
-import { useContext, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useContext, useMemo, useSyncExternalStore } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/authState';
 import TopLine from './components/TopLine';
 import { DataTrouble } from './components/primitives';
 import { RoomCoursesContext } from './roomData';
 import { openRoomSearch } from './deskSearch';
+import { getNoteKeep, homePathOf, subscribeNoteKeep } from './deskFilm';
 import { inboxLines } from './inboxLines';
 
 // The top of every room page: the one thin line of chrome, then the page.
@@ -27,12 +28,19 @@ const RoomShell = ({ children, back, onBack, trailing, ownTrouble = false, notic
   const initial = (profile?.displayName || profile?.email || 'M').slice(0, 1).toUpperCase();
   const inboxCount = useMemo(() => inboxLines(profile?.inbox).length, [profile?.inbox]);
   const { trouble, retry } = useContext(RoomCoursesContext);
+  // Owner fixes (2026-11-23, B): a note started from the desk's small notebook is left for the DESK, never for the
+  // book of the course the note was put in (the page picked that course: the owner did not expect "another book").
+  // The desk says which note that is (deskFilm.js noteKeep.pocket: the note's own address); here, not in the note's
+  // page, so the editor is untouched.
+  const keep = useSyncExternalStore(subscribeNoteKeep, getNoteKeep, getNoteKeep);
+  const { pathname } = useLocation();
+  const toDesk = Boolean(back && keep?.pocket && keep.pocket === pathname);
 
   return (
     <>
       <TopLine
-        back={back}
-        onBack={onBack}
+        back={toDesk ? 'Desk' : back}
+        onBack={toDesk ? () => navigate(homePathOf(keep.home)) : onBack}
         initial={initial}
         trailing={trailing}
         inboxCount={inboxCount}

@@ -22,6 +22,7 @@ import { SAGE_VOICES } from './sageChoices';
 import { IMMUTABLE_CACHE, prepareImage } from './imageScale';
 import { useRoomCourses } from './roomData';
 import { HOME_OPTIONS, MOOD_OPTIONS, MOTION_CALM, MOTION_STILL, resolveRoomPrefs } from './roomPrefs';
+import { warmOtherLook } from './deskBook';
 
 // You — design 6e. The few switches that matter.
 //
@@ -274,7 +275,11 @@ const RoomYou = () => {
           {row(
             'Mood',
             'Candlelight: a room at night, rain on the window, the city beyond. Rain: a grey, quiet day.',
-            <Segmented options={MOOD_OPTIONS} value={prefs.mood} onChange={(mood) => set({ mood })} />,
+            // (Owner fixes 3: the desk's other time of day is read into the browser's cache as the pointer or the
+            // keyboard comes here, not after every load of the desk. A wrapper with no box of its own.)
+            <span style={{ display: 'contents' }} onPointerOver={warmOtherLook} onFocus={warmOtherLook}>
+              <Segmented options={MOOD_OPTIONS} value={prefs.mood} onChange={(mood) => set({ mood })} />
+            </span>,
           )}
           {row(
             'Film grain',

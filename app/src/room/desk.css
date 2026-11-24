@@ -1403,9 +1403,20 @@ html[data-design='room']:has(.room-stage-backdrop[data-room='day']) {
 /* The stage IS the window: it is sized to the window (innerWidth), the page under it does not
    scroll, and no scrollbar gutter is kept at the right (room.css keeps one on every page, which
    left a 10-17px strip of ground beside the photograph and clipped the stage's edge). */
-html:has(.room-desk-page.is-stage) {
+/* The stage's page-wide rules hang on <html data-desk-stage> (DeskStage sets it while it is on the
+   screen; the book film takes it off while the desk is kept under a course page and puts it back
+   on the way home). Round eight: they were html:has(.room-desk-page.is-stage), and turning a :has()
+   over restyled the whole document, ~900 elements, 45-100 ms on the Intel UHD, mid-film. */
+html[data-desk-stage] {
   scrollbar-gutter: auto;
   overflow: hidden;
+}
+
+/* With the gutter gone the page is wider by the scrollbar's width: the content keeps that much more on
+   its right, so the top line's links stand where they stand on every other room page (run 2: they
+   jumped by the gutter's width when the stage came and went). DeskStage measures --room-gutter-w. */
+html[data-desk-stage] .room-content {
+  padding-right: calc(var(--room-gutter) + var(--room-gutter-w, 0px));
 }
 
 .room-desk-page.is-stage {
@@ -1424,15 +1435,24 @@ html:has(.room-desk-page.is-stage) {
 /* Under the stage the room's own atmosphere (its rain, mist and city lights) is covered by the
    picture: it is not drawn at all, so nothing moves at rest but the flame and the candle light's
    breath (round six; it ran 53 animations by night under the stage). */
-html:has(.room-desk-page.is-stage) .room-atmos {
+html[data-desk-stage] .room-atmos {
   display: none;
 }
 
-html:has(.room-desk-page.is-stage) .room-topline .room-wordmark {
+/* Round eight, run 2: while a book is pressed or opening (and once in idle time), the course page's own
+   room is drawn above the desk at 0.4%, so its layers and photograph are ready before the film swaps the
+   pages (deskFilmRun warmRoom). */
+html[data-desk-stage][data-room-warm] .room-atmos {
+  display: block;
+  z-index: 3;
+  opacity: 0.004;
+}
+
+html[data-desk-stage] .room-topline .room-wordmark {
   position: relative;
 }
 
-html:has(.room-desk-page.is-stage) .room-topline .room-wordmark::before {
+html[data-desk-stage] .room-topline .room-wordmark::before {
   content: '';
   position: absolute;
   inset: -7px -16px -7px -16px;
@@ -1445,7 +1465,7 @@ html:has(.room-desk-page.is-stage) .room-topline .room-wordmark::before {
     border-color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
 }
 
-html:has(.room-desk-page.is-stage) .room-topline-nav {
+html[data-desk-stage] .room-topline-nav {
   position: relative;
 }
 
@@ -1453,15 +1473,15 @@ html:has(.room-desk-page.is-stage) .room-topline-nav {
    meant for the tops of the piles under it (a 1280x650 window, 22+ courses). The row lets them
    through; its own two parts, the wordmark's pill and the links' pill, keep theirs. Nothing drawn
    changes. */
-html:has(.room-desk-page.is-stage) .room-topline {
+html[data-desk-stage] .room-topline {
   pointer-events: none;
 }
 
-html:has(.room-desk-page.is-stage) .room-topline > * {
+html[data-desk-stage] .room-topline > * {
   pointer-events: auto;
 }
 
-html:has(.room-desk-page.is-stage) .room-topline-nav::before {
+html[data-desk-stage] .room-topline-nav::before {
   content: '';
   position: absolute;
   inset: -7px -8px -7px -18px;
@@ -1625,12 +1645,12 @@ html[data-design='room']:has(.room-stage-backdrop[data-room='day']) {
    eases its colour and background with the mood: every element under it recalculated its style each
    frame of the swap, 640 of them, 13-15 ms a frame on the Intel UHD; the stage covers it anyway). A
    link's hover keeps its own time outside a swap. */
-html:has(.room-desk-page.is-stage) .room,
-html:has(.room-desk-page.is-stage) body {
+html[data-desk-stage] .room,
+html[data-desk-stage] body {
   transition: none;
 }
 
-html:has(.room-desk-page.is-stage) .room-topline .room-wordmark {
+html[data-desk-stage] .room-topline .room-wordmark {
   color: var(--room-on-ground);
   transition: color var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
 }
@@ -1954,29 +1974,39 @@ html[data-design='room'] .room-stage-picture .room-scene {
 }
 
 .room-stage-slab.is-dragging .room-stage-slab-visual,
-.room-stage-slab.is-gilt.is-dragging {
+.room-stage-slab.is-dragging .room-stage-slab-shadow,
+.room-stage-slab.is-gilt.is-dragging,
+.room-stage-slab[data-gliding] .room-stage-slab-visual,
+.room-stage-slab[data-gliding] .room-stage-slab-shadow,
+.room-stage-slab.is-gilt[data-gliding],
+.room-stage-slab.is-hit[data-gliding] .room-stage-slab-mark {
   visibility: hidden;
 }
 
-/* The candle taken (run three): by day its picture leaves the day's room (the day's set has no candle
-   in it: a clean table where it stood); by night it stays in its room, which is lit from there and has
-   its dish's dark footprint under it, until the room turns to the new place's light (a copy travels and
-   is parked at the new place meanwhile, fading on the swap's curve as the new room comes in). Its flame
-   is out while it travels and while it is parked. */
-.room-stage[data-candle-from='day'] .room-stage-mood[data-m='day'] .room-stage-candle,
-.room-stage[data-candle-moving] .room-stage-candle .room-stage-flamefilm,
-.room-stage[data-candle-moving] .room-stage-candle .room-stage-flame-still {
+/* The candle in the hand or on its way (round eight, DeskStage data-candle-away 'held' | 'gliding'); its
+   ghost carries the real flame, still lit. By day it leaves the day's room, its shadow too (the day set
+   has no candle in it: a clean table where it stood). By night the room's light is still its old place's
+   while it is held, and that night's pictures have the dish's dark footprint baked under it: the candle
+   stays drawn there (taken out, it left a black hole in the table) until the room turns to the new place's
+   light, whose own candle waits unseen until the glide lands on it. */
+.room-stage[data-candle-away][data-room='day'] .room-stage-mood[data-m='day'] :is(.room-stage-candle, .room-stage-candle-link),
+.room-stage[data-candle-away='gliding'][data-room='night'] .room-stage-mood[data-m='night'] .room-stage-candle,
+.room-stage[data-candle-away='gliding'][data-room='nightC1'] .room-stage-mood[data-m='nightC1'] .room-stage-candle {
   visibility: hidden;
 }
 
-.room-stage-drag.is-arrived {
-  opacity: 0;
-  transition: opacity var(--room-stage-swap) var(--room-stage-swap-ease) var(--room-stage-swap-at);
+/* A candle moved by night: the room's light changes with the candle, over 400 ms from the moment it
+   lands (night to night is only ever a candle moved; lighting it or blowing it out keeps the swap's
+   own curve). */
+.room-stage[data-room^='night'][data-leaving^='night'] .room-stage-mood.is-night {
+  transition-duration: 400ms;
+  transition-delay: 0ms;
 }
 
-/* By day a moved candle arrives over 300ms (its picture and its shadow, at their new place). */
-.room-stage-mood[data-m='day'] :is(.room-stage-candle, .room-stage-candle-link) {
-  animation: room-stage-arrive 300ms ease-out both;
+/* Once a swap is over, a night that is not the room's goes at once (it lies under the room's own, opaque:
+   fading it out unseen kept the GPU compositing both for 1.8 s after a candle was moved). */
+.room-stage:not([data-swapping]) .room-stage-mood.is-night {
+  transition: none;
 }
 
 /* The candle's places: dashed rings on the table, the one under the pointer whole. */
@@ -1984,30 +2014,33 @@ html[data-design='room'] .room-stage-picture .room-scene {
   stroke: var(--room-stage-dash-ink);
 }
 
-/* Arriving at its new place: the book fades in as the dragged copy fades out (200ms). */
-.room-stage-slab.is-arriving .room-stage-slab-visual,
-.room-stage-slab.is-gilt.is-arriving {
-  animation: room-stage-arrive 200ms ease-out both;
-}
-
-@keyframes room-stage-arrive {
-  from {
-    opacity: 0;
-  }
-}
-
-.room-stage-drag {
+/* A book or the candle on its way (round eight, DeskStage BookGhost / CandleGhost / the glides): one
+   layer the size of its place's box, moved by transform from its corner; nothing in it is a layer of its
+   own but the gilt, so it is drawn once and only moved. Held, a soft contact shadow under it (its own
+   picture, black and blurred once, when the layer is drawn: no filter runs per frame). */
+.room-stage-ghost {
   position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
   pointer-events: none;
 }
 
-.room-stage-drag.is-leaving {
-  opacity: 0;
-  transition: opacity 200ms ease-out;
+.room-stage-ghost-inner {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+/* By night, the candle in the hand is a see-through likeness, unlit: the room's light and its pictures
+   still have the candle where it stands (DeskStage PLACING_OPACITY says the same). */
+.room-stage-ghost.is-candle.is-placing {
+  opacity: 0.55;
+}
+
+.room-stage-ghost-shadow {
+  opacity: 0.42;
+  filter: brightness(0) blur(5px);
+  transform: translate(0, 7px);
 }
 
 /* Where it may go: the room's dashes (the next free slot on each pile, the near place, its own
@@ -2038,16 +2071,6 @@ html[data-design='room'] .room-stage-picture .room-scene {
   stroke-dasharray: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .room-stage-slab.is-arriving .room-stage-slab-visual,
-  .room-stage-slab.is-gilt.is-arriving {
-    animation: none;
-  }
-
-  .room-stage-drag.is-leaving {
-    transition: none;
-  }
-}
 
 /* A book's menu: a small sheet in the room's words (Figtree), dark by night and pale by day as the
    stage's room is; no glow, a hairline rim. Every line 15px, 4.5:1 or more on its sheet. */
@@ -2205,6 +2228,25 @@ html[data-design='room'] .room-stage-picture .room-scene {
   -webkit-background-clip: text;
   background-clip: text;
   transition: filter 150ms ease-out;
+}
+
+/* The production table's titles on more than one line (stageParts Gilt `perLine`, fix run): each line its own
+   label-wide box carrying the strip's middle band, so every line has one line's tone. */
+.room-stage-gilt-gold.is-per-line {
+  background: none;
+}
+
+.room-stage-gilt-gold.is-per-line > span {
+  align-self: stretch;
+  color: transparent;
+  background-color: var(--gilt-under);
+  background-image: var(--gilt-strip);
+  background-repeat: no-repeat;
+  background-size: 100% var(--gilt-tall);
+  background-position: 50% 50%;
+  background-blend-mode: var(--gilt-blend);
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 /* The impressions' filters (DeskStage): defined once, drawing nothing. */
@@ -2663,7 +2705,7 @@ html[data-design='room'] .room-stage-scrap .room-stage-scrap-paper form {
 /* A refused listener's line (RoomShell's DataTrouble) on the stage page (run desk1, D8): it lay
    under the stage's opaque backdrop, unseen. Above it, on one of the room's sheets, like the top
    line's words. */
-html:has(.room-desk-page.is-stage) .room-trouble {
+html[data-desk-stage] .room-trouble {
   position: relative;
   z-index: 1;
   width: fit-content;
@@ -2671,4 +2713,267 @@ html:has(.room-desk-page.is-stage) .room-trouble {
   border: 1px solid var(--room-stage-sheet-rim);
   border-radius: var(--room-r-pill);
   background: var(--room-stage-sheet);
+}
+
+/* ── Opening a book (round eight, track M: deskFilm.js / deskFilmRun.js) ─────────────────────────
+   A book picked on the stage is drawn again, in the room's flight layer, as a box of a few flat faces
+   seen through the render's own camera (the film's perspective is its focal length, its origin the
+   principal point): its leather as drawn at its place, its label, its gilt title; the board swings
+   open about the spine, the first page grows to the window and turns into the room's ground, the
+   course page shows. Only transform and opacity animate (Web Animations, on the compositor); no
+   filter and no blend anywhere in the book (a blend inside a 3D context flattens it in Chrome). */
+.room-film {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* While it plays it takes every press (the window hears them: Escape or a press turns an opening
+   round), so nothing under it, the desk or a course page coming or going, is clicked meanwhile. */
+.room-film.is-playing {
+  pointer-events: auto;
+}
+
+/* Built on a press, ahead of its click: drawn at 0.4% (so its faces are rastered before the click),
+   shown whole by the click. */
+.room-film.is-ready {
+  opacity: 0.004;
+}
+
+.room-film-book {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0 0;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+/* Closing, the book can be taken back (a press on it opens it again). */
+.room-film.is-closing .room-film-book {
+  pointer-events: auto;
+}
+
+.room-film-board {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 50% 0;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.room-film-face {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.room-film-board-out,
+.room-film-board-in {
+  inset: 0;
+  border-radius: 1px 6px 6px 1px;
+}
+
+.room-film-board-in {
+  transform: rotateY(180deg);
+  border-radius: 6px 1px 1px 6px;
+}
+
+/* The leather's edge, worn a little darker (flat: no gradient), its gilt fillet inside. */
+.room-film-board-out,
+.room-film-spine {
+  box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.22);
+}
+
+.room-film-fillet {
+  position: absolute;
+  inset: 6.5%;
+  border: 2px solid;
+  opacity: 0.78;
+}
+
+.room-film-cover-label {
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  top: 17%;
+  padding: 16px 10px 18px;
+  border: 2px solid;
+  border-radius: 2px;
+  text-align: center;
+}
+
+.room-film-spine-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.room-film-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  opacity: 0.8;
+}
+
+/* The stage's lettering: EB Garamond 700 small caps, the gold the place's gilt strip in the letters. */
+.room-film-gilt {
+  font-family: 'EB Garamond', 'Amiri', Georgia, serif;
+  font-weight: 700;
+  font-variant-caps: small-caps;
+  line-height: 1.12;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: transparent;
+  background-size: cover;
+  background-position: center;
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.room-film-pastedown {
+  position: absolute;
+  inset: 4.5% 5% 4.5% 3%;
+  border-radius: 1px;
+}
+
+.room-film-title-page {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 22%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  text-align: center;
+}
+
+.room-film-title-words {
+  font-family: 'EB Garamond', Georgia, serif;
+  font-weight: 700;
+  font-variant-caps: small-caps;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+}
+
+.room-film-title-rule {
+  width: 34%;
+  height: 2px;
+  opacity: 0.55;
+}
+
+.room-film-sheet {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+/* Run 3, the course as the held book: the sheet is the held picture itself, where the book page will
+   show it (its own place and size: it may be wider than the window). */
+.room-film-sheet.is-held {
+  max-width: none;
+  will-change: opacity;
+}
+
+/* Run 3 with the production pictures: the sheet is the held picture and its surround, one layer the window's
+   size, its pictures placed in it. */
+.room-film-sheet.is-whole {
+  overflow: hidden;
+}
+
+.room-film-held-img {
+  position: absolute;
+  max-width: none;
+}
+
+.room-film-sheet-paper,
+.room-film-sheet-ground {
+  position: absolute;
+  inset: 0;
+}
+
+.room-film-sheet-ground {
+  opacity: 0;
+}
+
+/* The real book while the film has it: its picture, dyes and gilt out of the stacks (its shadow stays,
+   as in a drag), and its rim. */
+.room-stage-slab[data-filmed] .room-stage-slab-visual,
+.room-stage-slab.is-gilt[data-filmed],
+.room-stage-slab.is-hit[data-filmed] .room-stage-slab-mark {
+  visibility: hidden;
+}
+
+/* The course page the film opened: the film was its arrival, nothing of it rises again. */
+[data-filmed].room-rise,
+[data-filmed] .room-rise {
+  animation: none;
+}
+
+/* The desk KEPT while the course its book opened is shown (RoomLayout, data-kept): mounted, unseen and
+   out of reach, its pictures decoded, so the way back shows it at once. The stage's contents are
+   skipped (content-visibility: not drawn, not hit, not focused, not read out, their style and layout
+   kept); the top line left out. (inert or a hidden slot restyled ~750 elements, 20-45 ms, each way.) */
+.room-home-slot[data-kept] .room-stage-backdrop {
+  content-visibility: hidden;
+  /* Its own box too: the wall's colour, over the course page's ground, and in the way of its presses. */
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Woken before the way back needs it (a press on Back, the close's start: deskFilmRun wakeDesk): drawn
+   again at 0.4% under the course page, so the swap back finds it rastered (run 1: 42-126 ms frames). */
+html[data-desk-waking] .room-home-slot[data-kept] .room-stage-backdrop {
+  content-visibility: visible;
+  opacity: 0.004;
+  /* Fix run: OVER the course page (its picture is opaque: under it the desk was not drawn at all). */
+  z-index: 2;
+}
+
+/* Fix run, the held book's swaps (deskFilmRun swapIn / swapOut): each ONE frame, by an <html> attribute set in a
+   frame's own callback; React catches up in the next task.
+   Opening: the course page drawn at 0.4% under the desk is shown whole; the desk's own top line and pill leave the
+   page's flow in the same frame (the course page's top line takes their place). */
+html[data-film-swap] .room-page-slot[data-under] > *,
+html[data-film-swap] .room-page-slot[data-under] > .room-book {
+  opacity: 1;
+}
+
+html[data-film-swap] .room-home-slot:not([data-kept]) :is(.room-topline, .room-trouble, .room-table-more) {
+  display: none;
+}
+
+/* Closing: the desk (drawn at 0.4% over the course page since the close began) shown whole, its top line back in
+   the flow; the course page, still mounted, unseen. */
+html[data-desk-back] .room-home-slot[data-kept] .room-stage-backdrop {
+  content-visibility: visible;
+  opacity: 1;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+html[data-desk-back] .room-home-slot[data-kept] .room-topline {
+  display: flex;
+}
+
+html[data-desk-back] .room-page-slot > * {
+  visibility: hidden;
+}
+
+/* Out of the page's flow too (hidden, the desk's top line pushed the course page down by its height). */
+.room-home-slot[data-kept] .room-topline,
+.room-home-slot[data-kept] .room-trouble {
+  display: none;
 }

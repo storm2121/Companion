@@ -1,22 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/authState';
-import { createPageNote, deleteNotes, moveRoomNotes } from '../services/library';
-import { startingBlocks } from './pageBlocks';
 import RoomShell from './RoomShell';
 import Paper from './components/Paper';
-import { Dot, Pill } from './components/primitives';
+import { DataTrouble, Dot, Pill } from './components/primitives';
 import { MenuCard } from './components/Overlay';
 import CourseSheet from './components/CourseSheet';
 import CourseFiles from './components/CourseFiles';
 import SheetTags from './components/SheetTags';
-import { courseMeta } from './calendarDays';
-import { noteStamp, sortCourseNotes, useRoomDesk } from './roomData';
-import { tiltFor } from './roomPrefs';
-import { markGone, offerUndo, sayInRoom, unmarkGone } from './roomUndo';
+import { noteStamp } from './roomData';
+import { HOME_DESK, homeFor, resolveMood, tiltFor } from './roomPrefs';
 import { MOD_KEY } from './platform';
-import { usePageActions } from './roomCommands';
 import { useCourseFlight } from './deskFlightRun';
+import { filmHome, getFilm } from './deskFilm';
+import { filmPageGone, filmPageReady } from './deskFilmRun';
+import { bookShows, getDeskBook, subscribeDeskBook } from './deskBook';
+import { useCoursePage } from './useCoursePage';
 
 // Course — design 6b. See a course's notes and start a new one.
 //
@@ -32,236 +31,95 @@ import { useCourseFlight } from './deskFlightRun';
 // Deletes and moves report on the room's one undo line (roomUndo.js), so an undo outlives
 // the page — leaving inside the window no longer cuts it short.
 
-const HOLD_MS = 480;
-
-// Typing somewhere should never be interrupted by a single-letter shortcut.
-const isTyping = (target) =>
-  Boolean(target?.closest?.('input, textarea, select, [contenteditable="true"]'));
-
-// The room decorates notes with where they live (`classId`, `className`). Those are
-// NEVER stored. The room's move (`moveRoomNotes`) uses only the ids and moves what the server
-// holds, but they still come off here, so nothing handed to the library carries them.
-const storedFields = (note) => {
-  const stored = { ...note };
-  delete stored.classId;
-  delete stored.className;
-  return stored;
+// `courseId`: given by RoomLayout for the desk's book film (run 2), which mounts this page by its course;
+// `preview`: mounted under the desk by a press on the book, before its click (nothing of it answers keys
+// or Ctrl K until it is shown).
+// Run 3: what the page does is useCoursePage's (shared with the opened book); on the desk's stage, once
+// a book is registered (the harness's `?book=1` until the production pictures exist), the page is drawn
+// as the held book (CourseBook, its own chunk); otherwise as today's sheets, below.
+const CourseBook = lazy(() => import('./CourseBook'));
+// The window's width, listened to only while a book is registered (nothing changes for the app without).
+const noListen = () => () => {};
+const listenWidth = (onChange) => {
+  window.addEventListener('resize', onChange);
+  return () => window.removeEventListener('resize', onChange);
 };
+const widthNow = () => (typeof window === 'undefined' ? 1440 : window.innerWidth);
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-
-const RoomCourse = () => {
+const RoomCourse = ({ courseId: givenId = null, preview = false } = {}) => {
   // At /room/course/:courseId, or at classic's own /class/:classId when the room is the
   // chosen design — same course, same page.
   const { courseId: roomParam, classId } = useParams();
-  const courseId = roomParam || classId;
+  const courseId = givenId || roomParam || classId;
   const navigate = useNavigate();
-  const { firebaseUser } = useAuth();
-  // Notes waiting out a delete's undo window are already left out by useRoomDesk.
-  const { courses, notes, loading, trouble, retry } = useRoomDesk();
+  const { profile } = useAuth();
+  const registered = useSyncExternalStore(subscribeDeskBook, getDeskBook, getDeskBook);
+  const width = useSyncExternalStore(registered ? listenWidth : noListen, widthNow, widthNow);
+  const homeIsDesk = homeFor(profile?.roomPrefs) === HOME_DESK;
+  const asBook = bookShows({ width, homeIsDesk }, registered);
+  // Owner fixes (2026-11-23, A3): the book's address is real: reached without the desk (a reload on the book, its
+  // link opened in a new tab), the book is registered from the table's own data (deskBookLoad.js, its chunk fetched
+  // only then) and the course shows as the book, not as its older page. Until that is read the top line stands alone,
+  // never one page and then the other; if it cannot be read, the older page, as with round seven's desk.
+  const [bookFailed, setBookFailed] = useState(false);
+  const awaitBook = !registered && !preview && !bookFailed && !getFilm() && bookShows({ width, homeIsDesk }, {});
+  const prefsNow = useRef(profile?.roomPrefs);
+  useEffect(() => {
+    prefsNow.current = profile?.roomPrefs;
+  });
+  useEffect(() => {
+    if (!awaitBook) return undefined;
+    let alive = true;
+    import('./deskBookLoad')
+      .then((m) => m.loadDeskBook(prefsNow.current))
+      .then(
+        (ok) => alive && !ok && setBookFailed(true),
+        () => alive && setBookFailed(true),
+      );
+    return () => {
+      alive = false;
+    };
+  }, [awaitBook]);
+  // (Owner fixes 2: while the book is being read, the room's own weather is kept away as under the book itself
+  // (book.css html[data-desk-book]): the top line on the room's flat ground, never the night window and then the book.)
+  const bookMood = resolveMood(profile?.roomPrefs?.mood) === 'day' ? 'day' : 'night';
+  useLayoutEffect(() => {
+    if (!awaitBook) return undefined;
+    const root = document.documentElement;
+    root.setAttribute('data-desk-book', bookMood);
+    return () => root.removeAttribute('data-desk-book');
+  }, [awaitBook, bookMood]);
+  const page = useCoursePage(courseId, { preview, onEscape: asBook ? () => navigate(filmHome()) : null });
+  const { course, own, others, loading, trouble, retry, selected, selectMode, meta, newNote } = page;
+  const { setSheetOpen, setFilesOpen, sheetOpen, filesOpen, moveOpen, setMoveOpen, clearSelection, openOrSelect } = page;
+  const { holdStart, holdMove, holdEnd, holdMenu, removeSelected, moveSelected, startSelecting } = page;
 
-  const [selected, setSelected] = useState(() => new Set());
-  // Entered from the Select pill, before anything is picked.
-  const [selecting, setSelecting] = useState(false);
-  const [moveOpen, setMoveOpen] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
-  const hold = useRef({ timer: null, fired: false, x: 0, y: 0 });
-
-  const course = courses.find((item) => item.id === courseId);
   // The desk's book flies in to this title, and home again on the way out (deskFlightRun.js).
   const titleRef = useRef(null);
   useCourseFlight(courseId, titleRef);
-  const own = sortCourseNotes(notes.filter((note) => note.classId === courseId));
-  const others = courses.filter((item) => item.id !== courseId);
-  const selectMode = selecting || selected.size > 0;
+  // Opened by the desk's book (round eight, deskFilmRun.js): the film is its arrival, so nothing of
+  // it rises on its own (the head and the sheets are there when the page turns into it), and it tells
+  // the film it is on the page (the open page waits for that, never the other way round).
+  const [filmed] = useState(() => preview || getFilm()?.courseId === String(courseId));
+  useLayoutEffect(() => {
+    filmPageReady(courseId);
+    return () => filmPageGone(courseId);
+  }, [courseId]);
 
-  /* ── New note ─────────────────────────────────────────────────────────── */
-
-  // Opens at once, online or not: the id is made on this device and the note is in the
-  // local cache before the server has heard of it. (`createPageNote` always stamps
-  // format:'page', which is what keeps it out of classic's lists — dualmode.md §2.)
-  const newNote = useCallback(() => {
-    if (!firebaseUser) return;
-    const { id, saved } = createPageNote(firebaseUser.uid, courseId, {
-      title: 'Untitled',
-      blocks: startingBlocks(),
-    });
-    saved.catch((err) => console.error('The server refused that note', err));
-    navigate(`/room/note/${courseId}/${id}`);
-  }, [firebaseUser, courseId, navigate]);
-
-  /* ── Selection ────────────────────────────────────────────────────────── */
-
-  const toggle = (id) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const clearSelection = () => {
-    setSelected(new Set());
-    setSelecting(false);
-    setMoveOpen(false);
-  };
-
-  const openOrSelect = (note) => (event) => {
-    // A long press already selected it; the click that follows is not an "open".
-    if (hold.current.fired) {
-      hold.current.fired = false;
-      return;
-    }
-    const onMark = Boolean(event.target.closest?.('.room-select-mark'));
-    if (onMark || selectMode || event.shiftKey || event.metaKey || event.ctrlKey) {
-      toggle(note.id);
-      return;
-    }
-    navigate(`/room/note/${courseId}/${note.id}`);
-  };
-
-  // Touch has no shift key: press and hold selects. Mouse and pen use modifier clicks.
-  const holdStart = (note) => (event) => {
-    if (event.pointerType !== 'touch') return;
-    clearTimeout(hold.current.timer);
-    hold.current.fired = false;
-    hold.current.x = event.clientX;
-    hold.current.y = event.clientY;
-    hold.current.timer = setTimeout(() => {
-      hold.current.fired = true;
-      toggle(note.id);
-      navigator.vibrate?.(10);
-    }, HOLD_MS);
-  };
-  const holdMove = (event) => {
-    if (Math.hypot(event.clientX - hold.current.x, event.clientY - hold.current.y) > 10) {
-      clearTimeout(hold.current.timer);
-    }
-  };
-  const holdEnd = () => clearTimeout(hold.current.timer);
-
-  /* ── Delete, with undo ────────────────────────────────────────────────── */
-
-  // The cascade is server-side and irreversible, so it is not SENT until the undo window
-  // has passed: until then the notes are only hidden, and "undo" means "it never happened".
-  // Once sent they stay hidden (`markGone`) until the live list drops them — un-hiding them
-  // as the request left made them flicker back for the second the server took.
-  const removeSelected = () => {
-    const ids = [...selected];
-    if (!ids.length || !firebaseUser) return;
-    if (!navigator.onLine) {
-      sayInRoom('Deleting needs a connection');
-      return;
-    }
-    const uid = firebaseUser.uid;
-    const from = courseId;
-    clearSelection();
-    offerUndo({
-      message: `${plural(ids.length, 'note')} deleted`,
-      hides: ids,
-      undo: () => {},
-      commit: () => {
-        markGone(ids);
-        deleteNotes(uid, from, ids).catch((err) => {
-          console.error('Could not delete those notes', err);
-          // Nothing was deleted, so the live list still has them: un-hiding brings them back.
-          unmarkGone(ids);
-          sayInRoom('Those notes could not be deleted');
-        });
-      },
-    });
-  };
-
-  /* ── Move, with undo ──────────────────────────────────────────────────── */
-
-  // Through library.js `moveRoomNotes`, which moves what the SERVER holds — every content
-  // doc of each note — and refuses when it cannot read them (offline, or no answer). Classic's
-  // `moveNotes` copied this device's cached page, which could be an old one, and then deleted
-  // the newer source. So "moved" is said only once it has happened, and a refusal says why.
-  const moveSelected = (target) => {
-    if (!firebaseUser) return;
-    const moving = own.filter((note) => selected.has(note.id)).map(storedFields);
-    if (!moving.length) return;
-    const uid = firebaseUser.uid;
-    const from = courseId;
-    clearSelection();
-    moveRoomNotes(uid, from, target.id, moving)
-      .then(({ moved }) => {
-        if (!moved) {
-          sayInRoom('Those notes are no longer there to move');
-          return;
-        }
-        offerUndo({
-          message: `${plural(moved, 'note')} moved to ${target.name}`,
-          undo: () =>
-            moveRoomNotes(uid, target.id, from, moving).catch((err) => {
-              console.error('Could not move them back', err);
-              sayInRoom('They could not be moved back');
-            }),
-        });
-      })
-      .catch((err) => {
-        console.error('Could not move those notes', err);
-        sayInRoom(
-          err?.code === 'move/unreadable'
-            ? 'Notes can only be moved with a connection — nothing was moved'
-            : 'Those notes could not be moved',
-        );
-      });
-  };
-
-  /* ── Keys ─────────────────────────────────────────────────────────────── */
-
-  useEffect(() => {
-    const onKey = (event) => {
-      if (isTyping(event.target)) return;
-      if (event.key === 'Escape') {
-        setSelected(new Set());
-        setSelecting(false);
-        setMoveOpen(false);
-        return;
-      }
-      // The tile says "Or press N" — this is what makes that true.
-      const plainN =
-        (event.key === 'n' || event.key === 'N') && !event.metaKey && !event.ctrlKey && !event.altKey;
-      if (plainN) {
-        event.preventDefault();
-        newNote();
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [newNote]);
-
-  // What ⌘K offers here. "new-note" replaces the room-wide "New note in …" of the same id.
-  usePageActions(() =>
-    course
-      ? [
-          { id: 'new-note', label: 'New note here', hint: course.name, keywords: ['create', 'add', 'write'], run: newNote },
-          {
-            id: 'course-edit',
-            label: 'Edit this course',
-            keywords: ['rename', 'colour', 'color', 'schedule', 'time', 'room', 'professor', 'details'],
-            run: () => setSheetOpen(true),
-          },
-          ...(own.length
-            ? [
-                { id: 'course-files', label: "See this course's photos", keywords: ['files', 'images', 'pictures'], run: () => setFilesOpen(true) },
-                { id: 'course-select', label: 'Select notes', keywords: ['move', 'delete', 'many'], run: () => setSelecting(true) },
-              ]
-            : []),
-        ]
-      : [],
-  );
-
-  const meta = [course ? courseMeta(course, { professor: true }) : '', own.length ? plural(own.length, 'note') : '']
-    .filter(Boolean)
-    .join(' · ');
+  if (awaitBook) return <RoomShell back="Desk" onBack={() => navigate(filmHome())} ownTrouble />;
+  // (The older page is what shows: RoomLayout's wait for a book is off.)
+  if (!asBook && typeof document !== 'undefined') document.documentElement.removeAttribute('data-book-wait');
+  if (asBook) {
+    return (
+      <Suspense fallback={null}>
+        <CourseBook page={page} preview={preview} book={registered} courseId={courseId} />
+      </Suspense>
+    );
+  }
 
   return (
     <RoomShell back="Desk" onBack={() => navigate('/room')} ownTrouble>
-      <div className="room-course-head room-rise">
+      <div className="room-course-head room-rise" data-filmed={filmed ? '' : undefined}>
         <div>
           <h1 ref={titleRef} className="room-course-title">
             <Dot size={18} color={course?.color} />
@@ -287,7 +145,7 @@ const RoomCourse = () => {
           )}
           {own.length > 0 && (
             <Pill
-              onClick={() => (selectMode ? clearSelection() : setSelecting(true))}
+              onClick={() => (selectMode ? clearSelection() : startSelecting())}
               aria-pressed={selectMode}
               title={selectMode ? undefined : `Or ${MOD_KEY}-click a note. On a phone, press and hold one.`}
             >
@@ -300,7 +158,7 @@ const RoomCourse = () => {
         </div>
       </div>
 
-      <div className={`room-note-grid${selectMode ? ' is-selecting' : ''}`}>
+      <div className={`room-note-grid${selectMode ? ' is-selecting' : ''}`} data-filmed={filmed ? '' : undefined}>
         <button
           type="button"
           className="room-new-note room-rise"
@@ -325,10 +183,8 @@ const RoomCourse = () => {
             onPointerMove={holdMove}
             onPointerUp={holdEnd}
             onPointerCancel={holdEnd}
-            onContextMenu={(event) => {
-              // A long press on touch would otherwise also open the browser's own menu.
-              if (hold.current.fired) event.preventDefault();
-            }}
+            // A long press on touch would otherwise also open the browser's own menu.
+            onContextMenu={holdMenu}
           >
             {/* The design's checklist box, pinned to the sheet's corner: it appears on hover,
                 stays in select mode, and a click on it selects instead of opening. */}
